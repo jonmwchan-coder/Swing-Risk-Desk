@@ -18,8 +18,8 @@ globalThis.document={getElementById,querySelectorAll:()=>[],querySelector:()=>nu
 await import(new URL('../app.js', import.meta.url).href);
 const h=getElementById('historyTable').innerHTML;
 console.log('HTML characters',h.length);
-assert.match(h,/TP TARGETS ON UNDERLYING/);
-assert.match(h,/UNDERLYING INVALIDATION/);
+assert.ok(h.includes("<th>TP</th>"));
+assert.ok(h.includes("<th>INVALIDATION</th>"));
 assert.match(h,/DEMO/);
 assert.match(getElementById('dashboardPositions').innerHTML,/DEMO/);
 assert.match(getElementById('importInbox').innerHTML,/Import exceptions/);

@@ -89,6 +89,7 @@ function render(){const a=account();if(!a)return;
   renderHistory(m);
   renderSettings(a);
   for(const t of document.querySelectorAll('.tab')){t.classList.toggle('active',t.dataset.tab===activeTab);t.setAttribute('aria-current',t.dataset.tab===activeTab?'page':'false');}
+  document.getElementById('app').classList.toggle('history-wide',activeTab==='history');
   for(const v of document.querySelectorAll('.view'))v.hidden=v.id!==`view-${activeTab}`;
 }
 function renderOverview(m){
@@ -155,8 +156,11 @@ function positionCard(x,full){const p=x.position,z=x.metrics;const isOpen=z.qty>
   ${full?`<details class="pos-details" id="detail-${esc(p.id)}"><summary>Original record and transactions</summary><p class="help-line">Source: ${esc(p.source||'Manual entry')} &bull; Master ID: ${esc(p.externalId||'Not linked')}</p><div class="plan-details"><div><strong>Thesis</strong><p>${esc(p.thesis||'Not recorded')}</p></div><div><strong>Catalyst / why now</strong><p>${esc(p.catalyst||'Not recorded')} ${esc(p.entryReason||'')}</p></div><div><strong>Management</strong><p>${esc(p.managementPlan||'Not recorded')}</p></div><div><strong>Other notes</strong><p>${esc(p.notes||'Not recorded')}</p></div></div><div class="journal-timeline">${renderTimeline(p)}</div><div class="modal-transaction-list">${transactionList(p)}</div></details>`:''}</article>`;
 }
 function renderTimeline(p){
- const events=[...(p.journalEntries||[]).map(n=>({type:n.kind||'Journal',date:n.date,time:n.createdAt||'',source:n.source||'App',body:n.body})),...(p.planHistory||[]).map(n=>({type:n.conflict?'Imported alternative plan':'Plan revision',date:n.date,time:n.createdAt||'',source:n.source||'',body:Object.entries(n.changes||{}).map(([k,v])=>`${k}: ${String(v.before??'')||'(blank)'} → ${String(v.after??'')||'(blank)'}`).join('\n')}))].sort((a,b)=>`${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`));
- return events.length?`<h4>Journal / plan change timeline (${events.length})</h4>${events.map(n=>`<div class="journal-event"><div><strong>${esc(n.type)}</strong><small>${esc(n.date||'Unspecified')} · ${esc(n.source)}</small></div><p>${esc(n.body)}</p></div>`).join('')}`:'<p class="help-line">No dated journal entries yet. New notes and revisions will be preserved here, not overwritten.</p>';
+ const events=[
+  ...(p.journalEntries||[]).map(n=>({id:n.id,recordType:'journal-entry',type:n.kind||'Journal',date:n.date,time:n.createdAt||'',source:n.source||'App',body:n.body})),
+  ...(p.planHistory||[]).map(n=>({id:n.id,recordType:'plan-revision',type:n.conflict?'Imported alternative plan':'Plan revision',date:n.date,time:n.createdAt||'',source:n.source||'',body:Object.entries(n.changes||{}).map(([k,v])=>`${k}: ${String(v.before??'')||'(blank)'} → ${String(v.after??'')||'(blank)'}`).join('\n')}))
+ ].sort((a,b)=>`${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`));
+ return events.length?`<h4>Journal / plan change timeline (${events.length})</h4>${events.map(n=>`<div class="journal-event"><div class="journal-event-head"><div><strong>${esc(n.type)}</strong><small>${esc(n.date||'Unspecified')} · ${esc(n.source)}</small></div><button class="timeline-remove" type="button" data-action="archive-timeline" data-id="${esc(p.id)}" data-event-type="${esc(n.recordType)}" data-event-id="${esc(n.id)}" aria-label="Remove ${esc(n.type)} dated ${esc(n.date||'unknown')} from timeline" title="Remove from timeline (recoverable)">×</button></div><p>${esc(n.body)}</p></div>`).join('')}`:'<p class="help-line">No visible journal or plan revisions. Removed records are recoverable in Rules & data → Archived corrections.</p>';
 }
 function transactionList(p){const tx=[...p.fills.map(x=>({...x,side:'BUY'})),...p.exits.map(x=>({...x,side:'SELL'}))].sort((a,b)=>`${a.date}${a.time||''}`.localeCompare(`${b.date}${b.time||''}`));return tx.map(t=>`<div class="transaction-row"><span>${esc(t.side)} ${t.qty} x ${money(t.price??0)} USD &bull; ${esc(fmtDate(t.date))} ${esc(t.time||'')} ${t.side==='SELL'?esc(t.reason||''):''}<br>Commission: ${usd(t.fee||0)}; USD/CAD ${Number(t.fx||account().fx).toFixed(4)}</span><button type="button" class="tiny-btn" data-action="delete-tx" data-id="${esc(p.id)}" data-tx="${esc(t.id)}" data-side="${t.side}">Remove</button></div>`).join('');}
 function renderPositions(m){const arr=m.positions.filter(x=>positionFilter==='all'||(positionFilter==='open'?x.metrics.qty>0:x.metrics.qty===0));$('openCount').textContent=m.positions.filter(x=>x.metrics.qty>0).length;
@@ -175,12 +179,12 @@ function renderHistory(m){
  const closed=rows.filter(x=>x.pnlCad!==null),net=closed.reduce((s,x)=>s+x.pnlCad,0);
  $('historyStats').innerHTML=`<div><small>Realized P/L in last window</small><strong class="${m.recent.reduce((s,x)=>s+x.pnlCad,0)<0?'neg':'pos'}">${money(m.recent.reduce((s,x)=>s+x.pnlCad,0))}</strong></div><div><small>All logged realized P/L</small><strong class="${net<0?'neg':'pos'}">${money(net)}</strong></div><div><small>Entries / exits in account</small><strong>${rows.filter(x=>x.action==='BUY').length} / ${rows.filter(x=>x.action==='SELL').length}</strong></div>`;
  const mark=(v,empty='Not recorded')=>v?`<span>${esc(v)}</span>`:`<span class="missing-field">${esc(empty)}</span>`;
- $('historyTable').innerHTML=rows.length?`<table class="history-table expanded-ledger"><thead><tr><th>DATE</th><th>OPTION / SIDE</th><th>QTY</th><th>PREMIUM USD</th><th>TP TARGETS ON UNDERLYING</th><th>UNDERLYING INVALIDATION</th><th>THESIS / CATALYST</th><th>ACTUAL EXIT / REASON</th><th>REALIZED CAD</th><th>REVIEW</th></tr></thead><tbody>${rows.map(r=>{
+ $('historyTable').innerHTML=rows.length?`<table class="history-table expanded-ledger"><colgroup><col style="width:10%"><col style="width:14%"><col style="width:5%"><col style="width:8%"><col style="width:8%"><col style="width:11%"><col style="width:16%"><col style="width:12%"><col style="width:7%"><col style="width:9%"></colgroup><thead><tr><th>DATE</th><th>OPTION / SIDE</th><th>QTY</th><th>PREMIUM</th><th>TP</th><th>INVALIDATION</th><th>THESIS / CATALYST</th><th>EXIT / REASON</th><th>P/L CAD</th><th>ACTIONS</th></tr></thead><tbody>${rows.map(r=>{
   const p=r.position;const isManual=!p;
   const name=isManual?esc(r.ticker):`${esc(p.ticker)} ${esc(p.expiry)} ${esc(p.strike)}${p.optionType==='Put'?'P':'C'}`;
-  const memo=p?[p.thesis,p.catalyst,p.entryReason].filter(Boolean).join(' · '):'';
+  const memo=p?[p.thesis?`Thesis: ${p.thesis}`:'',p.catalyst?`Catalyst: ${p.catalyst}`:'',p.entryReason?`Trigger: ${p.entryReason}`:''].filter(Boolean).join(' · '):'';
   const exitInfo=r.action==='SELL'?`${r.underlyingAtExit!==null?'Underlying $'+Number(r.underlyingAtExit).toFixed(2)+' · ':''}${r.tpLabel?esc(r.tpLabel)+' · ':''}${mark(r.reason,'Reason not supplied by IBKR')}${r.exitNotes?`<div class="history-subnote">${esc(r.exitNotes)}</div>`:''}`:'<span class="missing-field">Not an exit</span>';
-  return `<tr><td data-label="DATE">${esc(fmtDate(r.date,true))}<div class="history-subnote">${esc(r.time||'')}</div></td><td data-label="OPTION / SIDE"><strong>${name}</strong><div class="history-side">${esc(r.action)} ${r.hasOverride?'· broker P/L':''}</div></td><td data-label="QTY">${esc(r.qty)}</td><td data-label="PREMIUM USD">${r.priceUsd===null?'--':money(r.priceUsd,4)}</td><td data-label="TP TARGETS">${p?mark(p.targetLevels):'--'}</td><td data-label="INVALIDATION">${p?mark(p.underlyingInvalidation):'--'}</td><td data-label="THESIS / CATALYST">${p?mark(memo):'--'}</td><td data-label="EXIT / REASON">${exitInfo}</td><td data-label="REALIZED CAD" class="${r.pnlCad===null?'':r.pnlCad>0?'pnl-pos':r.pnlCad<0?'pnl-neg':'pnl-zero'}">${r.pnlCad===null?'Not realized':money(r.pnlCad)}</td><td data-label="REVIEW">${p?`<div class="history-actions"><button class="tiny-btn" type="button" data-action="view-position" data-id="${esc(p.id)}">Details & notes</button><button class="tiny-btn" type="button" data-action="add-note" data-id="${esc(p.id)}">+ Note</button>${r.action==='SELL'?`<button class="tiny-btn" type="button" data-action="edit-exit" data-id="${esc(p.id)}" data-tx="${esc(r.id)}">Exit details</button>`:''}</div>`:`<button class="tiny-btn" type="button" data-action="delete-adjustment" data-id="${esc(r.id)}">Archive</button>`}</td></tr>`;
+  return `<tr><td data-label="DATE">${esc(fmtDate(r.date,true))}<div class="history-subnote">${esc(r.time||'')}</div></td><td data-label="OPTION / SIDE"><strong>${name}</strong><div class="history-side">${esc(r.action)} ${r.hasOverride?'· broker P/L':''}</div></td><td data-label="QTY">${esc(r.qty)}</td><td data-label="PREMIUM USD">${r.priceUsd===null?'--':money(r.priceUsd,4)}</td><td data-label="TP" class="history-level-cell">${p?mark(p.targetLevels):'--'}</td><td data-label="INVALIDATION" class="history-level-cell">${p?mark(p.underlyingInvalidation):'--'}</td><td data-label="THESIS / CATALYST" class="history-thesis-cell">${p?mark(memo,'Add thesis using Edit plan'):'--'}</td><td data-label="EXIT / REASON">${exitInfo}</td><td data-label="REALIZED CAD" class="${r.pnlCad===null?'':r.pnlCad>0?'pnl-pos':r.pnlCad<0?'pnl-neg':'pnl-zero'}">${r.pnlCad===null?'Not realized':money(r.pnlCad)}</td><td data-label="REVIEW">${p?`<div class="history-actions"><button class="tiny-btn" type="button" data-action="edit-position" data-id="${esc(p.id)}">Edit plan</button><button class="tiny-btn" type="button" data-action="view-position" data-id="${esc(p.id)}">Details</button><button class="tiny-btn" type="button" data-action="add-note" data-id="${esc(p.id)}">+ Note</button>${r.action==='SELL'?`<button class="tiny-btn" type="button" data-action="edit-exit" data-id="${esc(p.id)}" data-tx="${esc(r.id)}">Exit details</button>`:''}</div>`:`<button class="tiny-btn" type="button" data-action="delete-adjustment" data-id="${esc(r.id)}">Archive</button>`}</td></tr>`;
  }).join('')}</tbody></table>`:'<div class="empty-inline">No executions yet. Import IBKR trades, add a position, or enter a historical result.</div>';
 }
 function renderSettings(a){const f=$('settingsForm');const fields={name:a.name,brokerAccountId:a.brokerAccountId||'',equityCad:a.equityCad,riskPct:a.riskPct,window:a.window,stressPct:a.stressPct,roundStep:a.roundStep,mode:a.mode,fx:a.fx,ideaCapCad:a.ideaCapCad??''};
@@ -226,7 +230,11 @@ function addPosition(){const a=account(),pref=plannerPrefill;plannerPrefill=null
  ${field('ESTIMATED STOP OPTION PRICE / SHARE USD','stopPremiumUsd','number','',{min:0,step:.01})}
  ${field('UNDERLYING TARGETS / TP LEVELS','targetLevels','text','',{maxlength:220})}
  ${field('REVIEW DATE / TIME STOP','reviewBy','date','')}
- <label class="span-2"><span>POSITION NOTES / PLAN</span><textarea name="notes" rows="3" placeholder="What must remain true for this swing? What is your first meaningful obstruction?" maxlength="1200"></textarea></label>
+ <label class="span-2"><span>THESIS / TRADE IDEA</span><textarea name="thesis" rows="3" maxlength="4000" placeholder="Why this direction? What's the structure or fundamental idea?"></textarea></label>
+ <label class="span-2"><span>CATALYST / WHY NOW</span><textarea name="catalyst" rows="2" maxlength="3000" placeholder="Earnings, breakout, retest, technical shift, etc."></textarea></label>
+ <label class="span-2"><span>ENTRY TRIGGER / EVIDENCE</span><textarea name="entryReason" rows="2" maxlength="3000" placeholder="What confirmed the entry at the time?"></textarea></label>
+ <label class="span-2"><span>MANAGEMENT / EXIT PLAN</span><textarea name="managementPlan" rows="2" maxlength="5000" placeholder="TP order, structural response, review date and adjustments"></textarea></label>
+ <label class="span-2"><span>ADDITIONAL NOTES</span><textarea name="notes" rows="3" placeholder="Other details not captured above" maxlength="12000"></textarea></label>
  </div><div id="newPreview" class="modal-summary"></div>${formEnd('Record position')}</form>`;
  const f=dialog('New swing position','ENTRY / QUOTE',body,(d)=>{
  const ticker=getText(d,'ticker').toUpperCase().replace(/[^A-Z0-9.\-]/g,'');if(!ticker)throw new Error('Enter a ticker.');
@@ -235,7 +243,7 @@ function addPosition(){const a=account(),pref=plannerPrefill;plannerPrefill=null
  const strike=requireRange(getText(d,'strike'),0,1000000,'Strike');const stress=optional(getText(d,'stressPct'));if(stress!==null)requireRange(String(stress),0,100,'Stress percentage');
  const newReserve=roundUp((qty*price*100+fee)*a.fx*(a.mode==='strict'?100:(stress??a.stressPct))/100,a.roundStep);
  if(!maybeBreach(analytics(),newReserve))return false;
- const position={id:uid(),externalId:'',source:'Manual entry',accountId:a.id,ticker,optionType:getText(d,'optionType'),strike,expiry,sector:getText(d,'sector'),ideaId:getText(d,'ideaId')||`${ticker}-${date}`,underlyingInvalidation:getText(d,'underlyingInvalidation'),targetLevels:getText(d,'targetLevels'),stopPremiumUsd:optional(getText(d,'stopPremiumUsd')),stressPct:stress,fixedReserveCad:null,reviewBy:getText(d,'reviewBy'),thesis:getText(d,'thesis'),catalyst:getText(d,'catalyst'),entryReason:getText(d,'entryReason'),managementPlan:getText(d,'managementPlan'),notes:getText(d,'notes'),journalEntries:[],planHistory:[],fills:[{id:uid(),date,time:getText(d,'time'),qty,price,fee,fx}],exits:[]};
+ const position={id:uid(),externalId:'',source:'Manual entry',accountId:a.id,ticker,optionType:getText(d,'optionType'),strike,expiry,sector:getText(d,'sector'),ideaId:getText(d,'ideaId')||`${ticker}-${date}`,underlyingInvalidation:getText(d,'underlyingInvalidation'),targetLevels:getText(d,'targetLevels'),stopPremiumUsd:optional(getText(d,'stopPremiumUsd')),stressPct:stress,fixedReserveCad:null,reviewBy:getText(d,'reviewBy'),thesis:getText(d,'thesis'),catalyst:getText(d,'catalyst'),entryReason:getText(d,'entryReason'),managementPlan:getText(d,'managementPlan'),notes:getText(d,'notes'),journalEntries:[],planHistory:[],fills:[{id:uid(),date,time:getText(d,'time'),timeUnverified:!getText(d,'time'),qty,price,fee,fx}],exits:[]};
  position.planHistory.push({id:uid(),date,createdAt:new Date().toISOString(),source:'Initial plan recorded in app (entry-time status not independently verified)',changes:Object.fromEntries(['underlyingInvalidation','targetLevels','thesis','catalyst','entryReason','managementPlan','notes'].filter(k=>position[k]).map(k=>[k,{before:'',after:position[k]}]))});state.positions.push(position);showToast(`Added ${qty} ${ticker} contract${qty!==1?'s':''}.`);return true;
  });
  const preview=()=>{const d=new FormData(f);const q=num(d.get('qty')),price=num(d.get('price')),fee=num(d.get('fee')),fx=num(d.get('fx'),a.fx),stress=optional(d.get('stressPct'))??a.stressPct;
@@ -283,7 +291,7 @@ function addFill(id){const a=account(),p=findPosition(id),now=analytics().asOf;
  const before=analytics(),copy=structuredClone(state);copy.positions.find(z=>z.id===p.id).fills.push({id:'__add__',date,time:getText(d,'time')||'23:59',qty,price,fee,fx});
  const newCalc=calculateAccount(copy,a.id,asOf()),addedRisk=newCalc.reserveCad-before.reserveCad;
  if(!maybeBreach(before,addedRisk))return false;
- p.fills.push({id:uid(),date,time:getText(d,'time')||'23:59',qty,price,fee,fx});showToast(`Added ${qty} contract${qty===1?'':'s'} to ${p.ticker}.`);return true;
+ p.fills.push({id:uid(),date,time:getText(d,'time')||'23:59',timeUnverified:!getText(d,'time'),qty,price,fee,fx});showToast(`Added ${qty} contract${qty===1?'':'s'} to ${p.ticker}.`);return true;
  });
  const preview=()=>{const d=new FormData(f),qty=num(d.get('qty')),price=num(d.get('price')),fee=num(d.get('fee'));if(qty<1||price<=0){$('fillPreview').innerHTML='<span>Enter contracts and premium to preview added risk.</span>';return;}
  const before=analytics(),clone=structuredClone(state);clone.positions.find(z=>z.id===p.id).fills.push({id:'__preview__',date:String(d.get('date')),time:String(d.get('time')||'23:59'),qty,price,fee,fx:num(d.get('fx'),a.fx)});
@@ -298,7 +306,11 @@ function editPosition(id){const p=findPosition(id);const body=`<p class="modal-i
  ${field('EST. STOP OPTION PREMIUM USD','stopPremiumUsd','number',p.stopPremiumUsd??'',{min:0,step:.01})}${field('REVIEW / TIME-STOP DATE','reviewBy','date',p.reviewBy||'')}
  ${field('TARGETS / TP LEVELS ON UNDERLYING','targetLevels','text',p.targetLevels||'',{maxlength:220})}
  <label class="span-2"><span>UNDERLYING STRUCTURAL INVALIDATION</span><textarea name="underlyingInvalidation" rows="3" maxlength="1200">${esc(p.underlyingInvalidation||'')}</textarea></label>
- <label class="span-2"><span>PLAN / CATALYST / NOTES</span><textarea name="notes" rows="4" maxlength="12000">${esc(p.notes||'')}</textarea></label>
+ <label class="span-2"><span>THESIS / TRADE IDEA</span><textarea name="thesis" rows="4" maxlength="4000">${esc(p.thesis||'')}</textarea></label>
+ <label class="span-2"><span>CATALYST / WHY NOW</span><textarea name="catalyst" rows="3" maxlength="3000">${esc(p.catalyst||'')}</textarea></label>
+ <label class="span-2"><span>ENTRY TRIGGER / EVIDENCE</span><textarea name="entryReason" rows="3" maxlength="3000">${esc(p.entryReason||'')}</textarea></label>
+ <label class="span-2"><span>MANAGEMENT / EXIT PLAN</span><textarea name="managementPlan" rows="3" maxlength="5000">${esc(p.managementPlan||'')}</textarea></label>
+ <label class="span-2"><span>ADDITIONAL NOTES</span><textarea name="notes" rows="3" maxlength="12000">${esc(p.notes||'')}</textarea></label>
  </div>${formEnd('Save position rules')}</form>`;
  dialog(`Edit ${p.ticker}`,'PROSPECTIVE PLAN',body,(d)=>{
  const ticker=getText(d,'ticker').toUpperCase().replace(/[^A-Z0-9.\-]/g,'');if(!ticker)throw new Error('Ticker required.');
@@ -327,7 +339,7 @@ function editExit(positionId,txId){const p=findPosition(positionId),tx=p.exits.f
   showToast(`Exit details saved; ${changed.length} change(s) in journal history.`);return true;});
 }
 function openPositionDetail(id){positionFilter='all';activeTab='positions';render();const item=$('positionsFull').querySelectorAll('[data-position]');for(const el of item)if(el.dataset.position===id){const details=el.querySelector('details');if(details)details.open=true;el.scrollIntoView({block:'center',behavior:'smooth'});break;}}
-function renderInbox(){const pending=state.brokerInbox||[],conflicts=state.conflicts||[],archive=state.archive||[];
+function renderInbox(){const pending=state.brokerInbox||[],conflicts=state.conflicts||[],archive=(state.archive||[]).filter(x=>!x.restoredAt);
  $('importInbox').innerHTML=`<div class="inbox-head"><strong>Import exceptions: ${pending.length} pending · ${conflicts.length} conflicting · ${archive.length} archived</strong><span>All retained in full JSON backup</span></div>`+
  (pending.length?`<details class="issue-details"><summary>Review ${pending.length} unreconciled IBKR row(s)</summary>${pending.slice(-50).map(x=>`<div class="issue-row"><strong>${esc(x.ticker)} ${esc(x.tradeDate)}</strong> ${esc(x.side)}: ${esc(x.reason)}<div class="history-subnote">${esc(x.raw?.Symbol||'')} / ${esc(x.raw?.['Date/Time']||'')}</div></div>`).join('')}</details>`:'')+
  (conflicts.length?`<details class="issue-details"><summary>Review ${conflicts.length} saved conflict(s)</summary>${conflicts.slice(-50).map(x=>`<div class="issue-row">${esc(x.reason||x.kind||'Import conflict')}<div class="history-subnote">${esc(x.positionId||'')}</div></div>`).join('')}</details>`:'')+
@@ -382,7 +394,7 @@ function mergeCSV(textData){const csv=parseCSV(textData);if(csv.length<2)throw n
  state=normalize(clone);save();render();showToast(`Imported ${added} transactions; skipped ${skipped} duplicate IDs.`);
 }
 function importPreviewReport(report){
- if(report.fileType==='ibkr')return `<div class="import-kpis"><div><strong>${report.added}</strong><span>New executions</span></div><div><strong>${report.duplicates}</strong><span>Already logged</span></div><div><strong>${report.sourceLinked}</strong><span>Existing fills linked</span></div><div><strong>${report.pending}</strong><span>Needs review</span></div></div><p class="help-line">${report.newPositions} new contract position(s), ${report.newAccounts} new broker account(s). Existing matches are not duplicated. IBKR doesn't supply your trading rationale, TP targets, underlying invalidation or exact CAD FX. Fill those in separately.</p>`+
+ if(report.fileType==='ibkr')return `<div class="import-kpis"><div><strong>${report.added}</strong><span>New executions</span></div><div><strong>${report.duplicates}</strong><span>Already logged</span></div><div><strong>${report.sourceLinked}</strong><span>Existing fills linked</span></div><div><strong>${report.pending}</strong><span>Needs review</span></div></div><p class="help-line">${report.updatedPositions??0} existing position(s) updated with new executions; ${report.newPositions} truly new position(s); ${report.newAccounts} new broker portfolio(s). Exact re-imports are not duplicated. IBKR doesn't supply your trading rationale, TP targets, underlying invalidation or exact CAD FX. Fill those in separately.</p>`+
  (report.issueList.length?`<details class="issue-details"><summary>Review ${report.issueList.length} import issue(s)</summary>${report.issueList.slice(0,24).map(x=>`<p>${esc(x)}</p>`).join('')}</details>`:'')+
  (report.ambiguous?'<p class="neg">Warning: identical broker rows have no execution ID; indistinguishable fills require manual verification.</p>':'');
  return `<div class="import-kpis"><div><strong>${report.newPositions}</strong><span>New positions</span></div><div><strong>${report.newTransactions}</strong><span>New fills/exits</span></div><div><strong>${report.newNotes}</strong><span>New journal notes</span></div><div><strong>${report.conflicts}</strong><span>Conflicts preserved</span></div></div><p class="help-line">${report.duplicates} already logged item(s), ${report.planChanges} new plan field(s), ${report.importInbox} pending broker row(s). Existing nonempty plans and account settings are not silently overwritten during a merge; alternatives go to the conflict timeline.</p>`;
@@ -392,24 +404,34 @@ function previewIBKR(raw,filename){
  const brokerAccounts=[...new Set(parsed.trades.map(t=>t.account))];
  const unmapped=brokerAccounts.filter(id=>!state.accounts.some(a=>a.brokerAccountId===id));
  const available=state.accounts.filter(a=>!a.brokerAccountId);
- const mappingFields=unmapped.map((brokerId,i)=>{
-  const preferred=brokerAccounts.length===1 && available.some(x=>x.id===activeAccountId) ? activeAccountId:'';
-  const opts=[['',`New separate IBKR portfolio (equity starts at $0)`], ...available.map(a=>[a.id,`${a.name} (existing portfolio)`])];
-  return `<label class="import-choice"><span>IBKR ACCOUNT ${esc(brokerId)}: IMPORT INTO</span><select name="broker-map-${i}">${opts.map(([v,n])=>`<option value="${esc(v)}" ${v===preferred?'selected':''}>${esc(n)}</option>`).join('')}</select></label>`;
+ const mappingFields=brokerAccounts.map((brokerId)=>{
+  const linked=state.accounts.find(a=>a.brokerAccountId===brokerId);
+  if(linked)return `<div class="import-account-linked"><strong>IBKR ${esc(brokerId)}</strong><span>→ ${esc(linked.name)} (already linked)</span></div>`;
+  const i=unmapped.indexOf(brokerId);
+  const opts=[['',`Choose a portfolio…`],['__new__',`Create a separate IBKR portfolio (equity starts at $0)`],...available.map(a=>[a.id,`${a.name} (existing portfolio)`])];
+  return `<label class="import-choice"><span>IBKR ACCOUNT ${esc(brokerId)}: IMPORT INTO</span><select required name="broker-map-${i}">${opts.map(([v,n])=>`<option value="${esc(v)}">${esc(n)}</option>`).join('')}</select></label>`;
  }).join('');
- function selectMap(form){const mapping={};unmapped.forEach((brokerId,i)=>{const value=form?.elements.namedItem(`broker-map-${i}`)?.value||'';if(value){if(Object.values(mapping).includes(value))throw new Error('An app portfolio cannot be mapped to two different IBKR accounts.');mapping[brokerId]=value;}});return mapping;}
- const baselineMap=Object.fromEntries(unmapped.filter(()=>brokerAccounts.length===1&&available.some(a=>a.id===activeAccountId)).map(x=>[x,activeAccountId]));
- let result=importIbkrTrades(state,raw,{filename,includeSameDayExpiry:false,accountMap:baselineMap});
- const body=`<p class="modal-intro">Recognized <strong>${esc(filename)}</strong> as an IBKR trade export. Broker fills do not contain underlying TP/invalidation or your thesis. Check the account mapping before importing; broker times are ET only if you configured that report timezone.</p><form>
- ${mappingFields?`<div class="import-mappings"><strong>Where should the broker fills go?</strong><p class="help-line">Match a new IBKR account to an existing portfolio only if it is truly the same account. This link is saved for later imports. Otherwise use a new separate portfolio and enter its real equity before trading from its budget.</p>${mappingFields}</div>`:''}
+ function selectMap(form){const mapping={};unmapped.forEach((brokerId,i)=>{const value=form?.elements.namedItem(`broker-map-${i}`)?.value||'';if(!value)throw new Error(`Choose a portfolio for IBKR account ${brokerId}.`);if(value!=='__new__'){if(Object.values(mapping).includes(value))throw new Error('One app portfolio cannot be mapped to two IBKR accounts.');mapping[brokerId]=value;}});return mapping;}
+ let result=importIbkrTrades(state,raw,{filename,includeSameDayExpiry:false,accountMap:{}});
+ const body=`<p class="modal-intro">Recognized <strong>${esc(filename)}</strong> as an IBKR trade export. Check the destination portfolio for every broker account. Purchases for a uniquely matching open contract are added to its existing position, not a second position. Broker times are ET only if configured as such in the export.</p><form>
+ ${mappingFields?`<div class="import-mappings"><strong>Choose or verify the destination portfolio</strong><p class="help-line">Existing mappings are shown below. For a new broker account you must choose an existing portfolio or deliberately create a separate one. Multiple active ideas in the same contract go to review rather than being guessed.</p>${mappingFields}</div>`:''}
  <label class="import-choice import-toggle"><input type="checkbox" name="includeSameDayExpiry"><span>Include NEW same-day-expiry / 0DTE buys in this <strong>swing</strong> risk budget (off by default)</span></label><div id="ibkrPreviewBody">${importPreviewReport(result.report)}</div>${formEnd('Apply safe reconciliation')}</form>`;
- const f=dialog('Reconcile IBKR executions','BROKER IMPORT / NO HINDSIGHT',body,()=>{state=result.next;showToast(`IBKR: ${result.report.added} new, ${result.report.duplicates} duplicates, ${result.report.pending} pending.`);return true;});
+ const f=dialog('Reconcile IBKR executions','BROKER IMPORT / NO HINDSIGHT',body,()=>{
+  // Never apply the baseline preview until the user explicitly chooses each new account destination.
+  const mapping=selectMap(f);
+  result=importIbkrTrades(state,raw,{filename,includeSameDayExpiry:!!f.elements.namedItem('includeSameDayExpiry')?.checked,accountMap:mapping});
+  state=result.next;showToast(`IBKR: ${result.report.added} new, ${result.report.duplicates} duplicates, ${result.report.pending} pending.`);return true;
+ });
  const refresh=()=>{try{
+   if(unmapped.some((brokerId,i)=>!f.elements.namedItem(`broker-map-${i}`)?.value)){
+     $('ibkrPreviewBody').innerHTML='<div class="modal-summary">Choose the destination portfolio above to preview which existing positions and new fills will be updated.</div>';return;
+   }
    result=importIbkrTrades(state,raw,{filename,includeSameDayExpiry:!!f.elements.namedItem('includeSameDayExpiry')?.checked,accountMap:selectMap(f)});
    $('ibkrPreviewBody').innerHTML=importPreviewReport(result.report);
    const error=f.querySelector('.modal-error');if(error)error.textContent='';
   }catch(e){const error=f.querySelector('.modal-error');if(error)error.textContent=e.message;}};
  f.querySelectorAll('select[name^="broker-map-"], input[name="includeSameDayExpiry"]').forEach(el=>el.addEventListener('change',refresh));
+ refresh();
 }
 function previewJSON(data,filename){
  let result,mode='merge';
@@ -442,8 +464,17 @@ function archiveRecord(kind,label,record,positionId=''){
  state.archive??=[];
  state.archive.push({id:uid(),kind,label,positionId,date:new Date().toISOString(),record:structuredClone(record)});
 }
-function restoreArchive(id){const item=(state.archive||[]).find(x=>x.id===id);if(!item)return showToast('Archived item was not found.');const snapshot=structuredClone(state);
+function restoreArchive(id){const item=(state.archive||[]).find(x=>x.id===id);if(!item)return showToast('Archived item was not found.');if(item.restoredAt)return showToast('This record was already restored.');const snapshot=structuredClone(state);
  try{
+  if(item.kind==='journal-entry'||item.kind==='plan-revision'){
+    const p=state.positions.find(x=>x.id===item.positionId);if(!p)throw new Error('Restore the parent position first.');
+    const collection=item.kind==='journal-entry'?'journalEntries':'planHistory';
+    if(!p[collection].some(x=>x.id===item.record.id))p[collection].push(structuredClone(item.record));
+    // The historical archive event is retained with a restoration marker, so a later
+    // backup/cloud merge cannot revive the stale deletion and hide the restored note.
+    item.restoredAt=new Date().toISOString();
+    save();render();showToast('Timeline entry restored. Earlier archive action remains in backup.');return;
+  }
   if(item.kind==='position'){
     if(state.positions.some(x=>x.id===item.record.id))throw new Error('Position ID already active; review duplicate before restoring.');
     state.positions.push(structuredClone(item.record));
@@ -462,11 +493,22 @@ function deleteTransaction(posId,txId,side){const p=findPosition(posId);const ke
  const clone=structuredClone(p);clone[key]=clone[key].filter(x=>x.id!==txId);const probe=calculatePosition(clone,account(),'9999-12-31');if(probe.issues.length){showToast('Removal would leave a sale without enough acquired contracts. Remove the dependent exits first.');return;}
  archiveRecord('transaction',`${p.ticker} ${side} ${tx.date}`,{side,tx},p.id);p[key]=p[key].filter(x=>x.id!==txId);save();render();showToast('Transaction archived. It remains in backup/recovery.');
 }
+function archiveTimeline(positionId,kind,eventId){
+ const p=findPosition(positionId),field=kind==='journal-entry'?'journalEntries':kind==='plan-revision'?'planHistory':null;
+ if(!field)throw new Error('Unknown timeline record type.');
+ const event=(p[field]||[]).find(x=>x.id===eventId);
+ if(!event)throw new Error('Timeline record was not found.');
+ if(!confirm(`Remove this ${kind==='journal-entry'?'journal note':'plan revision'} from the visible timeline? It will stay in Archived corrections and the full JSON backup, and can be restored. Current plan values and trade P/L will NOT change.`))return;
+ archiveRecord(kind,`${p.ticker}: ${kind==='journal-entry'?(event.kind||'Journal note'):'Plan revision'} · ${event.date||''}`,event,p.id);
+ p[field]=p[field].filter(x=>x.id!==eventId);
+ save();render();showToast('Timeline entry archived. Restore via Rules & data → Archived corrections.');
+}
 function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'add-position':addPosition();break;
  case 'close-position':closePosition(id);break;
  case 'edit-position':editPosition(id);break;
  case 'add-note':addNote(id);break;
+ case 'archive-timeline':archiveTimeline(id,el.dataset.eventType,el.dataset.eventId);break;
  case 'edit-exit':editExit(id,el.dataset.tx);break;
  case 'view-position':openPositionDetail(id);break;
  case 'add-fill':addFill(id);break;

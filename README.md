@@ -1,4 +1,4 @@
-# Swing Risk Desk v1.3 (cloud-ready)
+# Swing Risk Desk v1.4 (responsive history + journal controls)
 
 Private, responsive options swing-trading risk desk for a **rolling NYSE-session loss budget in Canadian dollars**. A small Vercel-ready website, no server-side trading database, no account passwords, and no broker API access.
 
@@ -17,6 +17,14 @@ Private, responsive options swing-trading risk desk for a **rolling NYSE-session
 **Limits:** single-user cloud workspace per signed-in email; email links are subject to provider delivery; no live IBKR brokerage API and no automatic Google Sheets master commits. Internet is required for *cloud* sign-in and sync. When cloud status says offline/failed/unsynced, your data is **not** confirmed to be in cloud storage and you should export a complete backup. Service-worker shell supports offline app use but does not make cloud writes possible offline.
 
 **GitHub / Vercel ownership:** the existing Vercel Drop project `swing-risk-desk-vercel-v1.1` is not yet Git-connected. To preserve the existing browser storage, connect a new, private Swing Risk Desk GitHub repository to the **existing** Vercel project, rather than creating an unrelated site/domain. Do not put the starter JSON, IBKR CSV, actual fills, or export backups in GitHub.
+
+## What changed in v1.4
+
+- **Desktop trade history uses the full available page width** at 1200px and above, with no horizontal table scroll; mobile keeps per-fill cards and tablets retain contained sideways scrolling where needed. Headers are shortened to `TP`, `Invalidation`, `P/L CAD`, etc. Numeric level columns are deliberately narrower.
+- **Edit plan on every history row** now opens actual thesis, catalyst, entry trigger, management, TP and invalidation fields. Fixes an earlier editor omission that could clear existing thesis/catalyst when saving. All edited values preserve timestamped plan-change history; history shows the latest plan, not a reconstructed entry-time opinion.
+- **Journal/plan timeline has a recoverable × button.** Removed notes and plan revisions are archived rather than erased from the complete JSON/cloud record. Restore them in Rules & data → Archived corrections. Cloud/backup merges honour removal and restoration markers instead of resurrecting stale copies. Removing a revision does not undo current risk settings.
+- **IBKR reconciliation explicitly displays the destination portfolio.** New broker account mappings require a deliberate choice; existing mappings are shown. New purchases for an unambiguously open matching contract attach to the same position and do not reset the per-idea risk allowance. Same-day manual fills with unspecified times can link to their broker source if economics match and the timestamp correction preserves a valid execution sequence. Re-importing a broker statement remains duplicate-safe; ambiguous fills are held for review.
+- The release keeps the same local-storage key, backup schema and authenticated Supabase snapshot table. No migrations or trading-master changes are required.
 
 ## What changed in v1.2
 

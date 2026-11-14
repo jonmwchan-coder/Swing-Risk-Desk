@@ -109,3 +109,117 @@ test('broker transaction archived on purpose is not resurrected by reimport',()=
  assert.equal(res.report.added,0);
  assert.equal(res.next.positions[0].fills.length,1);
 });
+
+test('later IBKR scale-in adds a new fill to the same open idea, within the explicitly mapped portfolio',()=>{
+ const head=ibkr.trimEnd().split(/\r?\n/)[0];
+ const addedRow='U99999999,DEMO   261120P00125000,BUY,1,1.91,-191,-0.41,-191.41,20261005,20261005,DEMOEX,LMT,USD,OPT,20261005;132515';
+ const csv=`${head}\n${addedRow}\n`;
+ const s=normalizeLedger(starter);
+ const first=importIbkrTrades(s,csv);
+ assert.equal(first.report.newPositions,0);
+ assert.equal(first.report.updatedPositions,1);
+ assert.equal(first.report.added,1);
+ assert.equal(first.next.positions.length,1);
+ assert.equal(first.next.positions[0].fills.length,3);
+ assert.equal(first.next.positions[0].ideaId,s.positions[0].ideaId);
+ const again=importIbkrTrades(first.next,csv);
+ assert.equal(again.report.added,0);
+ assert.equal(again.report.duplicates,1);
+ assert.equal(again.next.positions.length,1);
+});
+
+test('IBKR can link a manually entered same-day add with unknown time instead of double-counting it',()=>{
+ const head=ibkr.trimEnd().split(/\r?\n/)[0];
+ const row='U99999999,DEMO   261120P00125000,BUY,1,1.91,-191,-0.41,-191.41,20261005,20261005,DEMOEX,LMT,USD,OPT,20261005;132515';
+ const s=normalizeLedger(starter);
+ s.positions[0].fills.push({id:'manual-extra',date:'2026-10-05',time:'23:59',timeUnverified:true,qty:1,price:1.91,fee:0.41,fx:1.4});
+ const r=importIbkrTrades(s,`${head}\n${row}\n`);
+ assert.equal(r.report.sourceLinked,1);
+ assert.equal(r.report.added,0);
+ assert.equal(r.report.newPositions,0);
+ assert.equal(r.next.positions[0].fills.length,3);
+ assert.match(r.next.positions[0].fills[2].broker.sourceKey,/ibkr-v1/);
+});
+
+test('IBKR recognizes the first entry recorded manually on same day with unknown execution time',()=>{
+ const head=ibkr.trimEnd().split(/\r?\n/)[0];
+ const row='U99999999,DEMO   261120P00125000,BUY,1,1.91,-191,-0.41,-191.41,20261005,20261005,DEMOEX,LMT,USD,OPT,20261005;132515';
+ const s=normalizeLedger(starter);
+ s.positions[0].fills=[{id:'manual-first',date:'2026-10-05',time:'23:59',timeUnverified:true,qty:1,price:1.91,fee:0.41,fx:1.4}];
+ const r=importIbkrTrades(s,`${head}\n${row}\n`);
+ assert.equal(r.report.sourceLinked,1);
+ assert.equal(r.report.newPositions,0);
+ assert.equal(r.next.positions.length,1);
+ assert.equal(r.next.positions[0].fills.length,1);
+});
+
+test('two open independent ideas of same contract are quarantined instead of guessed',()=>{
+ const head=ibkr.trimEnd().split(/\r?\n/)[0];
+ const row='U99999999,DEMO   261120P00125000,BUY,1,1.91,-191,-0.41,-191.41,20261005,20261005,DEMOEX,LMT,USD,OPT,20261005;132515';
+ const s=normalizeLedger(starter);
+ s.positions.push({...structuredClone(s.positions[0]),id:'different-idea',ideaId:'INDEPENDENT-THESIS'});
+ const r=importIbkrTrades(s,`${head}\n${row}\n`);
+ assert.equal(r.report.added,0);
+ assert.equal(r.report.pending,1);
+ assert.equal(r.next.positions.length,2);
+});
+
+test('a new BUY after the same contract was completely closed becomes a new trade idea',()=>{
+ const head=ibkr.trimEnd().split(/\r?\n/)[0];
+ const row='U99999999,DEMO   261120P00125000,BUY,1,1.91,-191,-0.41,-191.41,20261006,20261006,DEMOEX,LMT,USD,OPT,20261006;132515';
+ const s=normalizeLedger(starter);
+ s.positions[0].exits=[{id:'complete-exit',date:'2026-10-05',time:'13:15:00',qty:2,price:3,fee:0.6,fx:1.4}];
+ const r=importIbkrTrades(s,`${head}\n${row}\n`);
+ assert.equal(r.report.added,1);
+ assert.equal(r.report.newPositions,1);
+ assert.equal(r.next.positions.length,2);
+ assert.notEqual(r.next.positions[0].id,r.next.positions[1].id);
+});
+
+test('journal and plan removals survive merges, yet remain recoverable and reversible',()=>{
+ const s=normalizeLedger(starter);const p=s.positions[0];
+ const note=makeJournalEntry(p,{kind:'Psychology / emotion',text:'Paper-hands warning',date:'2026-11-14'});
+ recordPlanEdit(p,{thesis:'A strong contemporaneous setup',targetLevels:'TP1 125'},{date:'2026-11-14'});
+ const plan=p.planHistory[0];
+ const before=structuredClone(s);
+ s.archive.push({id:'arc-note',kind:'journal-entry',date:'2026-11-14T10:00:00.000Z',positionId:p.id,record:structuredClone(note)});
+ s.archive.push({id:'arc-plan',kind:'plan-revision',date:'2026-11-14T10:00:01.000Z',positionId:p.id,record:structuredClone(plan)});
+ p.journalEntries=[];p.planHistory=[];
+ const r=mergeFullBackup(s,before);
+ assert.equal(r.next.positions[0].journalEntries.length,0);
+ assert.equal(r.next.positions[0].planHistory.length,0);
+ assert.equal(r.next.archive.filter(a=>a.kind==='journal-entry'||a.kind==='plan-revision').length,2);
+ assert.equal(r.next.positions[0].thesis,'A strong contemporaneous setup');
+ const restored=structuredClone(r.next);
+ restored.archive[0].restoredAt='2026-11-14T11:00:00.000Z';
+ restored.archive[1].restoredAt='2026-11-14T11:00:01.000Z';
+ restored.positions[0].journalEntries.push(note);
+ restored.positions[0].planHistory.push(plan);
+ const merged=mergeFullBackup(r.next,restored);
+ assert.equal(merged.next.positions[0].journalEntries.length,1);
+ assert.equal(merged.next.positions[0].planHistory.length,1);
+ const again=mergeFullBackup(merged.next,before);
+ assert.equal(again.next.positions[0].journalEntries.length,1);
+ assert.equal(again.next.positions[0].planHistory.length,1);
+});
+
+test('older journal entries without IDs get consistent IDs across independent backup loads',()=>{
+ const initial=structuredClone(starter);initial.positions[0].journalEntries=[{date:'2026-10-02',body:'A legacy note',kind:'Journal / process'}];
+ initial.positions[0].planHistory=[{date:'2026-10-02',changes:{thesis:{before:'',after:'Legacy thesis'}}}];
+ const one=normalizeLedger(initial),two=normalizeLedger(initial);
+ assert.equal(one.positions[0].journalEntries[0].id,two.positions[0].journalEntries[0].id);
+ assert.equal(one.positions[0].planHistory[0].id,two.positions[0].planHistory[0].id);
+});
+
+test('a removed alternative plan from a stale backup is not reconstructed as a fresh conflict',()=>{
+ const current=normalizeLedger(starter);const p=current.positions[0];
+ p.thesis='Active new assessment';
+ p.planHistory=[];
+ const old=normalizeLedger(starter);
+ old.positions[0].thesis='Prior alternative interpretation';
+ const archived={id:'archive-old-plan',kind:'plan-revision',date:'2026-11-14T13:00:00.000Z',positionId:p.id,record:{id:'archived-alternative',date:'2026-11-14',changes:{thesis:{before:'Active new assessment',after:'Prior alternative interpretation'}}}};
+ current.archive.push(archived);
+ const merged=mergeFullBackup(current,old);
+ assert.equal(merged.next.positions[0].planHistory.length,0);
+ assert.equal(merged.report.conflicts,0);
+});

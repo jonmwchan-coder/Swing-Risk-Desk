@@ -210,3 +210,25 @@ html,body{max-width:100%}
 .cloud-panel [data-tone="good"]{border-color:#4a8e7e}
 .cloud-panel [hidden]{display:none!important}
 @media(max-width:690px){.cloud-login{display:grid;grid-template-columns:minmax(0,1fr)}.cloud-login .btn{width:100%}}
+
+
+/* v1.4: full-width desktop history without a horizontal scrollbar. */
+@media(min-width:1200px){
+ .app-shell.history-wide{width:min(1900px,100%);max-width:none}
+ .history-wide #historyTable.history-panel{overflow:visible;max-width:none}
+ .history-wide .expanded-ledger{width:100%;min-width:0;table-layout:fixed}
+ .history-wide .expanded-ledger th,.history-wide .expanded-ledger td{box-sizing:border-box;min-width:0;max-width:none;padding:12px 7px;overflow-wrap:anywhere;word-break:normal}
+ .history-wide .expanded-ledger th{font-size:9px;white-space:normal;letter-spacing:.035em}
+ .history-wide .expanded-ledger td:nth-child(2),.history-wide .expanded-ledger td:nth-child(5),.history-wide .expanded-ledger td:nth-child(6),.history-wide .expanded-ledger td:nth-child(7),.history-wide .expanded-ledger td:nth-child(8){min-width:0}
+ .history-wide .history-actions{gap:5px;flex-flow:row wrap;align-items:flex-start}
+ .history-wide .history-actions .tiny-btn{font-size:10px;line-height:1.25;padding:6px 7px}
+}
+.history-level-cell{font-variant-numeric:tabular-nums;font-feature-settings:"tnum";overflow-wrap:anywhere}
+.history-thesis-cell{overflow-wrap:anywhere}
+.journal-event-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.journal-event-head>div{display:flex;flex-direction:column;gap:4px;min-width:0}
+.timeline-remove{appearance:none;border:1px solid #5a747b;background:transparent;color:#bdced5;border-radius:8px;width:30px;height:30px;flex:0 0 30px;font-size:21px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.timeline-remove:hover,.timeline-remove:focus-visible{background:#603535;color:#fff;border-color:#dd9d99}
+.import-account-linked{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;padding:8px 3px;color:#b0c8ce;font-size:12px}
+.import-account-linked strong{color:#d8efeb}
+@media(max-width:690px){.timeline-remove{width:42px;height:42px;flex-basis:42px;font-size:23px}}
