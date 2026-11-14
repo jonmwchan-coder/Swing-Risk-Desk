@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#07121b">
+  <meta name="description" content="Private rolling five-session swing option risk calculator in Canadian dollars.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Swing Risk Desk">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+  <title>Swing Risk Desk | Five-session risk, made clear</title>
+</head>
+<body>
+<div class="app-shell" id="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true"><svg viewBox="0 0 36 36"><path d="M6 24l9-9 7 6 9-14m-9 0h9v9" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div><div class="eyebrow brand-eyebrow">PRIVATE TRADING WORKSPACE</div><h1>SWING <span>RISK DESK</span></h1></div>
+    </div>
+    <div class="topbar-actions"><span class="saved" id="saveStatus"><span class="saved-dot"></span>Local only</span><button class="btn btn-subtle desktop-only" type="button" data-action="export-backup">Backup data</button><button class="btn btn-primary" type="button" data-action="add-position">+ New position</button></div>
+  </header>
+
+  <section class="context-bar" aria-label="Portfolio and date">
+    <label class="context-field"><span>PORTFOLIO</span><select id="accountSelect" aria-label="Portfolio"><option>Sample Swing Account</option></select></label>
+    <label class="context-field date-field"><span>AS OF (EASTERN)</span><input id="asOfDate" type="date" aria-label="As of date"></label>
+    <button class="btn btn-subtle btn-today" data-action="today" type="button">Today</button>
+    <div class="calendar-caption"><span class="calendar-indicator"></span><span id="asOfCaption">NYSE sessions / US equity options</span></div>
+  </section>
+
+  <nav class="tabs" aria-label="Workspace views">
+    <button class="tab active" data-tab="dashboard" type="button" aria-current="page">Dashboard</button>
+    <button class="tab" data-tab="positions" type="button">Positions</button>
+    <button class="tab" data-tab="history" type="button">Trade history</button>
+    <button class="tab" data-tab="settings" type="button">Rules & data</button>
+  </nav>
+
+  <main>
+    <section id="view-dashboard" class="view">
+      <div class="hero panel">
+        <div class="hero-copy">
+          <div class="overline">AVAILABLE FOR NEW RISK <span id="heroBadge" class="pill pill-good">WITHIN PLAN</span></div>
+          <div class="hero-number" id="availableBig">CAD $600<span>.00</span></div>
+          <p class="hero-sub" id="heroSubtitle">Available after open risk and rolling realized losses.</p>
+          <div class="budget-track" id="budgetTrack" role="img" aria-label="Risk usage"><div class="track-open" id="trackOpen" style="width:0"></div><div class="track-loss" id="trackLoss"></div></div>
+          <div class="track-legend"><span><i class="legend-dot dot-open"></i> Open reserve</span><span><i class="legend-dot dot-loss"></i> Realized losses</span><span><i class="legend-dot dot-free"></i> Available</span></div>
+        </div>
+        <div class="hero-ring-area">
+          <div id="riskRing" class="risk-ring"><div class="ring-inner"><span>CAPACITY USED</span><strong id="usedPct">0%</strong></div></div>
+          <div class="ring-meta"><span id="windowLabel">5 trading sessions</span><small id="rangeLabel">Choose a session</small></div>
+        </div>
+      </div>
+
+      <div class="metric-grid">
+        <article class="metric-card"><div class="metric-title"><span class="metric-symbol green">&#9679;</span> OPEN RISK RESERVED</div><strong id="reservedMetric">$0.00</strong><small id="reservedHint">No open positions</small></article>
+        <article class="metric-card"><div class="metric-title"><span class="metric-symbol red">&#9679;</span> ROLLING REALIZED LOSSES</div><strong id="lossMetric">$0.00</strong><small id="lossHint">Profits never offset these losses</small></article>
+        <article class="metric-card"><div class="metric-title"><span class="metric-symbol muted">&#9679;</span> ROLLING RISK CEILING</div><strong id="capMetric">$600.00</strong><small id="capHint">3% of $20,000 CAD</small></article>
+        <article class="metric-card"><div class="metric-title"><span class="metric-symbol blue">&#9679;</span> OPEN PREMIUM AT COST</div><strong id="costMetric">$0.00</strong><small id="costHint">Remaining debit at current FX</small></article>
+      </div>
+
+      <div id="alerts" class="alert-stack" aria-live="polite"></div>
+
+      <div class="section-head"><div><div class="overline">LIVE EXPOSURE</div><h2>Open swing positions</h2></div><button class="text-link" type="button" data-tab="positions">Manage all <span aria-hidden="true">&#8594;</span></button></div>
+      <div id="dashboardPositions" class="position-grid"><div class="empty-state">Preparing positions...</div></div>
+
+      <div class="two-panel">
+        <section class="panel window-panel">
+          <div class="section-head section-head-compact"><div><div class="overline">SESSION-AWARE</div><h2>Rolling loss ledger</h2></div><span class="subtle-badge" id="rollingDaysLabel">Last 5 sessions</span></div>
+          <div class="session-strip" id="sessionStrip"></div>
+          <div class="release-box" id="releaseBox">Losses leave the calculation only when their session rolls out.</div>
+        </section>
+        <section class="panel scenario-panel">
+          <div class="section-head section-head-compact"><div><div class="overline">BEFORE YOU CLICK BUY</div><h2>Quick size check</h2></div><span class="subtle-badge">Not a trade signal</span></div>
+          <form id="quickPlanner" class="planner-grid">
+            <label><span>CONTRACTS</span><input name="qty" type="number" min="1" step="1" value="2" required></label>
+            <label><span>PRICE / SHARE (USD)</span><input name="price" type="number" min="0.01" step="0.01" value="1.50" required></label>
+            <label><span>ENTRY FEES (USD)</span><input name="fee" type="number" min="0" step="0.01" value="1.50"></label>
+            <label><span>STRESS LOSS %</span><input name="stress" type="number" min="0" max="100" step="1" value="70"></label>
+          </form>
+          <div class="planner-result" id="plannerResult" aria-live="polite"></div>
+          <button type="button" class="btn btn-outline btn-full" data-action="plan-to-position">Create position using this size</button>
+        </section>
+      </div>
+      <section class="panel runway-panel">
+        <div class="section-head section-head-compact"><div><div class="overline">IF NOTHING ELSE CHANGES</div><h2>Capacity over the next sessions</h2></div><span class="subtle-badge">Projection only</span></div>
+        <div class="runway-chart" id="runwayChart"></div>
+        <p class="help-line">Projects the release of already-realized losses. Assumes all currently open exposure stays open and no new trades occur.</p>
+      </section>
+    </section>
+
+    <section id="view-positions" class="view" hidden>
+      <div class="section-head"><div><div class="overline">EVERY CONTRACT COUNTS</div><h2>Positions & partial exits</h2></div><button class="btn btn-primary" type="button" data-action="add-position">+ Add position</button></div>
+      <div class="filter-bar"><button type="button" class="filter active" data-filter="open">Open <span id="openCount"></span></button><button type="button" class="filter" data-filter="all">All</button><button type="button" class="filter" data-filter="closed">Closed</button></div>
+      <div id="positionsFull" class="position-stack"></div>
+    </section>
+
+    <section id="view-history" class="view" hidden>
+      <div class="section-head"><div><div class="overline">REALIZED, NOT IMAGINED</div><h2>Trade history & cash outcomes</h2></div><button class="btn btn-outline" type="button" data-action="manual-pnl">+ Record outside loss / profit</button></div>
+      <div class="history-stats" id="historyStats"></div>
+      <p class="history-scroll-tip">Swipe sideways inside the ledger to see every column.</p><p class="help-line">Plan / target / invalidation columns show the <strong>latest recorded plan</strong>; open a position to see dated plan revisions. IBKR does not provide your trade thesis, TP decisions or underlying price at exit.</p>
+      <div id="historyTable" class="panel history-panel"></div>
+      <div class="panel note-panel"><strong>Calculation policy</strong><p>Every realized losing sale consumes capacity for its closing session and the following trading sessions until it rolls out. Profitable sales show in history, but do not erase losses. Closing a position releases its unused open reserve immediately. Entry debit is never counted as a realized loss.</p></div>
+    </section>
+
+    <section id="view-settings" class="view" hidden>
+      <div class="section-head"><div><div class="overline">YOUR OPERATING RULES</div><h2>Portfolio settings</h2></div><span class="subtle-badge">Edit anytime, recalculated live</span></div>
+      <div class="settings-layout">
+        <section class="panel settings-panel">
+          <form id="settingsForm">
+            <div class="form-grid">
+              <label class="span-2"><span>ACCOUNT LABEL</span><input name="name" type="text" maxlength="56" required></label>
+              <label><span>IBKR ACCOUNT ID (OPTIONAL)</span><input name="brokerAccountId" type="text" maxlength="40" placeholder="e.g. UXXXXXXXX"></label>
+              <label><span>CURRENT EQUITY (CAD)</span><input name="equityCad" type="number" min="0" max="100000000" step="0.01" required></label>
+              <label><span>FIVE-SESSION RISK (%)</span><input name="riskPct" type="number" min="0" max="100" step="0.1" required></label>
+              <label><span>WINDOW (TRADING SESSIONS)</span><input name="window" type="number" min="1" max="30" step="1" required></label>
+              <label><span>DEFAULT STRESS LOSS (%)</span><input name="stressPct" type="number" min="0" max="100" step="1" required></label>
+              <label><span>RESERVE ROUND-UP (CAD)</span><select name="roundStep"><option value="0">No rounding</option><option value="1">$1</option><option value="5">$5</option><option value="10">$10</option><option value="25">$25</option><option value="50">$50</option><option value="100">$100</option></select></label>
+              <label><span>RISK BASIS</span><select name="mode"><option value="stress">Stress-loss reserve</option><option value="strict">Full premium at risk</option></select></label>
+              <label><span>USD / CAD CONVERSION</span><input name="fx" type="number" min="0.01" max="100" step="0.0001" required></label>
+              <label class="span-2"><span>PLANNED LOSS CAP PER IDEA (CAD) / OPTIONAL</span><input name="ideaCapCad" type="number" min="0" step="1" placeholder="e.g. 200"></label>
+            </div>
+            <div class="fx-row"><div><strong id="fxDescriptor">1 USD = 1.4000 CAD</strong><p id="fxSource">Illustrative starting rate; replace with broker rate.</p></div><button class="btn btn-subtle" type="button" data-action="refresh-fx">Get Bank of Canada rate</button></div>
+            <button type="submit" class="btn btn-primary btn-full">Save portfolio settings</button>
+          </form>
+        </section>
+        <aside class="settings-aside">
+          <div class="panel aside-card"><div class="overline">WHY TWO DIFFERENT NUMBERS?</div><h3>Stress reserve vs. maximum debit</h3><p>A $420 CAD option debit with a 70% stress assumption reserves roughly $300. Its purchased premium remains the actual maximum loss if it goes to zero. This app does not pretend an estimated exit is guaranteed.</p><p>Your own invalidation and time stop need to be decided separately, before entry.</p></div>
+          <div class="panel aside-card"><div class="overline">ACCOUNT ISOLATION</div><h3>One budget per account</h3><p>Switch portfolios at the top to track BDI, TFSA, or any later account separately. Exposure across highly correlated ideas is not diversified just because it is entered in a separate account.</p><button type="button" class="btn btn-outline btn-full" data-action="add-account">+ Add another account</button><button type="button" class="text-link text-delete" data-action="delete-account">Remove selected account</button></div>
+        </aside>
+      </div>
+      <section class="panel data-panel" id="dataAndBackup">
+        <div class="section-head section-head-compact"><div><div class="overline">BROKER + JOURNAL + RECOVERY</div><h2>Import, export & protect your records</h2></div><span class="subtle-badge">Private / this browser</span></div>
+        <p class="data-lead">Use an IBKR trade CSV to reconcile executed orders. Use your <strong>one complete JSON file</strong> as both a full backup and a ChatGPT master-update handoff. Re-importing an overlapping file matches existing transactions instead of blindly appending them.</p>
+        <div class="sync-steps"><div><span class="step-num">1</span><div><strong>Import IBKR executions</strong><small>Detect contract, account, side, quantity, fees and duplicate fills. Missing buy history is held for review.</small></div></div><div><span class="step-num">2</span><div><strong>Write your decision notes</strong><small>Add dated, append-only psychology, catalyst, thesis changes and management notes to a position.</small></div></div><div><span class="step-num">3</span><div><strong>Download one complete file</strong><small>Save it to Google Drive. Re-import to restore or upload the exact same file to ChatGPT.</small></div></div></div>
+        <div class="backup-status" id="backupStatus" aria-live="polite">Checking local backup status...</div>
+        <div class="data-actions"><button class="btn btn-primary" type="button" data-action="export-backup">Download full backup / ChatGPT handoff</button><button class="btn btn-outline" type="button" data-action="import-ibkr">Import IBKR trades CSV</button><button class="btn btn-outline" type="button" data-action="import-open">Restore / merge JSON or CSV</button><button class="btn btn-subtle" type="button" data-action="export-csv">Export activity CSV</button><button class="btn btn-subtle" type="button" data-action="template-csv">CSV template</button></div>
+        <div class="tiny-info" id="importSummary"><strong>How imports work:</strong> Each IBKR fill is tied to its original account, option contract, timestamp and economics, not to the export filename. If the source cannot be reconciled safely, it is preserved below for your review rather than silently counted as a second trade.</div>
+        <div id="importInbox" class="inbox-panel"></div>
+        <div class="tiny-info"><strong>Master update handoff:</strong> Upload the downloaded JSON to ChatGPT and explicitly say <strong>“commit to master”</strong> when you want the canonical trading and market masters updated. The app never edits either Google Sheet on its own. The handoff contains journal notes and plan-change history with timestamps, not just trade totals.</div>
+        <div class="tiny-info">Data is stored locally in your browser with an additional IndexedDB recovery copy when available. <strong>Neither is cloud backup.</strong> Clearing site data, losing your device or switching to a new Vercel domain can remove the records. Save each complete JSON backup to Drive after making changes.</div>
+      </section>
+      <section class="panel cloud-panel" id="cloudPanel">
+        <div class="section-head section-head-compact"><div><div class="overline">CROSS-DEVICE PRIVATE HISTORY</div><h2>Cloud synchronization</h2></div><span class="subtle-badge">Optional · login required</span></div>
+        <p class="data-lead">Sign in using an emailed one-time link to synchronize your complete ledger across devices. Sync uses a private user-only database and revision checks to prevent silent overwrites. Your complete JSON export always works independently.</p>
+        <div id="cloudStatus" class="backup-status" aria-live="polite">Checking cloud availability…</div>
+        <p id="cloudAccount" class="help-line">Not signed in</p>
+        <form id="cloudSignInForm" class="cloud-login"><label><span>EMAIL FOR PRIVATE SIGN-IN</span><input id="cloudEmail" type="email" autocomplete="email" placeholder="you@example.com" maxlength="254" required disabled></label><button id="cloudSignIn" class="btn btn-primary" type="submit" disabled>Email sign-in link</button></form>
+        <div class="data-actions"><button id="cloudSyncNow" class="btn btn-outline" type="button" disabled>Sync now / check other devices</button><button id="cloudSignOut" class="btn btn-subtle" type="button" hidden>Sign out of cloud</button></div>
+        <div class="tiny-info"><strong>Safety:</strong> Browser saves are immediate. Cloud saves require an active connection and signed-in session; if cloud is offline, keep working locally and export a complete JSON backup. Connecting a browser with separate data asks before merging. Cloud sync does not update the DK trading master automatically.</div>
+      </section>
+      <section class="panel calendar-panel"><div class="overline">MARKET CALENDAR</div><h3>Custom non-trading days</h3><p>Official NYSE 2026-2028 market holidays are included; early-closing days still count as sessions. Add an exceptional closure date if needed.</p>
+        <form id="closedDayForm" class="closed-day-form"><label><span>CLOSED DATE</span><input name="date" type="date" required></label><button type="submit" class="btn btn-outline">Add closure</button></form>
+        <div id="customClosedDays" class="tag-row"></div>
+      </section>
+      <div class="bottom-danger"><button type="button" class="text-link text-delete" data-action="reset-data">Reset all locally saved data</button><small>Does not change anything in Google Sheets or IBKR.</small></div>
+    </section>
+  </main>
+  <footer><span>SWING RISK DESK / v1.3</span><span>Process over P&amp;L. All figures in CAD unless marked USD.</span></footer>
+</div>
+<dialog id="editorDialog" class="editor-dialog"><div class="dialog-content"><div class="dialog-header"><div><div class="overline" id="dialogEyebrow">POSITION</div><h2 id="dialogTitle">New position</h2></div><button type="button" class="icon-button" data-action="close-dialog" aria-label="Close dialog">&#10005;</button></div><div id="dialogBody"></div></div></dialog>
+<input id="importFile" type="file" accept=".json,.csv,application/json,text/csv" hidden>
+<input id="ibkrFile" type="file" accept=".csv,text/csv" hidden>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script type="module" src="./app.js"></script>
+</body>
+</html>
