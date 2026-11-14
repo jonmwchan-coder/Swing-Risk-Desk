@@ -1,0 +1,32 @@
+{
+  "schema": "swing-risk-desk-journal-v1",
+  "positions": [
+    {
+      "id": "example-2026-11-16-call",
+      "externalId": "example-2026-11-16-call",
+      "accountId": "bdi",
+      "ticker": "EXAMPLE",
+      "optionType": "Call",
+      "strike": 100,
+      "expiry": "2026-12-18",
+      "sector": "Example sector",
+      "ideaId": "EXAMPLE-2026-11",
+      "underlyingInvalidation": "Daily close below 95",
+      "stopPremiumUsd": 1.5,
+      "stressPct": 70,
+      "source": "Example journal import; replace with actual source IDs",
+      "fills": [
+        {
+          "id": "example-fill-1",
+          "date": "2026-11-16",
+          "time": "10:00:00",
+          "qty": 1,
+          "price": 2,
+          "fee": 0.75,
+          "fx": 1.4
+        }
+      ],
+      "exits": []
+    }
+  ]
+}

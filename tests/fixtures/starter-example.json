@@ -1,0 +1,59 @@
+{
+  "schema": "swing-risk-desk-v1",
+  "accounts": [
+    {
+      "id": "bdi",
+      "name": "Example $20K Account",
+      "brokerAccountId": "U99999999",
+      "equityCad": 20000,
+      "riskPct": 3,
+      "window": 5,
+      "stressPct": 70,
+      "roundStep": 25,
+      "mode": "stress",
+      "fx": 1.4,
+      "fxSource": "Synthetic FX for tests",
+      "ideaCapCad": 200
+    }
+  ],
+  "positions": [
+    {
+      "id": "DEMO-SWING-NOV13",
+      "accountId": "bdi",
+      "externalId": "EXAMPLE-DEMO",
+      "ticker": "DEMO",
+      "optionType": "Put",
+      "strike": 125,
+      "expiry": "2026-11-20",
+      "ideaId": "SWING-EXAMPLE-DEMO",
+      "sector": "",
+      "source": "Synthetic test",
+      "underlyingInvalidation": "",
+      "targetLevels": "",
+      "notes": "Fictional test data",
+      "fills": [
+        {
+          "id": "synthetic-1",
+          "date": "2026-10-02",
+          "time": "10:11:12",
+          "qty": 1,
+          "price": 2.73,
+          "fee": 0.31,
+          "fx": 1.4
+        },
+        {
+          "id": "synthetic-2",
+          "date": "2026-10-02",
+          "time": "14:12:13",
+          "qty": 1,
+          "price": 2.19,
+          "fee": 0.33,
+          "fx": 1.4
+        }
+      ],
+      "exits": []
+    }
+  ],
+  "adjustments": [],
+  "customClosed": []
+}
