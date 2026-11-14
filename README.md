@@ -1,6 +1,12 @@
-# Swing Risk Desk v1.5 (responsive history + journal controls)
+# Swing Risk Desk v1.6 (multi-entry sizing + private cloud journal)
 
-Private, responsive options swing-trading risk desk for a **rolling NYSE-session loss budget in Canadian dollars**. A small Vercel-ready website, no server-side trading database, no account passwords, and no broker API access.
+## v1.6: Compact multi-entry size planning (November 2026)
+
+The Dashboard's **Quick size check** starts with one idea. Click **+ Add idea** only when planning more simultaneous entries (up to 8). Each scratchpad row has an optional label such as `INTC 1/15/27 70C`, quantity, premium per share in USD, total entry fees in USD, and individual stress %. The bottom summary shows risk already available, **combined draft reserves** with each option rounded separately, and risk still available after all planned entries. The per-idea line shows its reserve and the running remainder. If the combined ideas breach the portfolio limit, it is clearly flagged; unpriced rows are shown as incomplete rather than assumed risk-free. Existing open reserves and realized rolling losses are already deducted from starting capacity. Strict mode reserves the entire entry debit. This is a **planning scratchpad, not a market order or logged trade**; its contents live only in browser-tab session storage, separated by portfolio, and do not enter Supabase, real account risk, JSON backup or IBKR history.
+
+Use **Record** on a filled draft to open the normal New position form with the size prefilled. The optional `TICKER M/D/YY STRIKEC` / `STRIKEP` label is parsed into ticker, expiry, strike and type when clearly recognizable; confirm before recording. On successful submission only that draft is removed, so the actual live reserve replaces it rather than being counted twice. Cancelling keeps the draft. Other draft ideas remain and re-evaluate against updated available capacity.
+
+Private, responsive options swing-trading risk desk for a **rolling NYSE-session loss budget in Canadian dollars**. A small Vercel-ready website with an optional authenticated Supabase cloud ledger; no IBKR account passwords or broker API access.
 
 ## Cloud synchronization: secure configuration is required
 

@@ -22,5 +22,8 @@ assert.ok(h.includes("<th>TP</th>"));
 assert.ok(h.includes("<th>INVALIDATION</th>"));
 assert.match(h,/DEMO/);
 assert.match(getElementById('dashboardPositions').innerHTML,/DEMO/);
+assert.match(getElementById('quickPlanner').innerHTML,/draft-idea/);
+assert.match(getElementById('plannerResult').innerHTML,/INCOMPLETE/);
+assert.match(getElementById('plannerResult').innerHTML,/Combined planned/);
 assert.match(getElementById('importInbox').innerHTML,/Import exceptions/);
 console.log('App module boot/render smoke passed.');

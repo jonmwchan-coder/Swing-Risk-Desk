@@ -3,6 +3,7 @@ import {isSession,torontoToday,onOrBeforeSession,parseDay,dayOffset} from './lib
 import {SCHEMA,normalizeLedger,importIbkrTrades,mergeFullBackup,makeJournalEntry,recordPlanEdit,backupSnapshot} from './lib/ledger.mjs';
 import {isIbkrCsv,parseIbkrTrades} from './lib/ibkr.mjs';
 import {createCloudController} from './lib/cloud.mjs';
+import {calculatePlanBasket,defaultPlanIdea,parsePlannedContract,MAX_PLAN_IDEAS} from './lib/planner.mjs';
 
 const STORAGE_KEY='swing-risk-desk:data:v1';
 const $=id=>document.getElementById(id);
@@ -33,7 +34,33 @@ let positionFilter='open';
 let asOfOverride=null;
 let toastTimer=null;
 let plannerPrefill=null;
-let plannerStressCustomized=false;
+const DRAFT_SESSION_KEY='swing-risk-desk:planning-board:v1';
+function readDrafts(){try{const data=JSON.parse(sessionStorage.getItem(DRAFT_SESSION_KEY)||'{}');return data&&typeof data==='object'&&!Array.isArray(data)?data:{};}catch{return {};}}
+let plannerDrafts=readDrafts();
+function persistPlannerDrafts(){try{sessionStorage.setItem(DRAFT_SESSION_KEY,JSON.stringify(plannerDrafts));}catch{}}
+function plannerIdeas(accountId=account().id){
+ let ideas=plannerDrafts[accountId];
+ if(!Array.isArray(ideas)||!ideas.length){ideas=[defaultPlanIdea(uid(),account().stressPct,true)];plannerDrafts[accountId]=ideas;persistPlannerDrafts();}
+ const normalized=ideas.filter(x=>x&&typeof x==='object'&&typeof x.id==='string').slice(0,MAX_PLAN_IDEAS);
+ if(!normalized.length){normalized.push(defaultPlanIdea(uid(),account().stressPct,true));}
+ if(normalized.length!==ideas.length){plannerDrafts[accountId]=normalized;persistPlannerDrafts();}
+ return plannerDrafts[accountId];
+}
+function dropPlannerIdea(draftId,renderAfter=true){
+ const ideas=plannerIdeas();const index=ideas.findIndex(x=>x.id===draftId);
+ if(index<0)return;
+ ideas.splice(index,1);
+ if(!ideas.length)ideas.push(defaultPlanIdea(uid(),account().stressPct,false));
+ persistPlannerDrafts();if(renderAfter)renderPlanner(analytics());
+}
+function beginPlannedPosition(draftId){
+ const draft=plannerIdeas().find(x=>x.id===draftId);
+ if(!draft)return showToast('That draft is no longer present.');
+ const candidate=calculatePlanBasket([draft],account(),analytics().availableCad).rows[0];
+ if(!candidate?.valid)return showToast(candidate?.reason||'Enter a valid size before recording.');
+ plannerPrefill={...draft,draftId,...parsePlannedContract(draft.label)};
+ addPosition();
+}
 function account(){return state.accounts.find(a=>a.id===activeAccountId)||state.accounts[0];}
 function asOf(){return asOfOverride||today();}
 function analytics(){return calculateAccount(state,account().id,asOf());}
@@ -196,10 +223,41 @@ function renderSettings(a){const f=$('settingsForm');const tracked=calculateAcco
  renderInbox();updateBackupBadge();
   $('customClosedDays').innerHTML=(state.customClosed||[]).map(d=>`<span class="date-tag">${esc(fmtDate(d,true))}<button type="button" data-action="remove-closed-day" data-date="${esc(d)}" aria-label="Remove closure ${esc(d)}">x</button></span>`).join('')||'<span class="help-line">No extra closure dates.</span>';
 }
-function renderPlanner(m){const f=$('quickPlanner');const qty=Math.floor(num(f.elements.namedItem('qty').value));const price=num(f.elements.namedItem('price').value);const fee=num(f.elements.namedItem('fee').value);const pct=Math.min(100,Math.max(0,num(f.elements.namedItem('stress').value,m.account.stressPct)));
- if(qty<1||qty>100000||price<=0||price>100000||fee<0){$('plannerResult').innerHTML='<div class="result-line">Enter positive contracts and premium to calculate risk.</div>';return;}
- const cost=qty*price*100+fee;const reserve=roundUp(cost*m.account.fx*(m.account.mode==='strict'?100:pct)/100,m.account.roundStep);const after=m.availableCad-reserve;
- $('plannerResult').innerHTML=`<div class="result-line"><span>Option debit / entry cost</span><strong>${usd(cost)}</strong></div><div class="result-line"><span>Equivalent purchase (CAD)</span><strong>${money(cost*m.account.fx)}</strong></div><div class="result-line"><span>New ${m.account.mode==='strict'?'full-debit':'stress'} reserve</span><strong>${money(reserve)}</strong></div><div class="result-line result-main ${after<0?'negative':''}"><span>Available risk after entry</span><strong>${money(after)}</strong></div><div class="result-line"><span>${after>=0?'Within rolling limit':'NO TRADE / budget breach'}</span><strong class="${after>=0?'pos':'neg'}">${after>=0?'FITS':'DOES NOT FIT'}</strong></div>`;
+function renderPlanner(m){
+ const ideas=plannerIdeas(m.account.id);
+ let changed=false;
+ for(const idea of ideas){if(!idea.stressCustom&&String(idea.stress)!==String(m.account.stressPct)){idea.stress=String(m.account.stressPct);changed=true;}}
+ if(changed)persistPlannerDrafts();
+ $('quickPlanner').innerHTML=ideas.map((idea,index)=>`<article class="draft-idea" data-draft-id="${esc(idea.id)}">
+  <div class="draft-head"><strong>IDEA ${index+1}</strong><input type="text" name="label" maxlength="80" value="${esc(idea.label||'')}" placeholder="INTC 1/15/27 70C" aria-label="Idea ${index+1} ticker and option contract (optional)">
+   <button type="button" class="draft-record" data-action="plan-to-position" data-plan-id="${esc(idea.id)}" title="Open a prefilled New position form; no trade recorded until submitted">Record</button>
+   <button type="button" class="draft-remove" data-action="remove-plan-idea" data-plan-id="${esc(idea.id)}" aria-label="Remove draft idea ${index+1}" title="Remove this draft">×</button></div>
+  <div class="draft-fields">
+   <label><span>QTY</span><input type="number" inputmode="numeric" name="qty" min="1" step="1" value="${esc(idea.qty)}" aria-label="Idea ${index+1} contract quantity"></label>
+   <label><span>PREMIUM USD</span><input type="number" inputmode="decimal" name="price" min="0.01" step="0.01" value="${esc(idea.price)}" aria-label="Idea ${index+1} price per share in USD"></label>
+   <label><span>FEES USD</span><input type="number" inputmode="decimal" name="fee" min="0" step="0.01" value="${esc(idea.fee)}" aria-label="Idea ${index+1} total entry commissions in USD"></label>
+   <label><span>STRESS %</span><input type="number" inputmode="numeric" name="stress" min="0" max="100" step="1" value="${esc(idea.stress)}" aria-label="Idea ${index+1} stress loss percent" ${m.account.mode==='strict'?'title="Strict mode reserves 100% of debit"':''}></label>
+  </div>
+  <div class="draft-metrics" data-plan-status="${esc(idea.id)}"></div>
+ </article>`).join('');
+ const addBtn=document.querySelector('[data-action="add-plan-idea"]');
+ if(addBtn)addBtn.disabled=ideas.length>=MAX_PLAN_IDEAS;
+ updatePlannerMetrics(m);
+}
+function updatePlannerMetrics(m){
+ const ideas=plannerIdeas(m.account.id);const result=calculatePlanBasket(ideas,m.account,m.availableCad);
+ for(const r of result.rows){const el=[...document.querySelectorAll('[data-plan-status]')].find(x=>x.dataset.planStatus===r.id);if(!el)continue;
+  if(!r.valid){el.className='draft-metrics draft-incomplete';el.textContent=r.reason;continue;}
+  const warning=r.overIdeaCap?` · Above ${money(m.account.ideaCapCad)} idea cap`:'';
+  el.className=`draft-metrics ${r.overBudget?'draft-breach':''}`;
+  el.innerHTML=`<span>Reserve <strong>${money(r.reserveCad)}</strong> CAD${esc(warning)}</span><span>Left after this <strong>${money(r.remainingCad)}</strong></span>`;
+ }
+ $('planIdeaCount').textContent=`${result.total} of ${MAX_PLAN_IDEAS} drafts · ${result.priced} priced`;
+ $('plannerResult').innerHTML=`<div class="result-line"><span>Available before drafts</span><strong>${money(result.availableCad)}</strong></div>
+  <div class="result-line"><span>Combined planned ${m.account.mode==='strict'?'full-debit':'stress'} reserve</span><strong>${money(result.plannedReserveCad)}</strong></div>
+  <div class="result-line"><span>Combined entry debit (USD)</span><strong>${usd(result.plannedDebitUsd)}</strong></div>
+  <div class="result-line result-main ${result.overBudget?'negative':''}"><span>Risk left after all drafts</span><strong>${money(result.remainingCad)}</strong></div>
+  <div class="result-line"><span>${!result.complete?'Enter prices for remaining drafts':result.overBudget?'Combined draft entries breach your rolling risk limit':result.overIdeaCap?'Combined budget fits; review individual idea caps':'All priced drafts fit the rolling budget'}</span><strong class="${result.overBudget?'neg':result.complete&&!result.overIdeaCap?'pos':'risk-warning'}">${result.overBudget?'OVER BUDGET':!result.complete?'INCOMPLETE':result.overIdeaCap?'CAP REVIEW':'FITS'}</strong></div>`;
 }
 function switchTab(tab){if(!['dashboard','positions','history','settings'].includes(tab))return;activeTab=tab;render();}
 function field(label,name,type='text',value='',opts={}){const attr=Object.entries(opts).map(([k,v])=>` ${k}="${esc(v)}"`).join('');return `<label class="${opts.full?'span-2':''}"><span>${esc(label)}</span><input name="${esc(name)}" type="${type}" value="${esc(value??'')}"${attr}></label>`;}
@@ -215,10 +273,10 @@ function validateDeal(a,qty,price,fee,fx,date){requireRange(qty,1,99999,'Contrac
 function maybeBreach(before,newReserve){if(newReserve>before.availableCad+0.01){return confirm(`This adds ${money(newReserve)} risk but only ${money(Math.max(0,before.availableCad))} is available. Record as an over-budget historical execution anyway?`);}return true;}
 function addPosition(){const a=account(),pref=plannerPrefill;plannerPrefill=null;const now=onOrBeforeSession(asOf(),state.customClosed||[]);
  const body=`<p class="modal-intro">Entry date, exact premium and fees determine the cost. Your 70% assumption affects the reserve, not a broker stop order.</p><form><div class="modal-grid">
- ${field('TICKER','ticker','text','',{required:'required',maxlength:12})}
- ${selectField('OPTION TYPE','optionType',[['Put','Put'],['Call','Call']],'Put')}
- ${field('STRIKE (USD)','strike','number','',{min:0,step:.01,required:'required'})}
- ${field('EXPIRY','expiry','date','',{required:'required'})}
+ ${field('TICKER','ticker','text',pref?.ticker||'',{required:'required',maxlength:12})}
+ ${selectField('OPTION TYPE','optionType',[['Put','Put'],['Call','Call']],pref?.optionType||'Put')}
+ ${field('STRIKE (USD)','strike','number',pref?.strike??'',{min:0,step:.01,required:'required'})}
+ ${field('EXPIRY','expiry','date',pref?.expiry||'',{required:'required'})}
  ${field('CONTRACTS','qty','number',pref?.qty||2,{min:1,step:1,required:'required'})}
  ${field('ENTRY PRICE PER SHARE (USD)','price','number',pref?.price||'',{min:0,step:.0001,required:'required'})}
  ${field('TOTAL ENTRY COMMISSIONS (USD)','fee','number',pref?.fee??0,{min:0,step:.0001})}
@@ -246,7 +304,7 @@ function addPosition(){const a=account(),pref=plannerPrefill;plannerPrefill=null
  const newReserve=roundUp((qty*price*100+fee)*a.fx*(a.mode==='strict'?100:(stress??a.stressPct))/100,a.roundStep);
  if(!maybeBreach(analytics(),newReserve))return false;
  const position={id:uid(),externalId:'',source:'Manual entry',accountId:a.id,ticker,optionType:getText(d,'optionType'),strike,expiry,sector:getText(d,'sector'),ideaId:getText(d,'ideaId')||`${ticker}-${date}`,underlyingInvalidation:getText(d,'underlyingInvalidation'),targetLevels:getText(d,'targetLevels'),stopPremiumUsd:optional(getText(d,'stopPremiumUsd')),stressPct:stress,fixedReserveCad:null,reviewBy:getText(d,'reviewBy'),thesis:getText(d,'thesis'),catalyst:getText(d,'catalyst'),entryReason:getText(d,'entryReason'),managementPlan:getText(d,'managementPlan'),notes:getText(d,'notes'),journalEntries:[],planHistory:[],fills:[{id:uid(),date,time:getText(d,'time'),timeUnverified:!getText(d,'time'),qty,price,fee,fx}],exits:[]};
- position.planHistory.push({id:uid(),date,createdAt:new Date().toISOString(),source:'Initial plan recorded in app (entry-time status not independently verified)',changes:Object.fromEntries(['underlyingInvalidation','targetLevels','thesis','catalyst','entryReason','managementPlan','notes'].filter(k=>position[k]).map(k=>[k,{before:'',after:position[k]}]))});state.positions.push(position);showToast(`Added ${qty} ${ticker} contract${qty!==1?'s':''}.`);return true;
+ position.planHistory.push({id:uid(),date,createdAt:new Date().toISOString(),source:'Initial plan recorded in app (entry-time status not independently verified)',changes:Object.fromEntries(['underlyingInvalidation','targetLevels','thesis','catalyst','entryReason','managementPlan','notes'].filter(k=>position[k]).map(k=>[k,{before:'',after:position[k]}]))});state.positions.push(position);if(pref?.draftId)dropPlannerIdea(pref.draftId,false);showToast(`Added ${qty} ${ticker} contract${qty!==1?'s':''}.`);return true;
  });
  const preview=()=>{const d=new FormData(f);const q=num(d.get('qty')),price=num(d.get('price')),fee=num(d.get('fee')),fx=num(d.get('fx'),a.fx),stress=optional(d.get('stressPct'))??a.stressPct;
  const cost=q*price*100+fee,raw=cost*a.fx*(a.mode==='strict'?1:stress/100),reserve=roundUp(raw,a.roundStep);
@@ -367,7 +425,7 @@ function saveSettings(e){e.preventDefault();const f=e.currentTarget,d=new FormDa
  }
  Object.assign(a,{name,brokerAccountId,riskPct,window,stressPct,fx,roundStep:step,mode:getText(d,'mode')==='strict'?'strict':'stress',ideaCapCad:optional(getText(d,'ideaCapCad'))});
  if(fx!==oldFx){a.fxSource='Manually entered (broker rate if supplied)';a.fxDate='';}
- if(!plannerStressCustomized)$('quickPlanner').elements.stress.value=a.stressPct;save();render();showToast(equityRebased?'Equity checkpoint saved. New realized P/L will now update account equity automatically.':'Portfolio rules recalculated; tracked equity preserved.');
+ save();render();showToast(equityRebased?'Equity checkpoint saved. New realized P/L will now update account equity automatically.':'Portfolio rules recalculated; tracked equity preserved.');
  }catch(err){showToast(err.message);}
 }
 async function refreshFx(){const btn=document.querySelector('[data-action="refresh-fx"]');btn.disabled=true;btn.textContent='Checking reference rate...';
@@ -527,14 +585,16 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'add-account':addAccount();break;
  case 'close-dialog':$('editorDialog').close();break;
  case 'today':asOfOverride=null;render();break;
- case 'plan-to-position':{const f=$('quickPlanner');plannerPrefill={qty:f.elements.qty.value,price:f.elements.price.value,fee:f.elements.fee.value,stress:f.elements.stress.value};addPosition();break;}
+ case 'plan-to-position':beginPlannedPosition(el.dataset.planId);break;
+ case 'add-plan-idea':{const ideas=plannerIdeas();if(ideas.length>=MAX_PLAN_IDEAS){showToast(`Maximum ${MAX_PLAN_IDEAS} draft ideas.`);break;}const idea=defaultPlanIdea(uid(),account().stressPct,false);ideas.push(idea);persistPlannerDrafts();renderPlanner(analytics());document.querySelectorAll('.draft-idea [name="label"]')[ideas.length-1]?.focus();break;}
+ case 'remove-plan-idea':dropPlannerIdea(el.dataset.planId);break;
  case 'export-backup':exportBackup();break;
  case 'export-csv':exportCsv();break;
  case 'template-csv':exportCsv(true);break;
  case 'import-open':$('importFile').click();break;
  case 'import-ibkr':$('ibkrFile').click();break;
  case 'refresh-fx':refreshFx();break;
- case 'reset-data':if(confirm('Reset every locally stored account, position, note and transaction? A full safety backup will download first. Proceed ONLY after saving that file securely.')){download(`swing-risk-desk-BEFORE-RESET-${today()}.json`,JSON.stringify(backupSnapshot(state),null,2));state=seed();activeAccountId='bdi';asOfOverride=null;save();render();showToast('Local data reset. Safety backup download was initiated.');}break;
+ case 'reset-data':if(confirm('Reset every locally stored account, position, note and transaction? A full safety backup will download first. Proceed ONLY after saving that file securely.')){download(`swing-risk-desk-BEFORE-RESET-${today()}.json`,JSON.stringify(backupSnapshot(state),null,2));state=seed();activeAccountId='bdi';asOfOverride=null;plannerDrafts={};try{sessionStorage.removeItem(DRAFT_SESSION_KEY);}catch{}save();render();showToast('Local data reset. Safety backup download was initiated.');}break;
  case 'delete-account':{const a=account();if(state.accounts.length<=1){showToast('At least one account must remain.');break;}if(state.positions.some(p=>p.accountId===a.id)||state.adjustments.some(x=>x.accountId===a.id)){showToast('This account contains records. Export and remove its records first.');break;}if(confirm(`Delete empty account ${a.name}?`)){state.accounts=state.accounts.filter(x=>x.id!==a.id);activeAccountId=state.accounts[0].id;save();render();}break;}
  case 'delete-position':{const p=findPosition(id);if(confirm(`Archive ${p.ticker} and all its executions? They will leave active calculations but remain in your full backup and can be restored.`)){archiveRecord('position',p.ticker,p);state.positions=state.positions.filter(x=>x.id!==id);save();render();showToast('Position archived; restorable in Rules & data.');}break;}
  case 'delete-tx':deleteTransaction(id,el.dataset.tx,el.dataset.side);break;
@@ -547,9 +607,16 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
 
 document.addEventListener('click',e=>{const tab=e.target.closest('[data-tab]');if(tab){switchTab(tab.dataset.tab);return;}const filter=e.target.closest('[data-filter]');if(filter){positionFilter=filter.dataset.filter;renderPositions(analytics());return;}const action=e.target.closest('[data-action]');if(action){runAction(action.dataset.action,action);}});
 $('editorDialog').addEventListener('click',e=>{if(e.target===$('editorDialog'))$('editorDialog').close();});
-$('accountSelect').addEventListener('change',e=>{activeAccountId=e.target.value;plannerStressCustomized=false;$('quickPlanner').elements.stress.value=account().stressPct;render();});
+$('accountSelect').addEventListener('change',e=>{activeAccountId=e.target.value;render();});
 $('asOfDate').addEventListener('change',e=>{const d=e.target.value;if(parseDay(d)){asOfOverride=d;render();}else showToast('Enter a valid date.');});
-$('quickPlanner').addEventListener('input',e=>{if(e.target?.name==='stress')plannerStressCustomized=true;renderPlanner(analytics());});
+$('quickPlanner').addEventListener('input',e=>{
+ const draftEl=e.target.closest('[data-draft-id]');if(!draftEl)return;
+ const idea=plannerIdeas().find(x=>x.id===draftEl.dataset.draftId);
+ if(!idea||!['label','qty','price','fee','stress'].includes(e.target.name))return;
+ idea[e.target.name]=e.target.value;
+ if(e.target.name==='stress')idea.stressCustom=true;
+ persistPlannerDrafts();updatePlannerMetrics(analytics());
+});
 $('settingsForm').addEventListener('submit',saveSettings);
 $('cloudSignInForm').addEventListener('submit',async e=>{e.preventDefault();const btn=$('cloudSignIn');btn.disabled=true;
  try{await cloudController.signIn($('cloudEmail').value.trim());showToast('Check your email for the cloud sign-in link.');}
