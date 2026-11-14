@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {parseIbkrTrades,isIbkrCsv,occContract} from '../lib/ibkr.mjs';
 import {normalizeLedger,importIbkrTrades,mergeFullBackup,makeJournalEntry,recordPlanEdit,backupSnapshot} from '../lib/ledger.mjs';
+import {onOrBeforeSession,torontoToday} from '../lib/calendar.mjs';
+import {calculateAccount} from '../lib/risk.mjs';
 const ibkr=fs.readFileSync(new URL('./fixtures/ibkr-example.csv', import.meta.url),'utf8');
 const starter=JSON.parse(fs.readFileSync(new URL('./fixtures/starter-example.json', import.meta.url),'utf8'));
 test('parse synthetic IBKR-style two exact option fills and commissions',()=>{
@@ -222,4 +224,33 @@ test('a removed alternative plan from a stale backup is not reconstructed as a f
  const merged=mergeFullBackup(current,old);
  assert.equal(merged.next.positions[0].planHistory.length,0);
  assert.equal(merged.report.conflicts,0);
+});
+
+
+test('v1.4 migration freezes manually entered broker equity instead of double counting past realized P/L',()=>{
+ const legacy=structuredClone(starter);
+ legacy.accounts[0].equityCad=23000;
+ delete legacy.accounts[0].equityCheckpoints;
+ legacy.positions=[];
+ legacy.adjustments=[{id:'past-gain',accountId:'bdi',date:'2026-10-01',pnlCad:1000,note:'already reflected in broker balance'}];
+ const migrated=normalizeLedger(legacy);
+ assert.equal(migrated.accounts[0].equityCheckpoints.length,1);
+ assert.equal(migrated.accounts[0].equityCheckpoints[0].date,onOrBeforeSession(torontoToday()));
+ assert.equal(migrated.accounts[0].equityCheckpoints[0].realizedPnlCad,1000);
+ assert.equal(migrated.accounts[0].equityCheckpoints[0].equityCad,23000);
+ const m=calculateAccount(migrated,'bdi',torontoToday());
+ assert.equal(m.currentEquityCad,23000);
+ assert.equal(m.budgetCad,690);
+ const again=normalizeLedger(migrated);
+ assert.deepEqual(again.accounts[0].equityCheckpoints,migrated.accounts[0].equityCheckpoints);
+ assert.equal(JSON.stringify(backupSnapshot(again)).includes('equityCheckpoints'),true);
+});
+
+test('broker account imported with unknown equity remains at zero until its balance is entered',()=>{
+ const initial=normalizeLedger({...starter,positions:[],accounts:[]});
+ const result=importIbkrTrades(initial,ibkr);
+ const a=result.next.accounts[0];
+ assert.equal(a.equityCad,0);
+ assert.equal(a.equityCheckpoints[0].equityCad,0);
+ assert.equal(a.equityCheckpoints[0].realizedPnlCad,0);
 });

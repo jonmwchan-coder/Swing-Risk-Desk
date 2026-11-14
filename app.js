@@ -18,7 +18,7 @@ const optional=(v)=>v===''||v===null||v===undefined?null:Number(v);
 const today=()=>torontoToday();
 function seed(){return {
   schema:SCHEMA,
-  accounts:[{id:'bdi',name:'Sample Swing Account',equityCad:20000,riskPct:3,window:5,stressPct:70,roundStep:25,mode:'stress',fx:1.4,fxSource:'Illustrative assumption, not a live quote',fxDate:'',ideaCapCad:200,brokerAccountId:''}],
+  accounts:[{id:'bdi',name:'Sample Swing Account',equityCad:20000,equityCheckpoints:[{id:'equity-initial-bdi',date:onOrBeforeSession(today()),createdAt:new Date().toISOString(),equityCad:20000,realizedPnlCad:0,source:'Initial account equity'}],riskPct:3,window:5,stressPct:70,roundStep:25,mode:'stress',fx:1.4,fxSource:'Illustrative assumption, not a live quote',fxDate:'',ideaCapCad:200,brokerAccountId:''}],
   positions:[],adjustments:[],customClosed:[],brokerInbox:[],importLog:[],conflicts:[],archive:[],revision:0,lastBackupRevision:0,lastBackupAt:''
 };}
 
@@ -116,7 +116,8 @@ function renderOverview(m){
   $('lossMetric').textContent=money(m.realizedLossCad);
   $('lossHint').textContent=`${money(m.realizedProfitCad)} wins logged, not netted`;
   $('capMetric').textContent=money(m.budgetCad);
-  $('capHint').textContent=`${m.account.riskPct}% of ${money(m.account.equityCad)} CAD`;
+  $('capHint').textContent=`${m.account.riskPct}% of ${money(m.currentEquityCad)} tracked equity`;
+  $('equityTracker').innerHTML=`<strong>TRACKED ACCOUNT EQUITY</strong> <span class="equity-tracker-value">${cad(m.currentEquityCad)}</span> <span class="equity-tracker-detail">${cad(m.equityCheckpointCad)} checkpoint ${m.equityChangeCad>=0?'+':''}${money(m.equityChangeCad)} net realized since checkpoint · excludes unrealized P/L</span>`;
   $('costMetric').textContent=money(m.fullPremiumCad);
   $('costHint').textContent='Remaining debit at current FX';
   updateBackupBadge();
@@ -187,8 +188,9 @@ function renderHistory(m){
   return `<tr><td data-label="DATE">${esc(fmtDate(r.date,true))}<div class="history-subnote">${esc(r.time||'')}</div></td><td data-label="OPTION / SIDE"><strong>${name}</strong><div class="history-side">${esc(r.action)} ${r.hasOverride?'· broker P/L':''}</div></td><td data-label="QTY">${esc(r.qty)}</td><td data-label="PREMIUM USD">${r.priceUsd===null?'--':money(r.priceUsd,4)}</td><td data-label="TP" class="history-level-cell">${p?mark(p.targetLevels):'--'}</td><td data-label="INVALIDATION" class="history-level-cell">${p?mark(p.underlyingInvalidation):'--'}</td><td data-label="THESIS / CATALYST" class="history-thesis-cell">${p?mark(memo,'Add thesis using Edit plan'):'--'}</td><td data-label="EXIT / REASON">${exitInfo}</td><td data-label="REALIZED CAD" class="${r.pnlCad===null?'':r.pnlCad>0?'pnl-pos':r.pnlCad<0?'pnl-neg':'pnl-zero'}">${r.pnlCad===null?'Not realized':money(r.pnlCad)}</td><td data-label="REVIEW">${p?`<div class="history-actions"><button class="tiny-btn" type="button" data-action="edit-position" data-id="${esc(p.id)}">Edit plan</button><button class="tiny-btn" type="button" data-action="view-position" data-id="${esc(p.id)}">Details</button><button class="tiny-btn" type="button" data-action="add-note" data-id="${esc(p.id)}">+ Note</button>${r.action==='SELL'?`<button class="tiny-btn" type="button" data-action="edit-exit" data-id="${esc(p.id)}" data-tx="${esc(r.id)}">Exit details</button>`:''}</div>`:`<button class="tiny-btn" type="button" data-action="delete-adjustment" data-id="${esc(r.id)}">Archive</button>`}</td></tr>`;
  }).join('')}</tbody></table>`:'<div class="empty-inline">No executions yet. Import IBKR trades, add a position, or enter a historical result.</div>';
 }
-function renderSettings(a){const f=$('settingsForm');const fields={name:a.name,brokerAccountId:a.brokerAccountId||'',equityCad:a.equityCad,riskPct:a.riskPct,window:a.window,stressPct:a.stressPct,roundStep:a.roundStep,mode:a.mode,fx:a.fx,ideaCapCad:a.ideaCapCad??''};
+function renderSettings(a){const f=$('settingsForm');const tracked=calculateAccount(state,a.id,today());const fields={name:a.name,brokerAccountId:a.brokerAccountId||'',equityCad:tracked.currentEquityCad,riskPct:a.riskPct,window:a.window,stressPct:a.stressPct,roundStep:a.roundStep,mode:a.mode,fx:a.fx,ideaCapCad:a.ideaCapCad??''};
  for(const [k,v] of Object.entries(fields)){const field=f.elements.namedItem(k);if(field)field.value=v;}
+ $('equitySettingsInfo').textContent=`Calculated: ${cad(tracked.equityCheckpointCad)} checkpoint ${tracked.equityChangeCad>=0?'+':''}${money(tracked.equityChangeCad)} net realized P/L = ${cad(tracked.currentEquityCad)} now. Editing this figure creates a new dated checkpoint without resetting rolling losses. Exclude unrealized P/L from open positions when reconciling, or you may count it again when they close.`;
  $('fxDescriptor').textContent=`1 USD = ${Number(a.fx).toFixed(4)} CAD`;
  $('fxSource').textContent=a.fxSource?`${a.fxSource}${a.fxDate?` (as of ${a.fxDate})`:''}`:'Manually set';
  renderInbox();updateBackupBadge();
@@ -349,14 +351,23 @@ function manualPnl(){const now=analytics().asOf;const body=`<p class="modal-intr
  dialog('Record prior realized P/L','HISTORICAL ADJUSTMENT',body,(d)=>{const date=requireDate(getText(d,'date'),'trade date');validateSession(date);validateAsOf(date);const pnlCad=requireRange(getText(d,'pnlCad'),-1e9,1e9,'P/L'),note=getText(d,'note');if(!note)throw new Error('Label required.');state.adjustments.push({id:uid(),accountId:account().id,date,pnlCad,note});showToast(`Saved ${money(pnlCad)} in realized CAD P/L.`);return true;});
 }
 function addAccount(){const body=`<p class="modal-intro">Each portfolio gets its own rolling loss and open-risk allocation. Do not treat correlated accounts as diversification.</p><form><div class="modal-grid">${field('PORTFOLIO NAME','name','text','New swing account',{required:'required',maxlength:56})}${field('CURRENT EQUITY CAD','equity','number',20000,{required:'required',min:0,step:.01})}${field('RISK % / WINDOW','risk','number',3,{required:'required',min:0,max:100,step:.1})}${field('STRESS %','stress','number',70,{required:'required',min:0,max:100,step:1})}</div>${formEnd('Add account')}</form>`;
- dialog('New portfolio','INDEPENDENT ACCOUNT',body,(d)=>{const a=account(),name=getText(d,'name'),equity=requireRange(getText(d,'equity'),0,1e9,'Equity'),riskPct=requireRange(getText(d,'risk'),0,100,'Risk'),stressPct=requireRange(getText(d,'stress'),0,100,'Stress');if(!name)throw new Error('Name is required.');const id=uid();state.accounts.push({id,name,equityCad:equity,riskPct,stressPct,window:5,roundStep:25,mode:'stress',fx:a.fx,fxSource:a.fxSource,fxDate:a.fxDate,ideaCapCad:200,brokerAccountId:''});activeAccountId=id;showToast(`${name} created.`);return true;});
+ dialog('New portfolio','INDEPENDENT ACCOUNT',body,(d)=>{const a=account(),name=getText(d,'name'),equity=requireRange(getText(d,'equity'),0,1e9,'Equity'),riskPct=requireRange(getText(d,'risk'),0,100,'Risk'),stressPct=requireRange(getText(d,'stress'),0,100,'Stress');if(!name)throw new Error('Name is required.');const id=uid();state.accounts.push({id,name,equityCad:equity,equityCheckpoints:[{id:uid(),date:onOrBeforeSession(today(),state.customClosed),createdAt:new Date().toISOString(),equityCad:equity,realizedPnlCad:0,source:'New portfolio opening equity'}],riskPct,stressPct,window:5,roundStep:25,mode:'stress',fx:a.fx,fxSource:a.fxSource,fxDate:a.fxDate,ideaCapCad:200,brokerAccountId:''});activeAccountId=id;showToast(`${name} created.`);return true;});
 }
 function saveSettings(e){e.preventDefault();const f=e.currentTarget,d=new FormData(f),a=account();try{
  const equityCad=requireRange(getText(d,'equityCad'),0,1e9,'Equity'),riskPct=requireRange(getText(d,'riskPct'),0,100,'Risk percentage'),window=Math.floor(requireRange(getText(d,'window'),1,30,'Window')),stressPct=requireRange(getText(d,'stressPct'),0,100,'Stress percentage'),fx=requireRange(getText(d,'fx'),.01,100,'FX');const step=requireRange(getText(d,'roundStep'),0,100,'Rounding');
  const name=getText(d,'name');if(!name)throw new Error('Account name is required.');const brokerAccountId=getText(d,'brokerAccountId').toUpperCase();if(brokerAccountId&&state.accounts.some(x=>x.id!==a.id&&x.brokerAccountId===brokerAccountId))throw new Error('That IBKR account number is already mapped to another portfolio.');const oldFx=a.fx;
- Object.assign(a,{name,brokerAccountId,equityCad,riskPct,window,stressPct,fx,roundStep:step,mode:getText(d,'mode')==='strict'?'strict':'stress',ideaCapCad:optional(getText(d,'ideaCapCad'))});
+ // A plain settings save must NOT bake today's realized P/L into equity a second time.
+ const before=calculateAccount(state,a.id,today());
+ const equityRebased=Math.abs(equityCad-before.currentEquityCad)>0.005;
+ if(equityRebased){
+   a.equityCheckpoints??=[];
+   a.equityCheckpoints.push({id:uid(),date:before.asOf,createdAt:new Date().toISOString(),equityCad,realizedPnlCad:before.realizedAllTime,source:'Manual realized-equity reconciliation / deposit / withdrawal'});
+   a.equityCad=equityCad;
+   a.equityPnlAtCheckpointCad=before.realizedAllTime;
+ }
+ Object.assign(a,{name,brokerAccountId,riskPct,window,stressPct,fx,roundStep:step,mode:getText(d,'mode')==='strict'?'strict':'stress',ideaCapCad:optional(getText(d,'ideaCapCad'))});
  if(fx!==oldFx){a.fxSource='Manually entered (broker rate if supplied)';a.fxDate='';}
- if(!plannerStressCustomized)$('quickPlanner').elements.stress.value=a.stressPct;save();render();showToast('Portfolio rules recalculated and saved.');
+ if(!plannerStressCustomized)$('quickPlanner').elements.stress.value=a.stressPct;save();render();showToast(equityRebased?'Equity checkpoint saved. New realized P/L will now update account equity automatically.':'Portfolio rules recalculated; tracked equity preserved.');
  }catch(err){showToast(err.message);}
 }
 async function refreshFx(){const btn=document.querySelector('[data-action="refresh-fx"]');btn.disabled=true;btn.textContent='Checking reference rate...';

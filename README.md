@@ -1,4 +1,4 @@
-# Swing Risk Desk v1.4 (responsive history + journal controls)
+# Swing Risk Desk v1.5 (responsive history + journal controls)
 
 Private, responsive options swing-trading risk desk for a **rolling NYSE-session loss budget in Canadian dollars**. A small Vercel-ready website, no server-side trading database, no account passwords, and no broker API access.
 
@@ -17,6 +17,15 @@ Private, responsive options swing-trading risk desk for a **rolling NYSE-session
 **Limits:** single-user cloud workspace per signed-in email; email links are subject to provider delivery; no live IBKR brokerage API and no automatic Google Sheets master commits. Internet is required for *cloud* sign-in and sync. When cloud status says offline/failed/unsynced, your data is **not** confirmed to be in cloud storage and you should export a complete backup. Service-worker shell supports offline app use but does not make cloud writes possible offline.
 
 **GitHub / Vercel ownership:** the existing Vercel Drop project `swing-risk-desk-vercel-v1.1` is not yet Git-connected. To preserve the existing browser storage, connect a new, private Swing Risk Desk GitHub repository to the **existing** Vercel project, rather than creating an unrelated site/domain. Do not put the starter JSON, IBKR CSV, actual fills, or export backups in GitHub.
+
+
+## v1.5: equity automatically follows realized profit and loss
+
+- The risk limit is **risk percentage x tracked current equity**, not permanently based on the initial manual principal. Examples: CAD 18,000 at 3% = CAD 540; CAD 23,000 at 3% = CAD 690.
+- **Tracked equity = most recent manually confirmed equity checkpoint + net realized CAD profit/loss recorded after that checkpoint.** Realized exits and signed outside-P/L adjustments count; unrealized option value, unconfirmed open P/L and open stress reserves do not change principal. The risk ceiling changes as recorded profits/losses change tracked equity, while rolling realized LOSSES remain charged gross and are never offset by profits.
+- **Safe migration:** When opening older v1.4 data, the manually recorded account equity is treated as an existing broker-balance checkpoint. All realized P/L already logged at migration is pinned as included, rather than added again. The app will not silently reprice historic accounts.
+- **Manual reconcile / deposits / withdrawals:** Settings shows the computed live equity. Change that figure to the broker realized-equity equivalent (excluding unrealized gains/losses on still-open options) and save to create a dated balance checkpoint, with prior checkpoints retained in the JSON/cloud record. Saving unrelated account rules does *not* reset the checkpoint. This is not a live broker balance feed: new trades must be imported, and actual CAD P/L/FX should be verified with IBKR.
+- **Backfilled trades:** If a later import brings historical realized trades that had already been included in the broker account balance you manually entered, use the equity setting to re-checkpoint against the broker and avoid counting the result twice. Imported records are not deleted.
 
 ## What changed in v1.4
 

@@ -232,3 +232,11 @@ html,body{max-width:100%}
 .import-account-linked{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;padding:8px 3px;color:#b0c8ce;font-size:12px}
 .import-account-linked strong{color:#d8efeb}
 @media(max-width:690px){.timeline-remove{width:42px;height:42px;flex-basis:42px;font-size:23px}}
+
+/* v1.5: distinguish live realized equity from the available rolling risk budget. */
+.equity-tracker{display:flex;align-items:center;gap:10px 16px;flex-wrap:wrap;margin:-5px 0 21px;padding:11px 15px;background:#112831;border:1px solid #28515c;border-radius:12px;color:#b9d9d9;font-size:11px}
+.equity-tracker strong{font-size:10px;letter-spacing:.1em;color:#9cb7c0}
+.equity-tracker-value{font-size:18px;font-weight:800;color:#e4f9ee;font-variant-numeric:tabular-nums}
+.equity-tracker-detail{color:#8fb2b7;font-size:10px}
+.equity-settings-info{line-height:1.65;padding:10px 11px;background:#122b33;border:1px solid #31545d;border-radius:8px}
+@media(max-width:600px){.equity-tracker{align-items:flex-start;flex-direction:column;gap:4px}.equity-tracker-value{font-size:20px}}

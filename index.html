@@ -58,6 +58,7 @@
         <article class="metric-card"><div class="metric-title"><span class="metric-symbol muted">&#9679;</span> ROLLING RISK CEILING</div><strong id="capMetric">$600.00</strong><small id="capHint">3% of $20,000 CAD</small></article>
         <article class="metric-card"><div class="metric-title"><span class="metric-symbol blue">&#9679;</span> OPEN PREMIUM AT COST</div><strong id="costMetric">$0.00</strong><small id="costHint">Remaining debit at current FX</small></article>
       </div>
+      <div class="equity-tracker" id="equityTracker" aria-live="polite">Tracked equity adjusts automatically after realized profit or loss.</div>
 
       <div id="alerts" class="alert-stack" aria-live="polite"></div>
 
@@ -100,7 +101,7 @@
       <div class="history-stats" id="historyStats"></div>
       <p class="history-scroll-tip">On tablets, swipe sideways inside the ledger. Desktop expands to use the available width; phones show one card per fill.</p><p class="help-line">TP, invalidation, and thesis reflect the <strong>latest recorded plan</strong> (not a backdated entry plan). Use <strong>Edit plan</strong> on any history row to update thesis, catalyst, trigger, targets and invalidation; dated changes remain in the timeline. IBKR does not supply your thesis or underlying levels.</p>
       <div id="historyTable" class="panel history-panel"></div>
-      <div class="panel note-panel"><strong>Calculation policy</strong><p>Every realized losing sale consumes capacity for its closing session and the following trading sessions until it rolls out. Profitable sales show in history, but do not erase losses. Closing a position releases its unused open reserve immediately. Entry debit is never counted as a realized loss.</p></div>
+      <div class="panel note-panel"><strong>Calculation policy</strong><p>Every realized losing sale consumes capacity for its closing session and the following trading sessions until it rolls out. Profitable sales show in history, but do not erase losses. Every recorded net CAD profit or loss also adjusts the portfolio's tracked equity and therefore changes its percentage risk ceiling. Closing a position releases its unused open reserve immediately. Entry debit is never counted as a realized loss.</p></div>
     </section>
 
     <section id="view-settings" class="view" hidden>
@@ -111,7 +112,7 @@
             <div class="form-grid">
               <label class="span-2"><span>ACCOUNT LABEL</span><input name="name" type="text" maxlength="56" required></label>
               <label><span>IBKR ACCOUNT ID (OPTIONAL)</span><input name="brokerAccountId" type="text" maxlength="40" placeholder="e.g. UXXXXXXXX"></label>
-              <label><span>CURRENT EQUITY (CAD)</span><input name="equityCad" type="number" min="0" max="100000000" step="0.01" required></label>
+              <label><span>TRACKED CURRENT EQUITY (CAD)</span><input name="equityCad" type="number" min="0" max="100000000" step="0.01" required></label>
               <label><span>FIVE-SESSION RISK (%)</span><input name="riskPct" type="number" min="0" max="100" step="0.1" required></label>
               <label><span>WINDOW (TRADING SESSIONS)</span><input name="window" type="number" min="1" max="30" step="1" required></label>
               <label><span>DEFAULT STRESS LOSS (%)</span><input name="stressPct" type="number" min="0" max="100" step="1" required></label>
@@ -120,6 +121,7 @@
               <label><span>USD / CAD CONVERSION</span><input name="fx" type="number" min="0.01" max="100" step="0.0001" required></label>
               <label class="span-2"><span>PLANNED LOSS CAP PER IDEA (CAD) / OPTIONAL</span><input name="ideaCapCad" type="number" min="0" step="1" placeholder="e.g. 200"></label>
             </div>
+            <p class="help-line equity-settings-info" id="equitySettingsInfo">The 3% limit uses tracked realized equity. Change this amount only to reconcile realized equity (excluding unrealized option P/L) or account transfers; past results stay logged.</p>
             <div class="fx-row"><div><strong id="fxDescriptor">1 USD = 1.4000 CAD</strong><p id="fxSource">Illustrative starting rate; replace with broker rate.</p></div><button class="btn btn-subtle" type="button" data-action="refresh-fx">Get Bank of Canada rate</button></div>
             <button type="submit" class="btn btn-primary btn-full">Save portfolio settings</button>
           </form>
@@ -156,7 +158,7 @@
       <div class="bottom-danger"><button type="button" class="text-link text-delete" data-action="reset-data">Reset all locally saved data</button><small>Does not change anything in Google Sheets or IBKR.</small></div>
     </section>
   </main>
-  <footer><span>SWING RISK DESK / v1.4</span><span>Process over P&amp;L. All figures in CAD unless marked USD.</span></footer>
+  <footer><span>SWING RISK DESK / v1.5</span><span>Process over P&amp;L. All figures in CAD unless marked USD.</span></footer>
 </div>
 <dialog id="editorDialog" class="editor-dialog"><div class="dialog-content"><div class="dialog-header"><div><div class="overline" id="dialogEyebrow">POSITION</div><h2 id="dialogTitle">New position</h2></div><button type="button" class="icon-button" data-action="close-dialog" aria-label="Close dialog">&#10005;</button></div><div id="dialogBody"></div></div></dialog>
 <input id="importFile" type="file" accept=".json,.csv,application/json,text/csv" hidden>
