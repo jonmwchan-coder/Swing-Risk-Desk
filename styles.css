@@ -301,3 +301,19 @@ html,body{max-width:100%}
    overflow-wrap:anywhere;word-break:normal;min-width:0;max-width:62%;
  }
 }
+
+/* v1.8.1: thesis / catalyst should wrap naturally on widescreen too.
+   Keep the ledger at the standard page width; never force horizontal cell scrolling. */
+.history-table.expanded-ledger .history-thesis-cell .history-cell-scroll {
+  min-width:0;
+  white-space:pre-wrap;
+  overflow:visible;
+  overflow-wrap:anywhere;
+  word-break:normal;
+}
+.history-table.expanded-ledger .history-thesis-cell .history-cell-scroll > span,
+.history-table.expanded-ledger .history-thesis-cell .history-cell-scroll .history-subnote {
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+  word-break:normal;
+}

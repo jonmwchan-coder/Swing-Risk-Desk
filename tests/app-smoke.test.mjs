@@ -43,4 +43,8 @@ assert.match(getElementById('quickPlanner').innerHTML,/draft-idea/);
 assert.match(getElementById('plannerResult').innerHTML,/INCOMPLETE/);
 assert.match(getElementById('plannerResult').innerHTML,/Combined planned/);
 assert.match(getElementById('importInbox').innerHTML,/Import exceptions/);
+
+// Wide-screen thesis/catalyst text should wrap without relying on the <=1100px breakpoint.
+assert.match(css,/\/\* v1\.8\.1: thesis \/ catalyst should wrap naturally on widescreen too\./);
+assert.match(css,/\.history-table\.expanded-ledger \.history-thesis-cell \.history-cell-scroll\s*\{[^}]*white-space:pre-wrap;[^}]*overflow:visible;/);
 console.log('App module boot/render smoke passed.');

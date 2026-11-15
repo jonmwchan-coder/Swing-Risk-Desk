@@ -1,6 +1,6 @@
 {
   "name": "swing-risk-desk",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "private": true,
   "type": "module",
   "description": "Private, optional cloud-synced rolling five-session options swing risk calculator",

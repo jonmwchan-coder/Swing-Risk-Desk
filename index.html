@@ -95,7 +95,7 @@
     <section id="view-history" class="view" hidden>
       <div class="section-head"><div><div class="overline">REALIZED, NOT IMAGINED</div><h2>Trade history & cash outcomes</h2></div><button class="btn btn-outline" type="button" data-action="manual-pnl">+ Record outside loss / profit</button></div>
       <div class="history-stats" id="historyStats"></div>
-      <p class="history-scroll-tip">The ledger stays the same width as the rest of your workspace. On smaller tablets, swipe inside the table; on small screens long notes wrap in their cells rather than being cut off. Phones show one card per fill.</p><p class="help-line">TP, invalidation, and thesis reflect the <strong>latest recorded plan</strong> (not a backdated entry plan). Use <strong>Edit plan</strong> on any history row to update thesis, catalyst, trigger, targets and invalidation; dated changes remain in the timeline. IBKR does not supply your thesis or underlying levels.</p>
+      <p class="history-scroll-tip">The ledger stays the same width as the rest of your workspace. On smaller tablets, swipe inside the table. Thesis and catalyst wrap naturally at every screen width, while long notes in other columns wrap on smaller screens. Phones show one card per fill.</p><p class="help-line">TP, invalidation, and thesis reflect the <strong>latest recorded plan</strong> (not a backdated entry plan). Use <strong>Edit plan</strong> on any history row to update thesis, catalyst, trigger, targets and invalidation; dated changes remain in the timeline. IBKR does not supply your thesis or underlying levels.</p>
       <div id="historyTable" class="panel history-panel"></div>
       <div class="panel note-panel"><strong>Calculation policy</strong><p>Every realized losing sale consumes capacity for its closing session and the following trading sessions until it rolls out. Profitable sales show in history, but do not erase losses. Every recorded net CAD profit or loss also adjusts the portfolio's tracked equity and therefore changes its percentage risk ceiling. Closing a position releases its unused open reserve immediately. Entry debit is never counted as a realized loss.</p></div>
     </section>
@@ -154,7 +154,7 @@
       <div class="bottom-danger"><button type="button" class="text-link text-delete" data-action="reset-data">Reset all locally saved data</button><small>Does not change anything in Google Sheets or IBKR.</small></div>
     </section>
   </main>
-  <footer><span>SWING RISK DESK / v1.8</span><span>Process over P&amp;L. All figures in CAD unless marked USD.</span></footer>
+  <footer><span>SWING RISK DESK / v1.8.1</span><span>Process over P&amp;L. All figures in CAD unless marked USD.</span></footer>
 </div>
 <dialog id="editorDialog" class="editor-dialog"><div class="dialog-content"><div class="dialog-header"><div><div class="overline" id="dialogEyebrow">POSITION</div><h2 id="dialogTitle">New position</h2></div><button type="button" class="icon-button" data-action="close-dialog" aria-label="Close dialog">&#10005;</button></div><div id="dialogBody"></div></div></dialog>
 <input id="importFile" type="file" accept=".json,.csv,application/json,text/csv" hidden>

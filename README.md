@@ -1,3 +1,9 @@
+## v1.8.1: naturally wrapping Thesis / Catalyst on desktop (2026-11-15)
+
+- **Trade History → Thesis / Catalyst** now wraps its full text into multiple lines at all screen widths, including wide desktop layouts (previously desktops above 1100px forced a one-line horizontal scroller).
+- Other table columns, the 1180px-wide app shell, compact mobile/tablet behavior, original trading precision and records are unchanged. This is a CSS-only data-safe display fix; no data schema, account calculation, cloud, or IBKR changes.
+- Offline app-shell cache version updated so existing installations can pick up the styling.
+
 ## v1.8: concise history placeholders and readable small-screen notes (2026-11-15)
 
 - Trade History now shows `----` for un-realized P/L on entries and `----` for the exit/reason column when no exit occurred. Financial records and calculations are unchanged.
