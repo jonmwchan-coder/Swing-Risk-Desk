@@ -4,6 +4,7 @@ import {SCHEMA,normalizeLedger,importIbkrTrades,mergeFullBackup,makeJournalEntry
 import {isIbkrCsv,parseIbkrTrades} from './lib/ibkr.mjs';
 import {createCloudController} from './lib/cloud.mjs';
 import {calculatePlanBasket,defaultPlanIdea,parsePlannedContract,MAX_PLAN_IDEAS} from './lib/planner.mjs';
+import {DEFAULT_BUY_FEE_USD,DEFAULT_SELL_FEE_USD,estimateOrderFee,ratePerContract} from './lib/fees.mjs';
 
 const STORAGE_KEY='swing-risk-desk:data:v1';
 const $=id=>document.getElementById(id);
@@ -20,7 +21,7 @@ const optional=(v)=>v===''||v===null||v===undefined?null:Number(v);
 const today=()=>torontoToday();
 function seed(){return {
   schema:SCHEMA,
-  accounts:[{id:'bdi',name:'Sample Swing Account',equityCad:20000,equityCheckpoints:[{id:'equity-initial-bdi',date:onOrBeforeSession(today()),createdAt:new Date().toISOString(),equityCad:20000,realizedPnlCad:0,source:'Initial account equity'}],riskPct:3,window:5,stressPct:70,roundStep:25,mode:'stress',fx:1.4,fxSource:'Illustrative assumption, not a live quote',fxDate:'',ideaCapCad:200,brokerAccountId:''}],
+  accounts:[{id:'bdi',name:'Sample Swing Account',equityCad:20000,equityCheckpoints:[{id:'equity-initial-bdi',date:onOrBeforeSession(today()),createdAt:new Date().toISOString(),equityCad:20000,realizedPnlCad:0,source:'Initial account equity'}],riskPct:3,window:5,stressPct:70,roundStep:25,mode:'stress',fx:1.4,fxSource:'Illustrative assumption, not a live quote',fxDate:'',ideaCapCad:200,brokerAccountId:'',buyFeePerContractUsd:DEFAULT_BUY_FEE_USD,sellFeePerContractUsd:DEFAULT_SELL_FEE_USD}],
   positions:[],adjustments:[],customClosed:[],brokerInbox:[],importLog:[],conflicts:[],archive:[],revision:0,lastBackupRevision:0,lastBackupAt:''
 };}
 
@@ -43,6 +44,7 @@ function plannerIdeas(accountId=account().id){
  let ideas=plannerDrafts[accountId];
  if(!Array.isArray(ideas)||!ideas.length){ideas=[defaultPlanIdea(uid(),account().stressPct,true)];plannerDrafts[accountId]=ideas;persistPlannerDrafts();}
  const normalized=ideas.filter(x=>x&&typeof x==='object'&&typeof x.id==='string').slice(0,MAX_PLAN_IDEAS);
+ for(const idea of normalized)if(idea.feeManual===undefined)idea.feeManual=false;
  if(!normalized.length){normalized.push(defaultPlanIdea(uid(),account().stressPct,true));}
  if(normalized.length!==ideas.length){plannerDrafts[accountId]=normalized;persistPlannerDrafts();}
  return plannerDrafts[accountId];
@@ -190,7 +192,7 @@ function renderTimeline(p){
  ].sort((a,b)=>`${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`));
  return events.length?`<h4>Journal / plan change timeline (${events.length})</h4>${events.map(n=>`<div class="journal-event"><div class="journal-event-head"><div><strong>${esc(n.type)}</strong><small>${esc(n.date||'Unspecified')} · ${esc(n.source)}</small></div><button class="timeline-remove" type="button" data-action="archive-timeline" data-id="${esc(p.id)}" data-event-type="${esc(n.recordType)}" data-event-id="${esc(n.id)}" aria-label="Remove ${esc(n.type)} dated ${esc(n.date||'unknown')} from timeline" title="Remove from timeline (recoverable)">×</button></div><p>${esc(n.body)}</p></div>`).join('')}`:'<p class="help-line">No visible journal or plan revisions. Removed records are recoverable in Rules & data → Archived corrections.</p>';
 }
-function transactionList(p){const tx=[...p.fills.map(x=>({...x,side:'BUY'})),...p.exits.map(x=>({...x,side:'SELL'}))].sort((a,b)=>`${a.date}${a.time||''}`.localeCompare(`${b.date}${b.time||''}`));return tx.map(t=>`<div class="transaction-row"><span>${esc(t.side)} ${t.qty} x ${money(t.price??0)} USD &bull; ${esc(fmtDate(t.date))} ${esc(t.time||'')} ${t.side==='SELL'?esc(t.reason||''):''}<br>Commission: ${usd(t.fee||0)}; USD/CAD ${Number(t.fx||account().fx).toFixed(4)}</span><button type="button" class="tiny-btn" data-action="delete-tx" data-id="${esc(p.id)}" data-tx="${esc(t.id)}" data-side="${t.side}">Remove</button></div>`).join('');}
+function transactionList(p){const tx=[...p.fills.map(x=>({...x,side:'BUY'})),...p.exits.map(x=>({...x,side:'SELL'}))].sort((a,b)=>`${a.date}${a.time||''}`.localeCompare(`${b.date}${b.time||''}`));return tx.map(t=>`<div class="transaction-row"><span>${esc(t.side)} ${t.qty} x ${money(t.price??0)} USD &bull; ${esc(fmtDate(t.date))} ${esc(t.time||'')} ${t.side==='SELL'?esc(t.reason||''):''}<br>Commission: ${usd(t.fee||0,t.broker?4:2)} <em>(${t.broker?'IBKR actual':t.feeEstimated?'estimate':'manual'})</em>; USD/CAD ${Number(t.fx||account().fx).toFixed(4)}</span><button type="button" class="tiny-btn" data-action="delete-tx" data-id="${esc(p.id)}" data-tx="${esc(t.id)}" data-side="${t.side}">Remove</button></div>`).join('');}
 function renderPositions(m){const arr=m.positions.filter(x=>positionFilter==='all'||(positionFilter==='open'?x.metrics.qty>0:x.metrics.qty===0));$('openCount').textContent=m.positions.filter(x=>x.metrics.qty>0).length;
   for(const f of document.querySelectorAll('.filter'))f.classList.toggle('active',f.dataset.filter===positionFilter);
   $('positionsFull').innerHTML=arr.length?arr.map(x=>positionCard(x,true)).join(''):'<div class="empty-state">No matching positions for this date.</div>';
@@ -215,7 +217,7 @@ function renderHistory(m){
   return `<tr><td data-label="DATE"><time datetime="${esc(r.date)}" title="${esc(fmtDate(r.date,true))}">${esc(historyDate(r.date))}</time><div class="history-subnote">${esc(r.time||'')}</div></td><td data-label="OPTION / SIDE"><strong>${name}</strong><div class="history-side">${esc(r.action)} ${r.hasOverride?'· broker P/L':''}</div></td><td data-label="QTY">${esc(r.qty)}</td><td data-label="PREMIUM USD">${r.priceUsd===null?'--':money(r.priceUsd,2)}</td><td data-label="TP" class="history-level-cell"><div class="history-cell-scroll" tabindex="0" title="${esc(p?.targetLevels||'')}">${p?mark(p.targetLevels):'--'}</div></td><td data-label="INVALIDATION" class="history-level-cell"><div class="history-cell-scroll" tabindex="0" title="${esc(p?.underlyingInvalidation||'')}">${p?mark(p.underlyingInvalidation):'--'}</div></td><td data-label="THESIS / CATALYST" class="history-thesis-cell"><div class="history-cell-scroll" tabindex="0" title="${esc(memo)}">${p?mark(memo,'Add thesis using Edit plan'):'--'}</div></td><td data-label="EXIT / REASON"><div class="history-cell-scroll" tabindex="0">${exitInfo}</div></td><td data-label="REALIZED CAD" class="${r.pnlCad===null?'':r.pnlCad>0?'pnl-pos':r.pnlCad<0?'pnl-neg':'pnl-zero'}">${r.pnlCad===null?'----':money(r.pnlCad)}</td><td data-label="REVIEW">${p?`<div class="history-actions"><button class="tiny-btn" type="button" data-action="edit-position" data-id="${esc(p.id)}">Edit plan</button><button class="tiny-btn" type="button" data-action="view-position" data-id="${esc(p.id)}">Details</button><button class="tiny-btn" type="button" data-action="add-note" data-id="${esc(p.id)}">+ Note</button>${r.action==='SELL'?`<button class="tiny-btn" type="button" data-action="edit-exit" data-id="${esc(p.id)}" data-tx="${esc(r.id)}">Exit details</button>`:''}</div>`:`<button class="tiny-btn" type="button" data-action="delete-adjustment" data-id="${esc(r.id)}">Archive</button>`}</td></tr>`;
  }).join('')}</tbody></table>`:'<div class="empty-inline">No executions yet. Import IBKR trades, add a position, or enter a historical result.</div>';
 }
-function renderSettings(a){const f=$('settingsForm');const tracked=calculateAccount(state,a.id,today());const fields={name:a.name,brokerAccountId:a.brokerAccountId||'',equityCad:tracked.currentEquityCad,riskPct:a.riskPct,window:a.window,stressPct:a.stressPct,roundStep:a.roundStep,mode:a.mode,fx:a.fx,ideaCapCad:a.ideaCapCad??''};
+function renderSettings(a){const f=$('settingsForm');const tracked=calculateAccount(state,a.id,today());const fields={name:a.name,brokerAccountId:a.brokerAccountId||'',equityCad:tracked.currentEquityCad,riskPct:a.riskPct,window:a.window,stressPct:a.stressPct,roundStep:a.roundStep,mode:a.mode,fx:a.fx,ideaCapCad:a.ideaCapCad??'',buyFeePerContractUsd:ratePerContract(a,'BUY'),sellFeePerContractUsd:ratePerContract(a,'SELL')};
  for(const [k,v] of Object.entries(fields)){const field=f.elements.namedItem(k);if(field)field.value=v;}
  $('equitySettingsInfo').textContent=`Calculated: ${cad(tracked.equityCheckpointCad)} checkpoint ${tracked.equityChangeCad>=0?'+':''}${money(tracked.equityChangeCad)} net realized P/L = ${cad(tracked.currentEquityCad)} now. Editing this figure creates a new dated checkpoint without resetting rolling losses. Exclude unrealized P/L from open positions when reconciling, or you may count it again when they close.`;
  $('fxDescriptor').textContent=`1 USD = ${Number(a.fx).toFixed(4)} CAD`;
@@ -226,7 +228,10 @@ function renderSettings(a){const f=$('settingsForm');const tracked=calculateAcco
 function renderPlanner(m){
  const ideas=plannerIdeas(m.account.id);
  let changed=false;
- for(const idea of ideas){if(!idea.stressCustom&&String(idea.stress)!==String(m.account.stressPct)){idea.stress=String(m.account.stressPct);changed=true;}}
+ for(const idea of ideas){
+  if(!idea.stressCustom&&String(idea.stress)!==String(m.account.stressPct)){idea.stress=String(m.account.stressPct);changed=true;}
+  if(!idea.feeManual){const fee=estimateOrderFee(m.account,'BUY',idea.qty).toFixed(2);if(String(idea.fee)!==fee){idea.fee=fee;changed=true;}}
+ }
  if(changed)persistPlannerDrafts();
  $('quickPlanner').innerHTML=ideas.map((idea,index)=>`<article class="draft-idea" data-draft-id="${esc(idea.id)}">
   <div class="draft-head"><strong>IDEA ${index+1}</strong><input type="text" name="label" maxlength="80" value="${esc(idea.label||'')}" placeholder="INTC 1/15/27 70C" aria-label="Idea ${index+1} ticker and option contract (optional)">
@@ -235,7 +240,7 @@ function renderPlanner(m){
   <div class="draft-fields">
    <label><span>QTY</span><input type="number" inputmode="numeric" name="qty" min="1" step="1" value="${esc(idea.qty)}" aria-label="Idea ${index+1} contract quantity"></label>
    <label><span>PREMIUM USD</span><input type="number" inputmode="decimal" name="price" min="0.01" step="0.01" value="${esc(idea.price)}" aria-label="Idea ${index+1} price per share in USD"></label>
-   <label><span>FEES USD</span><input type="number" inputmode="decimal" name="fee" min="0" step="0.01" value="${esc(idea.fee)}" aria-label="Idea ${index+1} total entry commissions in USD"></label>
+   <label><span>FEES USD <button class="fee-reset-mini" type="button" data-action="reset-draft-fee" data-plan-id="${esc(idea.id)}" title="Apply per-contract portfolio default">Auto</button></span><input type="number" inputmode="decimal" name="fee" min="0" step="0.01" value="${esc(idea.fee)}" aria-label="Idea ${index+1} total entry commissions in USD" title="${idea.feeManual?'Manually overridden':'Estimated from portfolio fee rules'}"></label>
    <label><span>STRESS %</span><input type="number" inputmode="numeric" name="stress" min="0" max="100" step="1" value="${esc(idea.stress)}" aria-label="Idea ${index+1} stress loss percent" ${m.account.mode==='strict'?'title="Strict mode reserves 100% of debit"':''}></label>
   </div>
   <div class="draft-metrics" data-plan-status="${esc(idea.id)}"></div>
@@ -263,6 +268,29 @@ function switchTab(tab){if(!['dashboard','positions','history','settings'].inclu
 function field(label,name,type='text',value='',opts={}){const attr=Object.entries(opts).map(([k,v])=>` ${k}="${esc(v)}"`).join('');return `<label class="${opts.full?'span-2':''}"><span>${esc(label)}</span><input name="${esc(name)}" type="${type}" value="${esc(value??'')}"${attr}></label>`;}
 function selectField(label,name,options,value){return `<label><span>${esc(label)}</span><select name="${esc(name)}">${options.map(([val,text])=>`<option value="${esc(val)}" ${String(val)===String(value)?'selected':''}>${esc(text)}</option>`).join('')}</select></label>`;}
 function dialog(title,eyebrow,body,submit){$('dialogTitle').textContent=title;$('dialogEyebrow').textContent=eyebrow;$('dialogBody').innerHTML=body;const d=$('editorDialog');d.showModal();const f=$('dialogBody').querySelector('form');if(f&&submit){f.addEventListener('submit',e=>{e.preventDefault();try{const ok=submit(new FormData(f),f);if(ok!==false){d.close();save();render();}}catch(err){showToast(err.message);const msg=f.querySelector('.modal-error');if(msg)msg.textContent=err.message;}});}return f;}
+function attachFeeEstimate(form,portfolio,side,{automatic=true}={}){
+  if(!form)return;
+  const qty=form.elements.namedItem('qty'),fee=form.elements.namedItem('fee');
+  if(!qty||!fee)return;
+  let auto=automatic;
+  const label=fee.closest('label');
+  if(label){
+    const note=document.createElement('small');note.className='fee-estimate-hint';
+    note.setAttribute('data-fee-note','');label.appendChild(note);
+    const reset=document.createElement('button');reset.type='button';reset.className='fee-reset-mini';reset.textContent='Use estimate';
+    reset.title='Reset to the estimated per-contract fee in Portfolio settings';label.appendChild(reset);
+    reset.addEventListener('click',()=>{auto=true;refresh();form.dispatchEvent(new Event('input',{bubbles:true}));});
+  }
+  const refresh=()=>{
+    if(auto)fee.value=estimateOrderFee(portfolio,side,Number(qty.value)).toFixed(2);
+    form.dataset.feeEstimated=String(auto);
+    const hint=form.querySelector('[data-fee-note]');
+    if(hint)hint.textContent=`${auto?'Estimate':'Manual override'} - USD ${ratePerContract(portfolio,side).toFixed(2)}/contract ${auto?'(replace with IBKR actual when imported)':''}`;
+  };
+  qty.addEventListener('input',refresh);
+  fee.addEventListener('input',()=>{auto=false;refresh();});
+  refresh();
+}
 function formEnd(text='Save'){return `<div class="modal-error neg" role="alert" style="font-size:12px"></div><div class="modal-actions"><button type="button" class="btn btn-outline" data-action="close-dialog">Cancel</button><button type="submit" class="btn btn-primary">${esc(text)}</button></div>`;}
 function requireRange(v,min,max,label){const n=Number(v);if(v===''||!Number.isFinite(n)||n<min||n>max)throw new Error(`${label} must be between ${min} and ${max}.`);return n;}
 function requireDate(v,label){if(!parseDay(v))throw new Error(`Enter a valid ${label}.`);return v;}
@@ -279,7 +307,7 @@ function addPosition(){const a=account(),pref=plannerPrefill;plannerPrefill=null
  ${field('EXPIRY','expiry','date',pref?.expiry||'',{required:'required'})}
  ${field('CONTRACTS','qty','number',pref?.qty||2,{min:1,step:1,required:'required'})}
  ${field('ENTRY PRICE PER SHARE (USD)','price','number',pref?.price||'',{min:0,step:.0001,required:'required'})}
- ${field('TOTAL ENTRY COMMISSIONS (USD)','fee','number',pref?.fee??0,{min:0,step:.0001})}
+ ${field('TOTAL ENTRY COMMISSIONS (USD)','fee','number',pref?.feeManual?pref.fee:estimateOrderFee(a,'BUY',pref?.qty||2),{min:0,step:.0001})}
  ${field('USD / CAD AT ENTRY','fx','number',a.fx,{min:.01,step:.0001})}
  ${field('TRADE DATE','date','date',now,{required:'required'})}
  ${field('TIME ET (OPTIONAL)','time','time','',{step:1})}
@@ -303,13 +331,13 @@ function addPosition(){const a=account(),pref=plannerPrefill;plannerPrefill=null
  const strike=requireRange(getText(d,'strike'),0,1000000,'Strike');const stress=optional(getText(d,'stressPct'));if(stress!==null)requireRange(String(stress),0,100,'Stress percentage');
  const newReserve=roundUp((qty*price*100+fee)*a.fx*(a.mode==='strict'?100:(stress??a.stressPct))/100,a.roundStep);
  if(!maybeBreach(analytics(),newReserve))return false;
- const position={id:uid(),externalId:'',source:'Manual entry',accountId:a.id,ticker,optionType:getText(d,'optionType'),strike,expiry,sector:getText(d,'sector'),ideaId:getText(d,'ideaId')||`${ticker}-${date}`,underlyingInvalidation:getText(d,'underlyingInvalidation'),targetLevels:getText(d,'targetLevels'),stopPremiumUsd:optional(getText(d,'stopPremiumUsd')),stressPct:stress,fixedReserveCad:null,reviewBy:getText(d,'reviewBy'),thesis:getText(d,'thesis'),catalyst:getText(d,'catalyst'),entryReason:getText(d,'entryReason'),managementPlan:getText(d,'managementPlan'),notes:getText(d,'notes'),journalEntries:[],planHistory:[],fills:[{id:uid(),date,time:getText(d,'time'),timeUnverified:!getText(d,'time'),qty,price,fee,fx}],exits:[]};
+ const position={id:uid(),externalId:'',source:'Manual entry',accountId:a.id,ticker,optionType:getText(d,'optionType'),strike,expiry,sector:getText(d,'sector'),ideaId:getText(d,'ideaId')||`${ticker}-${date}`,underlyingInvalidation:getText(d,'underlyingInvalidation'),targetLevels:getText(d,'targetLevels'),stopPremiumUsd:optional(getText(d,'stopPremiumUsd')),stressPct:stress,fixedReserveCad:null,reviewBy:getText(d,'reviewBy'),thesis:getText(d,'thesis'),catalyst:getText(d,'catalyst'),entryReason:getText(d,'entryReason'),managementPlan:getText(d,'managementPlan'),notes:getText(d,'notes'),journalEntries:[],planHistory:[],fills:[{id:uid(),date,time:getText(d,'time'),timeUnverified:!getText(d,'time'),qty,price,fee,fx,feeEstimated:f.dataset.feeEstimated==='true'}],exits:[]};
  position.planHistory.push({id:uid(),date,createdAt:new Date().toISOString(),source:'Initial plan recorded in app (entry-time status not independently verified)',changes:Object.fromEntries(['underlyingInvalidation','targetLevels','thesis','catalyst','entryReason','managementPlan','notes'].filter(k=>position[k]).map(k=>[k,{before:'',after:position[k]}]))});state.positions.push(position);if(pref?.draftId)dropPlannerIdea(pref.draftId,false);showToast(`Added ${qty} ${ticker} contract${qty!==1?'s':''}.`);return true;
  });
  const preview=()=>{const d=new FormData(f);const q=num(d.get('qty')),price=num(d.get('price')),fee=num(d.get('fee')),fx=num(d.get('fx'),a.fx),stress=optional(d.get('stressPct'))??a.stressPct;
  const cost=q*price*100+fee,raw=cost*a.fx*(a.mode==='strict'?1:stress/100),reserve=roundUp(raw,a.roundStep);
  const box=$('newPreview');if(q>0&&price>0&&fx>0)box.innerHTML=`<strong>${money(reserve)} reserved</strong><span>Cost ${usd(cost)} / ${money(cost*fx)} CAD at entry FX; reserve uses current ${a.fx.toFixed(4)} rate. Budget after entry: ${money(analytics().availableCad-reserve)}.</span>`;else box.innerHTML='<span>Enter a size and price to preview the reserve.</span>';
- };f.addEventListener('input',preview);preview();
+ };attachFeeEstimate(f,a,'BUY',{automatic:!pref?.feeManual});f.addEventListener('input',preview);preview();
 }
 function findPosition(id){const p=state.positions.find(x=>x.id===id&&x.accountId===account().id);if(!p)throw new Error('Position not found in this account.');return p;}
 function closePosition(id){const a=account(),p=findPosition(id),existing=calculatePosition(p,a,analytics().asOf);if(existing.qty<=0)return showToast('Position is already closed.');
@@ -317,7 +345,7 @@ function closePosition(id){const a=account(),p=findPosition(id),existing=calcula
  const body=`<p class="modal-intro">Close a slice or the full position. The remaining contracts keep their reserve. Each losing exit counts on its own closing date.</p><form><div class="modal-grid">
  ${field('CONTRACTS TO SELL','qty','number',existing.qty,{required:'required',min:1,max:existing.qty,step:1})}
  ${field('SALE PRICE PER SHARE USD / OPTIONAL WITH BROKER P&L','price','number','',{min:0,step:.0001})}
- ${field('EXIT COMMISSIONS USD','fee','number',0,{min:0,step:.0001})}
+ ${field('EXIT COMMISSIONS USD','fee','number',estimateOrderFee(a,'SELL',existing.qty),{min:0,step:.0001})}
  ${field('USD / CAD ON SALE','fx','number',a.fx,{min:.01,step:.0001})}
  ${field('SALE DATE','date','date',now,{required:'required'})}
  ${field('TIME ET / OPTIONAL','time','time','',{step:1})}
@@ -332,7 +360,7 @@ function closePosition(id){const a=account(),p=findPosition(id),existing=calcula
  const price=px?requireRange(px,0,100000,'Exit price'):null;const fee=requireRange(getText(d,'fee')||'0',0,100000,'Fees');const fx=requireRange(getText(d,'fx'),.01,100,'FX');const date=requireDate(getText(d,'date'),'sale date');validateSession(date);validateAsOf(date);
  const at=calculatePosition(p,a,date).qty;if(qty>at)throw new Error(`Only ${at} contracts were open on ${date}.`);
  const pnlOverride=override===''?null:requireRange(override,-1e9,1e9,'Broker P/L');
- const newExit={id:uid(),date,time:getText(d,'time')||'23:59',qty,price,fee,fx,brokerPnlCad:pnlOverride,underlyingAtExit:optional(getText(d,'underlyingAtExit')),reason:getText(d,'reason'),tpLabel:getText(d,'tpLabel'),notes:getText(d,'notes')};
+ const newExit={id:uid(),date,time:getText(d,'time')||'23:59',qty,price,fee,fx,feeEstimated:f.dataset.feeEstimated==='true',brokerPnlCad:pnlOverride,underlyingAtExit:optional(getText(d,'underlyingAtExit')),reason:getText(d,'reason'),tpLabel:getText(d,'tpLabel'),notes:getText(d,'notes')};
  const check=structuredClone(p);check.exits.push(newExit);if(calculatePosition(check,a,'9999-12-31').issues.length)throw new Error('Sale time or quantity conflicts with other fills or prior exits.');
  p.exits.push(newExit);
  const after=calculateAccount(state,a.id,asOf());showToast(`Recorded ${qty} ${p.ticker} sale. Available: ${money(after.availableCad)}.`);return true;
@@ -342,21 +370,21 @@ function closePosition(id){const a=account(),p=findPosition(id),existing=calcula
  try{const copy=structuredClone(state);const z=copy.positions.find(z=>z.id===p.id);z.exits.push({id:'__preview__',date:String(d.get('date')),time:String(d.get('time')||'23:59'),qty:q,price,fee:num(d.get('fee')),fx:num(d.get('fx')),brokerPnlCad:broker});const calc=calculateAccount(copy,a.id,asOf());const sale=calc.sales.find(x=>x.id==='__preview__');const result=sale?.pnlCad??0;const remains=calc.positions.find(x=>x.position.id===p.id)?.metrics;
  const box=$('closePreview');box.classList.toggle('alert',calc.availableCad<-.01);box.innerHTML=`<strong>After exit: ${money(calc.availableCad)} available</strong><span>Estimated realized ${money(result)} CAD (${result<0?'loss consumes budget':'profit does not net prior losses'}). Remaining reserve ${money(remains?.reserveCad||0)}.</span>`;
  }catch(err){$('closePreview').textContent='Set an eligible sale date to preview.';}
- };f.addEventListener('input',preview);preview();
+ };attachFeeEstimate(f,a,'SELL');f.addEventListener('input',preview);preview();
 }
 function addFill(id){const a=account(),p=findPosition(id),now=analytics().asOf;
- const body=`<p class="modal-intro">Adding to the same idea increases its open cost and reserved risk. This is not a new risk allowance.</p><form><div class="modal-grid">${field('ADDITIONAL CONTRACTS','qty','number',1,{required:'required',min:1,step:1})}${field('PRICE / SHARE USD','price','number','',{required:'required',min:.0001,step:.0001})}${field('TOTAL BUY FEES USD','fee','number',0,{min:0,step:.0001})}${field('USD / CAD AT BUY','fx','number',a.fx,{min:.01,step:.0001})}${field('DATE','date','date',now,{required:'required'})}${field('TIME ET','time','time','',{step:1})}</div><div id="fillPreview" class="modal-summary"></div>${formEnd('Record added contracts')}</form>`;
+ const body=`<p class="modal-intro">Adding to the same idea increases its open cost and reserved risk. This is not a new risk allowance.</p><form><div class="modal-grid">${field('ADDITIONAL CONTRACTS','qty','number',1,{required:'required',min:1,step:1})}${field('PRICE / SHARE USD','price','number','',{required:'required',min:.0001,step:.0001})}${field('TOTAL BUY FEES USD','fee','number',estimateOrderFee(a,'BUY',1),{min:0,step:.0001})}${field('USD / CAD AT BUY','fx','number',a.fx,{min:.01,step:.0001})}${field('DATE','date','date',now,{required:'required'})}${field('TIME ET','time','time','',{step:1})}</div><div id="fillPreview" class="modal-summary"></div>${formEnd('Record added contracts')}</form>`;
  const f=dialog(`Add to ${p.ticker}`,'SAME IDEA / EXTRA EXPOSURE',body,(d)=>{
  const qty=Math.floor(requireRange(getText(d,'qty'),1,99999,'Contracts')),price=requireRange(getText(d,'price'),.0001,100000,'Premium'),fee=requireRange(getText(d,'fee')||'0',0,100000,'Fees'),fx=requireRange(getText(d,'fx'),.01,100,'FX'),date=requireDate(getText(d,'date'),'entry date');validateSession(date);validateAsOf(date);
  const before=analytics(),copy=structuredClone(state);copy.positions.find(z=>z.id===p.id).fills.push({id:'__add__',date,time:getText(d,'time')||'23:59',qty,price,fee,fx});
  const newCalc=calculateAccount(copy,a.id,asOf()),addedRisk=newCalc.reserveCad-before.reserveCad;
  if(!maybeBreach(before,addedRisk))return false;
- p.fills.push({id:uid(),date,time:getText(d,'time')||'23:59',timeUnverified:!getText(d,'time'),qty,price,fee,fx});showToast(`Added ${qty} contract${qty===1?'':'s'} to ${p.ticker}.`);return true;
+ p.fills.push({id:uid(),date,time:getText(d,'time')||'23:59',timeUnverified:!getText(d,'time'),qty,price,fee,fx,feeEstimated:f.dataset.feeEstimated==='true'});showToast(`Added ${qty} contract${qty===1?'':'s'} to ${p.ticker}.`);return true;
  });
  const preview=()=>{const d=new FormData(f),qty=num(d.get('qty')),price=num(d.get('price')),fee=num(d.get('fee'));if(qty<1||price<=0){$('fillPreview').innerHTML='<span>Enter contracts and premium to preview added risk.</span>';return;}
  const before=analytics(),clone=structuredClone(state);clone.positions.find(z=>z.id===p.id).fills.push({id:'__preview__',date:String(d.get('date')),time:String(d.get('time')||'23:59'),qty,price,fee,fx:num(d.get('fx'),a.fx)});
  const after=calculateAccount(clone,a.id,asOf());$('fillPreview').innerHTML=`<strong>Additional reserve: ${money(after.reserveCad-before.reserveCad)}</strong><span>Available after add: ${money(after.availableCad)}. Your per-idea allowance does not reset.</span>`;
- };f.addEventListener('input',preview);preview();
+ };attachFeeEstimate(f,a,'BUY');f.addEventListener('input',preview);preview();
 }
 function editPosition(id){const p=findPosition(id);const body=`<p class="modal-intro">Update your forward-looking risk plan. Do not rewrite what you knew before entry. No existing fills or realized results are changed.</p><form><div class="modal-grid">
  ${field('TICKER','ticker','text',p.ticker,{required:'required',maxlength:12})}${selectField('OPTION TYPE','optionType',[['Put','Put'],['Call','Call']],p.optionType)}
@@ -409,11 +437,11 @@ function manualPnl(){const now=analytics().asOf;const body=`<p class="modal-intr
  dialog('Record prior realized P/L','HISTORICAL ADJUSTMENT',body,(d)=>{const date=requireDate(getText(d,'date'),'trade date');validateSession(date);validateAsOf(date);const pnlCad=requireRange(getText(d,'pnlCad'),-1e9,1e9,'P/L'),note=getText(d,'note');if(!note)throw new Error('Label required.');state.adjustments.push({id:uid(),accountId:account().id,date,pnlCad,note});showToast(`Saved ${money(pnlCad)} in realized CAD P/L.`);return true;});
 }
 function addAccount(){const body=`<p class="modal-intro">Each portfolio gets its own rolling loss and open-risk allocation. Do not treat correlated accounts as diversification.</p><form><div class="modal-grid">${field('PORTFOLIO NAME','name','text','New swing account',{required:'required',maxlength:56})}${field('CURRENT EQUITY CAD','equity','number',20000,{required:'required',min:0,step:.01})}${field('RISK % / WINDOW','risk','number',3,{required:'required',min:0,max:100,step:.1})}${field('STRESS %','stress','number',70,{required:'required',min:0,max:100,step:1})}</div>${formEnd('Add account')}</form>`;
- dialog('New portfolio','INDEPENDENT ACCOUNT',body,(d)=>{const a=account(),name=getText(d,'name'),equity=requireRange(getText(d,'equity'),0,1e9,'Equity'),riskPct=requireRange(getText(d,'risk'),0,100,'Risk'),stressPct=requireRange(getText(d,'stress'),0,100,'Stress');if(!name)throw new Error('Name is required.');const id=uid();state.accounts.push({id,name,equityCad:equity,equityCheckpoints:[{id:uid(),date:onOrBeforeSession(today(),state.customClosed),createdAt:new Date().toISOString(),equityCad:equity,realizedPnlCad:0,source:'New portfolio opening equity'}],riskPct,stressPct,window:5,roundStep:25,mode:'stress',fx:a.fx,fxSource:a.fxSource,fxDate:a.fxDate,ideaCapCad:200,brokerAccountId:''});activeAccountId=id;showToast(`${name} created.`);return true;});
+ dialog('New portfolio','INDEPENDENT ACCOUNT',body,(d)=>{const a=account(),name=getText(d,'name'),equity=requireRange(getText(d,'equity'),0,1e9,'Equity'),riskPct=requireRange(getText(d,'risk'),0,100,'Risk'),stressPct=requireRange(getText(d,'stress'),0,100,'Stress');if(!name)throw new Error('Name is required.');const id=uid();state.accounts.push({id,name,equityCad:equity,equityCheckpoints:[{id:uid(),date:onOrBeforeSession(today(),state.customClosed),createdAt:new Date().toISOString(),equityCad:equity,realizedPnlCad:0,source:'New portfolio opening equity'}],riskPct,stressPct,window:5,roundStep:25,mode:'stress',fx:a.fx,fxSource:a.fxSource,fxDate:a.fxDate,ideaCapCad:200,brokerAccountId:'',buyFeePerContractUsd:ratePerContract(a,'BUY'),sellFeePerContractUsd:ratePerContract(a,'SELL')});activeAccountId=id;showToast(`${name} created.`);return true;});
 }
 function saveSettings(e){e.preventDefault();const f=e.currentTarget,d=new FormData(f),a=account();try{
  const equityCad=requireRange(getText(d,'equityCad'),0,1e9,'Equity'),riskPct=requireRange(getText(d,'riskPct'),0,100,'Risk percentage'),window=Math.floor(requireRange(getText(d,'window'),1,30,'Window')),stressPct=requireRange(getText(d,'stressPct'),0,100,'Stress percentage'),fx=requireRange(getText(d,'fx'),.01,100,'FX');const step=requireRange(getText(d,'roundStep'),0,100,'Rounding');
- const name=getText(d,'name');if(!name)throw new Error('Account name is required.');const brokerAccountId=getText(d,'brokerAccountId').toUpperCase();if(brokerAccountId&&state.accounts.some(x=>x.id!==a.id&&x.brokerAccountId===brokerAccountId))throw new Error('That IBKR account number is already mapped to another portfolio.');const oldFx=a.fx;
+ const name=getText(d,'name');if(!name)throw new Error('Account name is required.');const brokerAccountId=getText(d,'brokerAccountId').toUpperCase();if(brokerAccountId&&state.accounts.some(x=>x.id!==a.id&&x.brokerAccountId===brokerAccountId))throw new Error('That IBKR account number is already mapped to another portfolio.');const buyFeePerContractUsd=requireRange(getText(d,'buyFeePerContractUsd'),0,1000,'Estimated buy fee per contract'),sellFeePerContractUsd=requireRange(getText(d,'sellFeePerContractUsd'),0,1000,'Estimated sell fee per contract');const oldFx=a.fx;
  // A plain settings save must NOT bake today's realized P/L into equity a second time.
  const before=calculateAccount(state,a.id,today());
  const equityRebased=Math.abs(equityCad-before.currentEquityCad)>0.005;
@@ -423,7 +451,7 @@ function saveSettings(e){e.preventDefault();const f=e.currentTarget,d=new FormDa
    a.equityCad=equityCad;
    a.equityPnlAtCheckpointCad=before.realizedAllTime;
  }
- Object.assign(a,{name,brokerAccountId,riskPct,window,stressPct,fx,roundStep:step,mode:getText(d,'mode')==='strict'?'strict':'stress',ideaCapCad:optional(getText(d,'ideaCapCad'))});
+ Object.assign(a,{name,brokerAccountId,riskPct,window,stressPct,fx,roundStep:step,mode:getText(d,'mode')==='strict'?'strict':'stress',ideaCapCad:optional(getText(d,'ideaCapCad')),buyFeePerContractUsd,sellFeePerContractUsd});
  if(fx!==oldFx){a.fxSource='Manually entered (broker rate if supplied)';a.fxDate='';}
  save();render();showToast(equityRebased?'Equity checkpoint saved. New realized P/L will now update account equity automatically.':'Portfolio rules recalculated; tracked equity preserved.');
  }catch(err){showToast(err.message);}
@@ -588,6 +616,7 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'plan-to-position':beginPlannedPosition(el.dataset.planId);break;
  case 'add-plan-idea':{const ideas=plannerIdeas();if(ideas.length>=MAX_PLAN_IDEAS){showToast(`Maximum ${MAX_PLAN_IDEAS} draft ideas.`);break;}const idea=defaultPlanIdea(uid(),account().stressPct,false);ideas.push(idea);persistPlannerDrafts();renderPlanner(analytics());document.querySelectorAll('.draft-idea [name="label"]')[ideas.length-1]?.focus();break;}
  case 'remove-plan-idea':dropPlannerIdea(el.dataset.planId);break;
+ case 'reset-draft-fee':{const idea=plannerIdeas().find(x=>x.id===el.dataset.planId);if(idea){idea.feeManual=false;idea.fee=estimateOrderFee(account(),'BUY',idea.qty).toFixed(2);persistPlannerDrafts();renderPlanner(analytics());}break;}
  case 'export-backup':exportBackup();break;
  case 'export-csv':exportCsv();break;
  case 'template-csv':exportCsv(true);break;
@@ -615,6 +644,8 @@ $('quickPlanner').addEventListener('input',e=>{
  if(!idea||!['label','qty','price','fee','stress'].includes(e.target.name))return;
  idea[e.target.name]=e.target.value;
  if(e.target.name==='stress')idea.stressCustom=true;
+ if(e.target.name==='fee')idea.feeManual=true;
+ if(e.target.name==='qty'&&!idea.feeManual){idea.fee=estimateOrderFee(account(),'BUY',idea.qty).toFixed(2);const feeInput=draftEl.querySelector('[name=\"fee\"]');if(feeInput)feeInput.value=idea.fee;}
  persistPlannerDrafts();updatePlannerMetrics(analytics());
 });
 $('settingsForm').addEventListener('submit',saveSettings);

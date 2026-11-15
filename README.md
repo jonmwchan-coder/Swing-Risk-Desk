@@ -109,3 +109,10 @@ If starting fresh, create a **new, preferably private GitHub repo**, upload the 
 Run `npm test` in the source folder on Node 20+. The test suite uses **synthetic fictional examples only** and covers rolling-window math, IBKR source recognition, existing-fill matching, duplicate protection, an unmatched SELL inbox, partial exits, dated plan history, full-backup merges, and a minimal initial DOM-render smoke test. No private source CSV or starter positions ship in the ZIP.
 
 Layout: `index.html`, `styles.css`, `app.js`; domain logic: `lib/risk.mjs`, `lib/calendar.mjs`, `lib/ibkr.mjs`, `lib/ledger.mjs`; optional FX endpoint: `api/fx.js`; PWA offline shell: `sw.js`; fixtures/tests: `tests/`. The PWA caches application code, **not** account records or uploaded CSV files.
+
+
+## v1.9: Per-portfolio estimated IBKR option fees
+
+The defaults use USD 0.77/contract BUY and USD 1.00/contract SELL as **editable planning estimates**, not a guaranteed IBKR schedule or verified sell rate. Different exchanges, option classes and sell-side fees can change actual charges. Keep broker CSV commissions exact (4 decimal places). Never publish private broker account numbers or raw transaction exports in source control.
+
+Each portfolio can change its BUY and SELL estimates under Rules & data -> Portfolio settings. New position, Add contracts, and Record exit dialogs prefill *total order fee* from quantity, and adjust on quantity changes until the user manually overrides the fee; Use estimate restores auto-fill. Quick-size draft fees follow quantity unless manually edited; the Auto button resets the draft. Estimates are flagged on newly recorded manual transactions. A unique matching IBKR CSV record supersedes a flagged estimate with the broker's actual fee and preserves the estimated value in provenance. Duplicate/ambiguous transactions remain protected. Fee defaults are stored with portfolio settings in local JSON, cloud sync and full backups; historical real fills are never recalculated when fee settings change.

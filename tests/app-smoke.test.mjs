@@ -48,3 +48,9 @@ assert.match(getElementById('importInbox').innerHTML,/Import exceptions/);
 assert.match(css,/\/\* v1\.8\.1: thesis \/ catalyst should wrap naturally on widescreen too\./);
 assert.match(css,/\.history-table\.expanded-ledger \.history-thesis-cell \.history-cell-scroll\s*\{[^}]*white-space:pre-wrap;[^}]*overflow:visible;/);
 console.log('App module boot/render smoke passed.');
+
+const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');
+assert.match(html,/name="buyFeePerContractUsd"/);
+assert.match(html,/name="sellFeePerContractUsd"/);
+assert.match(getElementById('quickPlanner').innerHTML,/data-action="reset-draft-fee"/);
+assert.match(getElementById('quickPlanner').innerHTML,/name="fee"[^>]*value="0\.77"/);

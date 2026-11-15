@@ -317,3 +317,8 @@ html,body{max-width:100%}
   overflow-wrap:anywhere;
   word-break:normal;
 }
+
+/* v1.9 - estimated broker commissions are editable, never immutable facts. */
+.fee-estimate-hint{display:block;font-size:11px;line-height:1.35;color:var(--muted,#7b91a3);margin-top:5px}
+.fee-reset-mini{font:inherit;font-size:10px;cursor:pointer;border:1px solid currentColor;border-radius:5px;background:transparent;color:inherit;padding:1px 5px;opacity:.85}
+.fee-reset-mini:hover,.fee-reset-mini:focus-visible{opacity:1;outline:1px solid currentColor}
