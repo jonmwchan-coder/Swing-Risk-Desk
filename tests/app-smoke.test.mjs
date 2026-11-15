@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 const data=JSON.parse(fs.readFileSync(new URL('./fixtures/starter-example.json', import.meta.url),'utf8'));
+// Fractional raw premium is kept in the data, but history displays two decimals.
+data.positions[0].fills[0].price=2.7345;
 const storage=new Map([['swing-risk-desk:data:v1',JSON.stringify(data)]]);
 globalThis.localStorage={getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,String(v))};
 globalThis.location={protocol:'file:'};
@@ -19,6 +21,15 @@ await import(new URL('../app.js', import.meta.url).href);
 const h=getElementById('historyTable').innerHTML;
 console.log('HTML characters',h.length);
 assert.ok(h.includes("<th>TP</th>"));
+assert.ok(h.includes('<th>CONTRACT</th>'));
+assert.ok(h.includes('10/02/26'));
+assert.ok(h.includes('$2.73'));
+assert.ok(!h.includes('$2.7345'));
+assert.ok(h.includes('history-cell-scroll'));
+assert.equal(data.positions[0].fills[0].price,2.7345);
+const css=fs.readFileSync(new URL('../styles.css',import.meta.url),'utf8');
+assert.ok(!css.includes('.app-shell.history-wide'));
+assert.ok(css.includes('.history-table.expanded-ledger{min-width:0}'));
 assert.ok(h.includes("<th>INVALIDATION</th>"));
 assert.match(h,/DEMO/);
 assert.match(getElementById('dashboardPositions').innerHTML,/DEMO/);

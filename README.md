@@ -1,3 +1,10 @@
+## v1.7: compact trade history (2026-11-14)
+
+- Trade History uses the same centered 1180px app width as Dashboard, Positions, and Settings; no more 1900px-wide exception.
+- The date uses a compact `MM/DD/YY` presentation (full date retained as a tooltip and machine-readable `datetime`); premium displays two decimal places (underlying raw values stay unchanged in all records and exports).
+- Contract, TP, invalidation, thesis/catalyst and exit columns share their space more efficiently. Long TP, invalidation, thesis and exit text scrolls inside the cell, not across the entire page. On phones, all content wraps in the existing card layout. Smaller tablets may scroll inside the ledger itself.
+- This is a display-only change. No existing portfolio history, cash calculations, stored fills, cloud sync, IBKR deduplication, or JSON backups are modified.
+
 # Swing Risk Desk v1.6 (multi-entry sizing + private cloud journal)
 
 ## v1.6: Compact multi-entry size planning (November 2026)
