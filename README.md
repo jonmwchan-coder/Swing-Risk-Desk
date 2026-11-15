@@ -1,3 +1,9 @@
+## v1.8: concise history placeholders and readable small-screen notes (2026-11-15)
+
+- Trade History now shows `----` for un-realized P/L on entries and `----` for the exit/reason column when no exit occurred. Financial records and calculations are unchanged.
+- Long thesis, catalyst, target, invalidation, and exit notes wrap to as many lines as needed in trade-history cells at phone, tablet, and narrow-laptop widths (up to 1100px). Desktop above 1100px still allows optional horizontal scrolling inside long text cells. The page shell remains the same width as other views.
+- Versioned offline cache refresh; no changes to Supabase schema, persisted trade data, IBKR import logic, or JSON handoff.
+
 ## v1.7: compact trade history (2026-11-14)
 
 - Trade History uses the same centered 1180px app width as Dashboard, Positions, and Settings; no more 1900px-wide exception.
