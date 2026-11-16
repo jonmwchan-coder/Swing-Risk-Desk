@@ -129,12 +129,12 @@ function renderOverview(m){
   $('availableBig').classList.toggle('negative',isOver);
   $('heroBadge').className=`pill ${isOver?'pill-alert':m.availableCad<25?'pill-warning':'pill-good'}`;
   $('heroBadge').textContent=isOver?'OVER BUDGET':m.availableCad<25?'CAPACITY FULL':'WITHIN PLAN';
-  $('heroSubtitle').textContent=isOver?`${cad(-m.availableCad)} over the risk limit. No room to add.`:`After open stress reserves and losses realized during the last ${m.account.window} sessions.`;
+  $('heroSubtitle').textContent=isOver?`${cad(-m.availableCad)} over the risk limit. No room to add.`:`After open stress reserves and net losing positions/attempts during the last ${m.account.window} sessions.`;
   const openPercent=m.budgetCad>0?Math.max(0,Math.min(100,100*m.reserveCad/m.budgetCad)):100;
   const lossPercent=m.budgetCad>0?Math.max(0,Math.min(100-openPercent,100*m.realizedLossCad/m.budgetCad)):0;
   $('trackOpen').style.width=`${openPercent}%`;
   $('trackLoss').style.width=`${lossPercent}%`;
-  $('budgetTrack').setAttribute('aria-label',`${cad(m.reserveCad)} reserved, ${cad(m.realizedLossCad)} realized losses, ${cad(m.availableCad)} available`);
+  $('budgetTrack').setAttribute('aria-label',`${cad(m.reserveCad)} reserved, ${cad(m.realizedLossCad)} net losing attempts, ${cad(m.availableCad)} available`);
   $('usedPct').textContent=`${Math.round(used)}%`;
   $('riskRing').style.background=`conic-gradient(#75dec0 0 ${openPercent}%,#fd9b93 ${openPercent}% ${openPercent+lossPercent}%,#35515b ${openPercent+lossPercent}% 100%)`;
   $('windowLabel').textContent=`Rolling ${m.account.window}-session window`;
@@ -143,7 +143,7 @@ function renderOverview(m){
   const oc=m.positions.filter(x=>x.metrics.qty>0).length;
   $('reservedHint').textContent=`${oc} open position${oc!==1?'s':''} across all ideas`;
   $('lossMetric').textContent=money(m.realizedLossCad);
-  $('lossHint').textContent=`${money(m.realizedProfitCad)} wins logged, not netted`;
+  $('lossHint').textContent=`Gross negative realized entries: ${money(m.grossRealizedLossCad)} (diagnostic). Net profitable attempts do not offset other trades.`;
   $('capMetric').textContent=money(m.budgetCad);
   $('capHint').textContent=`${m.account.riskPct}% of ${money(m.currentEquityCad)} tracked equity`;
   $('equityTracker').innerHTML=`<strong>TRACKED ACCOUNT EQUITY</strong> <span class="equity-tracker-value">${cad(m.currentEquityCad)}</span> <span class="equity-tracker-detail">${cad(m.equityCheckpointCad)} checkpoint ${m.equityChangeCad>=0?'+':''}${money(m.equityChangeCad)} net realized since checkpoint · excludes unrealized P/L</span>`;
@@ -170,7 +170,10 @@ function renderOverview(m){
   $('sessionStrip').style.gridTemplateColumns=m.dates.length>7?`repeat(${m.dates.length},minmax(56px,1fr))`:`repeat(${m.dates.length},minmax(0,1fr))`;
   $('sessionStrip').innerHTML=m.dates.map(d=>{const loss=m.lossesByDate[d]||0;return `<div class="session-day ${d===m.asOf?'today':''}"><span class="dow">${esc(dow(d))}</span><div class="daynum">${d.slice(8)}</div><div class="loss ${loss<.005?'zero':''}">${loss<.005?'No loss':money(loss,0)}</div></div>`;}).join('');
   const release=lossReleases(state,m.account.id,asOf());
-  $('releaseBox').innerHTML=release.length?`<b>Next release:</b> ${fmtDate(release[0].releaseDate,true)} removes ${money(release.filter(x=>x.releaseDate===release[0].releaseDate).reduce((s,x)=>s-x.pnlCad,0))} in realized losses, assuming no other activity.`:'<b>No realized losses in this window.</b> An open swing keeps reserving risk even if its entry is older than five sessions.';
+  $('releaseBox').innerHTML=release.length?(release[0].changeCad>0?
+    `<b>Next rolling release:</b> ${fmtDate(release[0].releaseDate,true)} frees ${money(release[0].changeCad)} in net-loss capacity, assuming no new trades.`:
+    `<b>Rolling window warning:</b> ${fmtDate(release[0].releaseDate,true)} adds ${money(-release[0].changeCad)} to the loss charge when an older winning partial expires before its losing runner. No new trade is required for this change.`):
+    '<b>No scheduled change in rolling losses.</b> An open swing keeps reserving risk even if its entry is older than five sessions.';
   renderPlanner(m);
   const runway=budgetRunway(state,m.account.id,asOf(),10);
   $('runwayChart').innerHTML=runway.map((r,i)=>{const h=m.budgetCad>0?Math.max(4,Math.min(100,100*Math.max(0,r.available)/m.budgetCad)):4;return `<div class="runway-item"><div class="runway-number ${r.available<0?'neg':''}">${money(r.available,0)}</div><div class="runway-bar-box"><div class="runway-bar ${r.available<0?'negative':''}" style="height:${h}%"></div></div><div class="runway-date">${i===0?'NOW':fmtDate(r.date)}</div></div>`;}).join('');
@@ -342,7 +345,7 @@ function addPosition(){const a=account(),pref=plannerPrefill;plannerPrefill=null
 function findPosition(id){const p=state.positions.find(x=>x.id===id&&x.accountId===account().id);if(!p)throw new Error('Position not found in this account.');return p;}
 function closePosition(id){const a=account(),p=findPosition(id),existing=calculatePosition(p,a,analytics().asOf);if(existing.qty<=0)return showToast('Position is already closed.');
  const now=analytics().asOf;
- const body=`<p class="modal-intro">Close a slice or the full position. The remaining contracts keep their reserve. Each losing exit counts on its own closing date.</p><form><div class="modal-grid">
+ const body=`<p class="modal-intro">Close a slice or the full position. The remaining contracts keep their reserve. Net partial exits from this same position/attempt count together within the rolling window. Unrelated trades never offset its losses.</p><form><div class="modal-grid">
  ${field('CONTRACTS TO SELL','qty','number',existing.qty,{required:'required',min:1,max:existing.qty,step:1})}
  ${field('SALE PRICE PER SHARE USD / OPTIONAL WITH BROKER P&L','price','number','',{min:0,step:.0001})}
  ${field('EXIT COMMISSIONS USD','fee','number',estimateOrderFee(a,'SELL',existing.qty),{min:0,step:.0001})}
@@ -368,7 +371,7 @@ function closePosition(id){const a=account(),p=findPosition(id),existing=calcula
  const preview=()=>{const d=new FormData(f),q=num(d.get('qty')),price=optional(d.get('price')),broker=optional(d.get('brokerPnlCad'));
  if(q<1||q>existing.qty||(price===null&&broker===null)){$('closePreview').innerHTML='<span>Enter sale quantity and price (or verified broker P/L) for an exact budget preview.</span>';return;}
  try{const copy=structuredClone(state);const z=copy.positions.find(z=>z.id===p.id);z.exits.push({id:'__preview__',date:String(d.get('date')),time:String(d.get('time')||'23:59'),qty:q,price,fee:num(d.get('fee')),fx:num(d.get('fx')),brokerPnlCad:broker});const calc=calculateAccount(copy,a.id,asOf());const sale=calc.sales.find(x=>x.id==='__preview__');const result=sale?.pnlCad??0;const remains=calc.positions.find(x=>x.position.id===p.id)?.metrics;
- const box=$('closePreview');box.classList.toggle('alert',calc.availableCad<-.01);box.innerHTML=`<strong>After exit: ${money(calc.availableCad)} available</strong><span>Estimated realized ${money(result)} CAD (${result<0?'loss consumes budget':'profit does not net prior losses'}). Remaining reserve ${money(remains?.reserveCad||0)}.</span>`;
+ const box=$('closePreview');box.classList.toggle('alert',calc.availableCad<-.01);box.innerHTML=`<strong>After exit: ${money(calc.availableCad)} available</strong><span>Estimated realized ${money(result)} CAD (${result<0?'loss may consume net position budget':'profit offsets losses only within this position/attempt'}). Remaining reserve ${money(remains?.reserveCad||0)}.</span>`;
  }catch(err){$('closePreview').textContent='Set an eligible sale date to preview.';}
  };attachFeeEstimate(f,a,'SELL');f.addEventListener('input',preview);preview();
 }

@@ -54,3 +54,9 @@ assert.match(html,/name="buyFeePerContractUsd"/);
 assert.match(html,/name="sellFeePerContractUsd"/);
 assert.match(getElementById('quickPlanner').innerHTML,/data-action="reset-draft-fee"/);
 assert.match(getElementById('quickPlanner').innerHTML,/name="fee"[^>]*value="0\.77"/);
+
+// v2.0 loss rule must be visible, without suggesting that unrelated winners offset losses.
+assert.match(html,/ROLLING NET LOSSES/);
+assert.match(html,/Only partials from the same position\/attempt offset one another/);
+assert.match(getElementById('lossHint').textContent,/Gross negative realized entries/);
+assert.match(getElementById('releaseBox').innerHTML,/No scheduled change in rolling losses/);

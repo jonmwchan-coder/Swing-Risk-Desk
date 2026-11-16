@@ -54,7 +54,7 @@
 
       <div class="metric-grid">
         <article class="metric-card"><div class="metric-title"><span class="metric-symbol green">&#9679;</span> OPEN RISK RESERVED</div><strong id="reservedMetric">$0.00</strong><small id="reservedHint">No open positions</small></article>
-        <article class="metric-card"><div class="metric-title"><span class="metric-symbol red">&#9679;</span> ROLLING REALIZED LOSSES</div><strong id="lossMetric">$0.00</strong><small id="lossHint">Profits never offset these losses</small></article>
+        <article class="metric-card"><div class="metric-title"><span class="metric-symbol red">&#9679;</span> ROLLING NET LOSSES</div><strong id="lossMetric">$0.00</strong><small id="lossHint">Profitable partials can offset losing exits only within the same position/attempt</small></article>
         <article class="metric-card"><div class="metric-title"><span class="metric-symbol muted">&#9679;</span> ROLLING RISK CEILING</div><strong id="capMetric">$600.00</strong><small id="capHint">3% of $20,000 CAD</small></article>
         <article class="metric-card"><div class="metric-title"><span class="metric-symbol blue">&#9679;</span> OPEN PREMIUM AT COST</div><strong id="costMetric">$0.00</strong><small id="costHint">Remaining debit at current FX</small></article>
       </div>
@@ -67,8 +67,9 @@
 
       <div class="two-panel">
         <section class="panel window-panel">
-          <div class="section-head section-head-compact"><div><div class="overline">SESSION-AWARE</div><h2>Rolling loss ledger</h2></div><span class="subtle-badge" id="rollingDaysLabel">Last 5 sessions</span></div>
+          <div class="section-head section-head-compact"><div><div class="overline">SESSION-AWARE</div><h2>Net loss ledger</h2></div><span class="subtle-badge" id="rollingDaysLabel">Last 5 sessions</span></div>
           <div class="session-strip" id="sessionStrip"></div>
+          <p class="help-line">Loss tiles show net charges allocated to each losing exit date. Only partials from the same position/attempt offset one another. Older profitable partials can expire first.</p>
           <div class="release-box" id="releaseBox">Losses leave the calculation only when their session rolls out.</div>
         </section>
         <section class="panel scenario-panel">
@@ -82,7 +83,7 @@
       <section class="panel runway-panel">
         <div class="section-head section-head-compact"><div><div class="overline">IF NOTHING ELSE CHANGES</div><h2>Capacity over the next sessions</h2></div><span class="subtle-badge">Projection only</span></div>
         <div class="runway-chart" id="runwayChart"></div>
-        <p class="help-line">Projects the release of already-realized losses. Assumes all currently open exposure stays open and no new trades occur.</p>
+        <p class="help-line">Projects how net position losses change as the rolling window moves. Capacity can rise or fall when past partial exits age out. Open reserves stay unchanged; no future trades are assumed.</p>
       </section>
     </section>
 
@@ -157,7 +158,7 @@
       <div class="bottom-danger"><button type="button" class="text-link text-delete" data-action="reset-data">Reset all locally saved data</button><small>Does not change anything in Google Sheets or IBKR.</small></div>
     </section>
   </main>
-  <footer><span>SWING RISK DESK / v1.9</span><span>Process over P&amp;L. All figures in CAD unless marked USD.</span></footer>
+  <footer><span>SWING RISK DESK / v2.0</span><span>Process over P&amp;L. All figures in CAD unless marked USD.</span></footer>
 </div>
 <dialog id="editorDialog" class="editor-dialog"><div class="dialog-content"><div class="dialog-header"><div><div class="overline" id="dialogEyebrow">POSITION</div><h2 id="dialogTitle">New position</h2></div><button type="button" class="icon-button" data-action="close-dialog" aria-label="Close dialog">&#10005;</button></div><div id="dialogBody"></div></div></dialog>
 <input id="importFile" type="file" accept=".json,.csv,application/json,text/csv" hidden>
