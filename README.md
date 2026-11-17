@@ -1,3 +1,11 @@
+# v2.2: Export a single swing trade for GPT/master review (November 2026)
+
+- **Positions & partial exits → each trade card → Export trade**, available for open, partially exited, and fully closed positions (switch to the **Closed** or **All** filter to see a closed position). Also available as **Export** directly on each Trade History fill/exit row. Each button downloads **one JSON file for that single account-specific position**, not the whole portfolio or trading history.
+- Includes the **unmodified original position record** (all buy/add fills, partial/full exits, source IBKR Flex rows, exact fees, FX values, targets, invalidation, thesis, catalyst, management, dated journal/psychology and plan revisions), plus a chronological timeline, scoped archived corrections, and an independently computed realized P/L / return breakdown (unknown if open). Broker estimates and unverified time zones are explicitly flagged.
+- If the same thesis exists in two portfolios, export each separately. A new buy after a complete close may represent a new attempt; export preserves the ordered executions and attempt indices for reconciliation. The package never substitutes later notes for pre-entry evidence or invents missing exits, historical prices, or setup grades.
+- **This is a GPT handoff, NOT a full account backup**. Exporting it does not mark the app as fully backed up or write to any Google trading master. It is intentionally not accepted by the app's normal full-backup import. For loss-proof recovery continue using **Download full backup / ChatGPT handoff** under Rules & data.
+- App data schema/storage key and Supabase cloud database are unchanged; no migration. Download the file locally and attach it in your GPT trading review, then explicitly request a canonical commit when ready.
+
 # v2.1: Realized return percentages (November 2026)
 
 - **Positions:** Realized Return appears beside Realized Net for each position; for partially closed positions this reflects only the sold contracts, not unrealized value of remaining contracts. No sales or no verifiable acquisition basis displays `----`.

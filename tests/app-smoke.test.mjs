@@ -20,11 +20,14 @@ function fakeElement(id){
 const getElementById=id=>{if(!el.has(id))el.set(id,fakeElement(id));return el.get(id);};
 globalThis.document={getElementById,querySelectorAll:()=>[],querySelector:()=>null,addEventListener:()=>{},body:{appendChild:()=>{}},createElement:()=>({click:()=>{},remove:()=>{}})};
 await import(new URL('../app.js', import.meta.url).href);
+const positionsHtml=getElementById('positionsFull').innerHTML;
+assert.ok(positionsHtml.includes('data-action="export-trade"'), 'Positions must offer single-trade export on the actual position card');
 const h=getElementById('historyTable').innerHTML;
 console.log('HTML characters',h.length);
 assert.ok(h.includes("<th>TP</th>"));
 assert.ok(h.includes('<th>CONTRACT</th>'));
 assert.ok(h.includes('<th>P/L</th><th>RETURN %</th><th>ACTIONS</th>'),'Return percent belongs immediately after P/L');
+assert.ok(h.includes('data-action="export-trade"'), 'Every named trade in history should be exportable');
 assert.ok(h.includes('data-label="RETURN %"'));
 assert.ok(h.includes('data-label="RETURN %" title='));
 assert.match(h,/data-label="RETURN %"[^>]*>\+?\d+\.\d%</,'An exit with a basis shows the realized return');
