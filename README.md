@@ -1,3 +1,10 @@
+# v2.1: Realized return percentages (November 2026)
+
+- **Positions:** Realized Return appears beside Realized Net for each position; for partially closed positions this reflects only the sold contracts, not unrealized value of remaining contracts. No sales or no verifiable acquisition basis displays `----`.
+- **Trade History:** A narrow **RETURN %** column appears immediately to the right of P/L. The denominator is the allocated acquisition cost, including buy commissions, of the contracts actually sold; the numerator is net realized CAD P/L, including sell commissions or broker P/L override when provided. The return is not the price change of the underlying stock.
+- Entry rows and manual historical CAD adjustments without matching acquisition cost show `----` instead of invented returns. Each separate sale shows the return for its own sold portion, while the Positions page combines sold portions using weighted cost basis (not an average of percentages).
+- Account equity, 5-session net rolling-loss calculations, exposure reservations, original fills, fees, IBKR duplicate rules, cloud ledger format and exports are unchanged. Display reads existing transactions only. Offline shell cache version bumped.
+
 # v2.0: Net losing positions/attempts in the rolling budget (November 2026)
 
 **Effective rule:** 3% (or your editable portfolio setting) of tracked CAD realized equity is the rolling risk ceiling. Available new risk = ceiling **minus net losing position/attempt P/L inside the last five NYSE sessions** minus current open-position risk reserves. This change is computational only: existing fills, source broker commissions/FX, positions, journals, cloud data and JSON backups are unchanged; there is no database migration or historical data rewrite.

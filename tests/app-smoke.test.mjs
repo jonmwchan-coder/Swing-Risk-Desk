@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 const data=JSON.parse(fs.readFileSync(new URL('./fixtures/starter-example.json', import.meta.url),'utf8'));
 // Fractional raw premium is kept in the data, but history displays two decimals.
 data.positions[0].fills[0].price=2.7345;
+// A partial TP leaves a runner open; both pages should show realized % from its SOLD basis.
+data.positions[0].exits.push({id:'synthetic-sale',date:'2026-10-05',time:'12:00',qty:1,price:3.25,fee:0.8,fx:1.4});
 const storage=new Map([['swing-risk-desk:data:v1',JSON.stringify(data)]]);
 globalThis.localStorage={getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,String(v))};
 globalThis.location={protocol:'file:'};
@@ -22,6 +24,10 @@ const h=getElementById('historyTable').innerHTML;
 console.log('HTML characters',h.length);
 assert.ok(h.includes("<th>TP</th>"));
 assert.ok(h.includes('<th>CONTRACT</th>'));
+assert.ok(h.includes('<th>P/L</th><th>RETURN %</th><th>ACTIONS</th>'),'Return percent belongs immediately after P/L');
+assert.ok(h.includes('data-label="RETURN %"'));
+assert.ok(h.includes('data-label="RETURN %" title='));
+assert.match(h,/data-label="RETURN %"[^>]*>\+?\d+\.\d%</,'An exit with a basis shows the realized return');
 assert.ok(h.includes('10/02/26'));
 assert.ok(h.includes('$2.73'));
 assert.ok(!h.includes('$2.7345'));
@@ -39,6 +45,10 @@ assert.ok(css.includes('white-space:pre-wrap;overflow:visible;overflow-wrap:anyw
 assert.ok(h.includes("<th>INVALIDATION</th>"));
 assert.match(h,/DEMO/);
 assert.match(getElementById('dashboardPositions').innerHTML,/DEMO/);
+assert.match(getElementById('positionsFull').innerHTML,/REALIZED NET<\/div>/);
+assert.match(getElementById('positionsFull').innerHTML,/REALIZED RETURN<\/div>/);
+assert.match(getElementById('positionsFull').innerHTML,/Closed contracts · net of fees/);
+assert.match(getElementById('positionsFull').innerHTML,/REALIZED RETURN<\/div><strong[^>]*>\+?\d+\.\d%</);
 assert.match(getElementById('quickPlanner').innerHTML,/draft-idea/);
 assert.match(getElementById('plannerResult').innerHTML,/INCOMPLETE/);
 assert.match(getElementById('plannerResult').innerHTML,/Combined planned/);
