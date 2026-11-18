@@ -4,6 +4,7 @@ import {SCHEMA,normalizeLedger,importIbkrTrades,mergeFullBackup,makeJournalEntry
 import {isIbkrCsv,parseIbkrTrades} from './lib/ibkr.mjs';
 import {createCloudController} from './lib/cloud.mjs';
 import {calculatePlanBasket,defaultPlanIdea,parsePlannedContract,MAX_PLAN_IDEAS} from './lib/planner.mjs';
+import {PLANNER_LOCAL_KEY,loadPlannerDrafts,savePlannerDrafts,clearPlannerDraftStorage} from './lib/planner-storage.mjs';
 import {DEFAULT_BUY_FEE_USD,DEFAULT_SELL_FEE_USD,estimateOrderFee,ratePerContract} from './lib/fees.mjs';
 import {buildSingleTradeHandoff,singleTradeExportFilename,TRADE_HANDOFF_SCHEMA} from './lib/trade-export.mjs';
 
@@ -37,16 +38,36 @@ function load(){try{const saved=localStorage.getItem(STORAGE_KEY);return saved?n
 let state=load();
 let maxRevisionObserved=state.revision||0;
 const initiallyHadLocalRecord=Boolean(localStorage.getItem(STORAGE_KEY));
-let activeAccountId=state.accounts[0]?.id||'bdi';
+const LAST_ACCOUNT_KEY='swing-risk-desk:last-portfolio:v1';
+function preferredAccountId(){
+ try{const prior=globalThis.localStorage.getItem(LAST_ACCOUNT_KEY);if(state.accounts.some(a=>a.id===prior))return prior;}catch{}
+ return state.accounts[0]?.id||'bdi';
+}
+let activeAccountId=preferredAccountId();
+function rememberAccount(){try{globalThis.localStorage.setItem(LAST_ACCOUNT_KEY,activeAccountId);}catch{}}
+
 let activeTab='dashboard';
 let positionFilter='open';
 let asOfOverride=null;
 let toastTimer=null;
 let plannerPrefill=null;
-const DRAFT_SESSION_KEY='swing-risk-desk:planning-board:v1';
-function readDrafts(){try{const data=JSON.parse(sessionStorage.getItem(DRAFT_SESSION_KEY)||'{}');return data&&typeof data==='object'&&!Array.isArray(data)?data:{};}catch{return {};}}
-let plannerDrafts=readDrafts();
-function persistPlannerDrafts(){try{sessionStorage.setItem(DRAFT_SESSION_KEY,JSON.stringify(plannerDrafts));}catch{}}
+const restoredPlanner=loadPlannerDrafts(globalThis.localStorage,globalThis.sessionStorage);
+let plannerDrafts=restoredPlanner.drafts;
+let plannerDraftSavedAt=restoredPlanner.savedAt;
+let plannerStorageHealthy=restoredPlanner.persisted;
+function plannerSavedStatus(){
+ const el=$('plannerSavedStatus');if(!el)return;
+ if(!plannerStorageHealthy){el.textContent='Could not save drafts in this browser';el.dataset.tone='warning';return;}
+ const time=plannerDraftSavedAt?new Date(plannerDraftSavedAt):null;
+ const stamp=time&&Number.isFinite(time.valueOf())?new Intl.DateTimeFormat('en-CA',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}).format(time):'';
+ el.textContent=stamp?`Saved on this device · ${stamp}`:'Auto-saved on this device';el.dataset.tone='good';
+}
+function persistPlannerDrafts(){
+ const at=new Date().toISOString();
+ plannerStorageHealthy=savePlannerDrafts(globalThis.localStorage,plannerDrafts,at);
+ if(plannerStorageHealthy)plannerDraftSavedAt=at;
+ plannerSavedStatus();
+}
 function plannerIdeas(accountId=account().id){
  let ideas=plannerDrafts[accountId];
  if(!Array.isArray(ideas)||!ideas.length){ideas=[defaultPlanIdea(uid(),account().stressPct,true)];plannerDrafts[accountId]=ideas;persistPlannerDrafts();}
@@ -83,7 +104,7 @@ async function writeRecovery(snapshot){try{const db=await openRecovery();await n
 async function recoverFromIndexedDb(){try{const db=await openRecovery();const backup=await new Promise((resolve,reject)=>{const r=db.transaction('snapshots','readonly').objectStore('snapshots').get('latest');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});db.close();
   if(backup&&(!initiallyHadLocalRecord||Number(backup.revision)>maxRevisionObserved)&&!userEditedSinceStartup){
     if(!initiallyHadLocalRecord||confirm('A newer recovery copy was found on this device. Restore it instead of the older browser copy?')){
-      state=normalize(backup);activeAccountId=state.accounts[0]?.id||'bdi';maxRevisionObserved=Math.max(maxRevisionObserved,state.revision||0);
+      state=normalize(backup);activeAccountId=preferredAccountId();rememberAccount();maxRevisionObserved=Math.max(maxRevisionObserved,state.revision||0);
       localStorage.setItem(STORAGE_KEY,JSON.stringify(state));render();showToast('Recovered your latest local data copy. Download an external backup.');
     }
   }
@@ -92,7 +113,7 @@ let userEditedSinceStartup=false;
 let cloudController=null;
 function replaceFromCloud(snapshot){
  state=normalize(snapshot);maxRevisionObserved=Math.max(maxRevisionObserved,Number(state.revision)||0);
- activeAccountId=state.accounts.some(a=>a.id===activeAccountId)?activeAccountId:state.accounts[0]?.id||'bdi';
+ activeAccountId=state.accounts.some(a=>a.id===activeAccountId)?activeAccountId:preferredAccountId();rememberAccount();
  writeLocalWithoutRevision();render();
 }
 function updateCloudStatus({message,tone,user,configured,ready}){
@@ -268,6 +289,7 @@ function updatePlannerMetrics(m){
   el.innerHTML=`<span>Reserve <strong>${money(r.reserveCad)}</strong> CAD${esc(warning)}</span><span>Left after this <strong>${money(r.remainingCad)}</strong></span>`;
  }
  $('planIdeaCount').textContent=`${result.total} of ${MAX_PLAN_IDEAS} drafts · ${result.priced} priced`;
+ plannerSavedStatus();
  $('plannerResult').innerHTML=`<div class="result-line"><span>Available before drafts</span><strong>${money(result.availableCad)}</strong></div>
   <div class="result-line"><span>Combined planned ${m.account.mode==='strict'?'full-debit':'stress'} reserve</span><strong>${money(result.plannedReserveCad)}</strong></div>
   <div class="result-line"><span>Combined entry debit (USD)</span><strong>${usd(result.plannedDebitUsd)}</strong></div>
@@ -447,7 +469,7 @@ function manualPnl(){const now=analytics().asOf;const body=`<p class="modal-intr
  dialog('Record prior realized P/L','HISTORICAL ADJUSTMENT',body,(d)=>{const date=requireDate(getText(d,'date'),'trade date');validateSession(date);validateAsOf(date);const pnlCad=requireRange(getText(d,'pnlCad'),-1e9,1e9,'P/L'),note=getText(d,'note');if(!note)throw new Error('Label required.');state.adjustments.push({id:uid(),accountId:account().id,date,pnlCad,note});showToast(`Saved ${money(pnlCad)} in realized CAD P/L.`);return true;});
 }
 function addAccount(){const body=`<p class="modal-intro">Each portfolio gets its own rolling loss and open-risk allocation. Do not treat correlated accounts as diversification.</p><form><div class="modal-grid">${field('PORTFOLIO NAME','name','text','New swing account',{required:'required',maxlength:56})}${field('CURRENT EQUITY CAD','equity','number',20000,{required:'required',min:0,step:.01})}${field('RISK % / WINDOW','risk','number',3,{required:'required',min:0,max:100,step:.1})}${field('STRESS %','stress','number',70,{required:'required',min:0,max:100,step:1})}</div>${formEnd('Add account')}</form>`;
- dialog('New portfolio','INDEPENDENT ACCOUNT',body,(d)=>{const a=account(),name=getText(d,'name'),equity=requireRange(getText(d,'equity'),0,1e9,'Equity'),riskPct=requireRange(getText(d,'risk'),0,100,'Risk'),stressPct=requireRange(getText(d,'stress'),0,100,'Stress');if(!name)throw new Error('Name is required.');const id=uid();state.accounts.push({id,name,equityCad:equity,equityCheckpoints:[{id:uid(),date:onOrBeforeSession(today(),state.customClosed),createdAt:new Date().toISOString(),equityCad:equity,realizedPnlCad:0,source:'New portfolio opening equity'}],riskPct,stressPct,window:5,roundStep:25,mode:'stress',fx:a.fx,fxSource:a.fxSource,fxDate:a.fxDate,ideaCapCad:200,brokerAccountId:'',buyFeePerContractUsd:ratePerContract(a,'BUY'),sellFeePerContractUsd:ratePerContract(a,'SELL')});activeAccountId=id;showToast(`${name} created.`);return true;});
+ dialog('New portfolio','INDEPENDENT ACCOUNT',body,(d)=>{const a=account(),name=getText(d,'name'),equity=requireRange(getText(d,'equity'),0,1e9,'Equity'),riskPct=requireRange(getText(d,'risk'),0,100,'Risk'),stressPct=requireRange(getText(d,'stress'),0,100,'Stress');if(!name)throw new Error('Name is required.');const id=uid();state.accounts.push({id,name,equityCad:equity,equityCheckpoints:[{id:uid(),date:onOrBeforeSession(today(),state.customClosed),createdAt:new Date().toISOString(),equityCad:equity,realizedPnlCad:0,source:'New portfolio opening equity'}],riskPct,stressPct,window:5,roundStep:25,mode:'stress',fx:a.fx,fxSource:a.fxSource,fxDate:a.fxDate,ideaCapCad:200,brokerAccountId:'',buyFeePerContractUsd:ratePerContract(a,'BUY'),sellFeePerContractUsd:ratePerContract(a,'SELL')});activeAccountId=id;rememberAccount();showToast(`${name} created.`);return true;});
 }
 function saveSettings(e){e.preventDefault();const f=e.currentTarget,d=new FormData(f),a=account();try{
  const equityCad=requireRange(getText(d,'equityCad'),0,1e9,'Equity'),riskPct=requireRange(getText(d,'riskPct'),0,100,'Risk percentage'),window=Math.floor(requireRange(getText(d,'window'),1,30,'Window')),stressPct=requireRange(getText(d,'stressPct'),0,100,'Stress percentage'),fx=requireRange(getText(d,'fx'),.01,100,'FX');const step=requireRange(getText(d,'roundStep'),0,100,'Rounding');
@@ -561,7 +583,7 @@ function previewJSON(data,filename){
   if(mode==='replace'){
     if(!confirm('FULL RESTORE replaces every account, position, note, and settings value currently in this browser. A safety backup of your current state will download first. Continue?'))return false;
     download(`swing-risk-desk-PRE-RESTORE-${today()}.json`,JSON.stringify(backupSnapshot(state),null,2));
-    state=normalize(data);activeAccountId=state.accounts[0]?.id||'bdi';
+    state=normalize(data);activeAccountId=preferredAccountId();rememberAccount();
   }else state=result.next;
   showToast(mode==='replace'?'Full backup restored. Save the recovery file securely.':`Merged ${result.report.newTransactions} trades and ${result.report.newNotes} notes.`);return true;
  });
@@ -633,6 +655,7 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'plan-to-position':beginPlannedPosition(el.dataset.planId);break;
  case 'add-plan-idea':{const ideas=plannerIdeas();if(ideas.length>=MAX_PLAN_IDEAS){showToast(`Maximum ${MAX_PLAN_IDEAS} draft ideas.`);break;}const idea=defaultPlanIdea(uid(),account().stressPct,false);ideas.push(idea);persistPlannerDrafts();renderPlanner(analytics());document.querySelectorAll('.draft-idea [name="label"]')[ideas.length-1]?.focus();break;}
  case 'remove-plan-idea':dropPlannerIdea(el.dataset.planId);break;
+ case 'clear-plan-ideas':{if(!confirm('Clear all saved Quick size check ideas for this portfolio? Recorded positions will not be affected.'))break;plannerDrafts[account().id]=[defaultPlanIdea(uid(),account().stressPct,false)];persistPlannerDrafts();renderPlanner(analytics());showToast('Saved size-check ideas cleared for this portfolio.');break;}
  case 'reset-draft-fee':{const idea=plannerIdeas().find(x=>x.id===el.dataset.planId);if(idea){idea.feeManual=false;idea.fee=estimateOrderFee(account(),'BUY',idea.qty).toFixed(2);persistPlannerDrafts();renderPlanner(analytics());}break;}
  case 'export-trade':exportTrade(id);break;
  case 'export-backup':exportBackup();break;
@@ -641,8 +664,8 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'import-open':$('importFile').click();break;
  case 'import-ibkr':$('ibkrFile').click();break;
  case 'refresh-fx':refreshFx();break;
- case 'reset-data':if(confirm('Reset every locally stored account, position, note and transaction? A full safety backup will download first. Proceed ONLY after saving that file securely.')){download(`swing-risk-desk-BEFORE-RESET-${today()}.json`,JSON.stringify(backupSnapshot(state),null,2));state=seed();activeAccountId='bdi';asOfOverride=null;plannerDrafts={};try{sessionStorage.removeItem(DRAFT_SESSION_KEY);}catch{}save();render();showToast('Local data reset. Safety backup download was initiated.');}break;
- case 'delete-account':{const a=account();if(state.accounts.length<=1){showToast('At least one account must remain.');break;}if(state.positions.some(p=>p.accountId===a.id)||state.adjustments.some(x=>x.accountId===a.id)){showToast('This account contains records. Export and remove its records first.');break;}if(confirm(`Delete empty account ${a.name}?`)){state.accounts=state.accounts.filter(x=>x.id!==a.id);activeAccountId=state.accounts[0].id;save();render();}break;}
+ case 'reset-data':if(confirm('Reset every locally stored account, position, note and transaction? A full safety backup will download first. Proceed ONLY after saving that file securely.')){download(`swing-risk-desk-BEFORE-RESET-${today()}.json`,JSON.stringify(backupSnapshot(state),null,2));state=seed();activeAccountId='bdi';asOfOverride=null;plannerDrafts=Object.create(null);clearPlannerDraftStorage(globalThis.localStorage,globalThis.sessionStorage);plannerDraftSavedAt='';plannerStorageHealthy=true;try{globalThis.localStorage.removeItem(LAST_ACCOUNT_KEY);}catch{}save();render();showToast('Local data reset. Safety backup download was initiated.');}break;
+ case 'delete-account':{const a=account();if(state.accounts.length<=1){showToast('At least one account must remain.');break;}if(state.positions.some(p=>p.accountId===a.id)||state.adjustments.some(x=>x.accountId===a.id)){showToast('This account contains records. Export and remove its records first.');break;}if(confirm(`Delete empty account ${a.name}?`)){state.accounts=state.accounts.filter(x=>x.id!==a.id);delete plannerDrafts[a.id];persistPlannerDrafts();activeAccountId=state.accounts[0].id;rememberAccount();save();render();}break;}
  case 'delete-position':{const p=findPosition(id);if(confirm(`Archive ${p.ticker} and all its executions? They will leave active calculations but remain in your full backup and can be restored.`)){archiveRecord('position',p.ticker,p);state.positions=state.positions.filter(x=>x.id!==id);save();render();showToast('Position archived; restorable in Rules & data.');}break;}
  case 'delete-tx':deleteTransaction(id,el.dataset.tx,el.dataset.side);break;
  case 'restore-archive':restoreArchive(id);break;
@@ -654,8 +677,15 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
 
 document.addEventListener('click',e=>{const tab=e.target.closest('[data-tab]');if(tab){switchTab(tab.dataset.tab);return;}const filter=e.target.closest('[data-filter]');if(filter){positionFilter=filter.dataset.filter;renderPositions(analytics());return;}const action=e.target.closest('[data-action]');if(action){runAction(action.dataset.action,action);}});
 $('editorDialog').addEventListener('click',e=>{if(e.target===$('editorDialog'))$('editorDialog').close();});
-$('accountSelect').addEventListener('change',e=>{activeAccountId=e.target.value;render();});
+$('accountSelect').addEventListener('change',e=>{activeAccountId=e.target.value;rememberAccount();render();});
 $('asOfDate').addEventListener('change',e=>{const d=e.target.value;if(parseDay(d)){asOfOverride=d;render();}else showToast('Enter a valid date.');});
+// Browser tabs share the latest sizing ideas. A change in another tab is not a trade.
+if(typeof globalThis.addEventListener==='function')globalThis.addEventListener('storage',event=>{
+ if(event.key!==PLANNER_LOCAL_KEY)return;
+ const current=loadPlannerDrafts(globalThis.localStorage);
+ plannerDrafts=current.drafts;plannerDraftSavedAt=current.savedAt;plannerStorageHealthy=current.persisted;
+ if(activeTab==='dashboard')renderPlanner(analytics());
+});
 $('quickPlanner').addEventListener('input',e=>{
  const draftEl=e.target.closest('[data-draft-id]');if(!draftEl)return;
  const idea=plannerIdeas().find(x=>x.id===draftEl.dataset.draftId);

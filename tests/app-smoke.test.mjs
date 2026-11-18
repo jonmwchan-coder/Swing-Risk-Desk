@@ -53,6 +53,9 @@ assert.match(getElementById('positionsFull').innerHTML,/REALIZED RETURN<\/div>/)
 assert.match(getElementById('positionsFull').innerHTML,/Closed contracts · net of fees/);
 assert.match(getElementById('positionsFull').innerHTML,/REALIZED RETURN<\/div><strong[^>]*>\+?\d+\.\d%</);
 assert.match(getElementById('quickPlanner').innerHTML,/draft-idea/);
+assert.match(getElementById('plannerSavedStatus').textContent,/Saved on this device/);
+assert.match(fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),/data-action="clear-plan-ideas"/);
+assert.match(fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),/even after closing the tab/);
 assert.match(getElementById('plannerResult').innerHTML,/INCOMPLETE/);
 assert.match(getElementById('plannerResult').innerHTML,/Combined planned/);
 assert.match(getElementById('importInbox').innerHTML,/Import exceptions/);

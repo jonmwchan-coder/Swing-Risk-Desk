@@ -75,9 +75,10 @@
         <section class="panel scenario-panel">
           <div class="section-head section-head-compact"><div><div class="overline">BEFORE YOU CLICK BUY</div><h2>Quick size check</h2></div><span class="subtle-badge">Not a trade signal</span></div>
           <div id="quickPlanner" class="draft-ideas" role="group" aria-label="Planned option entries"></div>
-          <div class="draft-add-bar"><button type="button" class="btn btn-outline draft-add-btn" data-action="add-plan-idea">+ Add idea</button><span id="planIdeaCount" class="draft-count"></span></div>
+          <div class="draft-add-bar"><button type="button" class="btn btn-outline draft-add-btn" data-action="add-plan-idea">+ Add idea</button><span id="planIdeaCount" class="draft-count"></span><button type="button" class="draft-clear-btn" data-action="clear-plan-ideas" title="Remove only this portfolio’s saved hypothetical sizing ideas">Clear ideas</button></div>
+          <div class="draft-saved-status" id="plannerSavedStatus" aria-live="polite">Auto-saved on this device</div>
           <div class="planner-result" id="plannerResult" aria-live="polite"></div>
-          <p class="help-line draft-disclaimer">Drafts only. They do not use real account capacity, enter the trade journal or sync to the cloud until you explicitly record a position. Estimates use your portfolio's FX and stress policy; an option's full debit can still be lost.</p>
+          <p class="help-line draft-disclaimer">Draft ideas are remembered on this browser, even after closing the tab, and kept separately per portfolio. They do not use real account capacity, enter the trade journal, or sync across devices or into cloud backups. Recheck saved premiums and FX before executing; an option’s full debit can still be lost.</p>
         </section>
       </div>
       <section class="panel runway-panel">
@@ -158,7 +159,7 @@
       <div class="bottom-danger"><button type="button" class="text-link text-delete" data-action="reset-data">Reset all locally saved data</button><small>Does not change anything in Google Sheets or IBKR.</small></div>
     </section>
   </main>
-  <footer><span>SWING RISK DESK / v2.2</span><span>Process over P&amp;L. All figures in CAD unless marked USD.</span></footer>
+  <footer><span>SWING RISK DESK / v2.3</span><span>Process over P&amp;L. All figures in CAD unless marked USD.</span></footer>
 </div>
 <dialog id="editorDialog" class="editor-dialog"><div class="dialog-content"><div class="dialog-header"><div><div class="overline" id="dialogEyebrow">POSITION</div><h2 id="dialogTitle">New position</h2></div><button type="button" class="icon-button" data-action="close-dialog" aria-label="Close dialog">&#10005;</button></div><div id="dialogBody"></div></div></dialog>
 <input id="importFile" type="file" accept=".json,.csv,application/json,text/csv" hidden>
