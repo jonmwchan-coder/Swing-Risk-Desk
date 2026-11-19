@@ -270,9 +270,9 @@ function renderPlanner(m){
    <button type="button" class="draft-remove" data-action="remove-plan-idea" data-plan-id="${esc(idea.id)}" aria-label="Remove draft idea ${index+1}" title="Remove this draft">×</button></div>
   <div class="draft-fields">
    <label><span>QTY</span><input type="number" inputmode="numeric" name="qty" min="1" step="1" value="${esc(idea.qty)}" aria-label="Idea ${index+1} contract quantity"></label>
-   <label><span>PREMIUM USD</span><input type="number" inputmode="decimal" name="price" min="0.01" step="0.01" value="${esc(idea.price)}" aria-label="Idea ${index+1} price per share in USD"></label>
-   <label><span>FEES USD <button class="fee-reset-mini" type="button" data-action="reset-draft-fee" data-plan-id="${esc(idea.id)}" title="Apply per-contract portfolio default">Auto</button></span><input type="number" inputmode="decimal" name="fee" min="0" step="0.01" value="${esc(idea.fee)}" aria-label="Idea ${index+1} total entry commissions in USD" title="${idea.feeManual?'Manually overridden':'Estimated from portfolio fee rules'}"></label>
-   <label><span>STRESS %</span><input type="number" inputmode="numeric" name="stress" min="0" max="100" step="1" value="${esc(idea.stress)}" aria-label="Idea ${index+1} stress loss percent" ${m.account.mode==='strict'?'title="Strict mode reserves 100% of debit"':''}></label>
+   <label><span>BUY PREMIUM (USD/SHARE)</span><input type="number" inputmode="decimal" name="price" min="0.01" step="0.01" value="${esc(idea.price)}" aria-label="Idea ${index+1} price per share in USD"></label>
+   <label><span>BUY FEES (USD) <button class="fee-reset-mini" type="button" data-action="reset-draft-fee" data-plan-id="${esc(idea.id)}" title="Apply per-contract portfolio default">Auto</button></span><input type="number" inputmode="decimal" name="fee" min="0" step="0.01" value="${esc(idea.fee)}" aria-label="Idea ${index+1} total entry commissions in USD" title="${idea.feeManual?'Manually overridden':'Estimated from portfolio fee rules'}"></label>
+   <label><span>EST. LOSS %</span><input type="number" inputmode="numeric" name="stress" min="0" max="100" step="1" value="${esc(idea.stress)}" aria-label="Idea ${index+1} stress loss percent" ${m.account.mode==='strict'?'title="Strict mode reserves 100% of debit"':''}></label>
   </div>
   <div class="draft-metrics" data-plan-status="${esc(idea.id)}"></div>
  </article>`).join('');
@@ -284,17 +284,23 @@ function updatePlannerMetrics(m){
  const ideas=plannerIdeas(m.account.id);const result=calculatePlanBasket(ideas,m.account,m.availableCad);
  for(const r of result.rows){const el=[...document.querySelectorAll('[data-plan-status]')].find(x=>x.dataset.planStatus===r.id);if(!el)continue;
   if(!r.valid){el.className='draft-metrics draft-incomplete';el.textContent=r.reason;continue;}
-  const warning=r.overIdeaCap?` · Above ${money(m.account.ideaCapCad)} idea cap`:'';
+  const warning=r.overIdeaCap?`<small class="draft-cap-warning">Above ${cad(m.account.ideaCapCad)} per-idea risk cap</small>`:'';
   el.className=`draft-metrics ${r.overBudget?'draft-breach':''}`;
-  el.innerHTML=`<span>Reserve <strong>${money(r.reserveCad)}</strong> CAD${esc(warning)}</span><span>Left after this <strong>${money(r.remainingCad)}</strong></span>`;
+  el.innerHTML=`<div class="draft-metric draft-premium-total"><span>Option premiums (USD)</span><strong>${usd(r.premiumTotalUsd)}</strong><small>${r.qty} contracts × ${usd(r.price)} per share × 100</small></div>
+    <div class="draft-metric"><span>Est. total cash to buy (USD)</span><strong>${usd(r.debitUsd)}</strong><small>Includes ${usd(r.fee)} estimated buy fees</small></div>
+    <div class="draft-metric"><span>5-day risk budget used (CAD)</span><strong>${cad(r.reserveCad)}</strong><small>${m.account.mode==='strict'?'100% of estimated buy cost':`${r.stress}% assumed loss`} · not cash paid to IBKR</small>${warning}</div>
+    <div class="draft-metric"><span>Risk budget left (CAD)</span><strong>${cad(r.remainingCad)}</strong><small>After this and preceding draft ideas</small></div>`;
  }
  $('planIdeaCount').textContent=`${result.total} of ${MAX_PLAN_IDEAS} drafts · ${result.priced} priced`;
  plannerSavedStatus();
- $('plannerResult').innerHTML=`<div class="result-line"><span>Available before drafts</span><strong>${money(result.availableCad)}</strong></div>
-  <div class="result-line"><span>Combined planned ${m.account.mode==='strict'?'full-debit':'stress'} reserve</span><strong>${money(result.plannedReserveCad)}</strong></div>
-  <div class="result-line"><span>Combined entry debit (USD)</span><strong>${usd(result.plannedDebitUsd)}</strong></div>
-  <div class="result-line result-main ${result.overBudget?'negative':''}"><span>Risk left after all drafts</span><strong>${money(result.remainingCad)}</strong></div>
-  <div class="result-line"><span>${!result.complete?'Enter prices for remaining drafts':result.overBudget?'Combined draft entries breach your rolling risk limit':result.overIdeaCap?'Combined budget fits; review individual idea caps':'All priced drafts fit the rolling budget'}</span><strong class="${result.overBudget?'neg':result.complete&&!result.overIdeaCap?'pos':'risk-warning'}">${result.overBudget?'OVER BUDGET':!result.complete?'INCOMPLETE':result.overIdeaCap?'CAP REVIEW':'FITS'}</strong></div>`;
+ $('plannerResult').innerHTML=`<div class="result-line"><span>5-day risk available before these ideas (CAD)</span><strong>${cad(result.availableCad)}</strong></div>
+  <div class="result-line"><span>Combined option premiums · qty × price × 100 (USD)</span><strong>${usd(result.plannedPremiumUsd)}</strong></div>
+  <div class="result-line"><span>Combined estimated buy fees (USD)</span><strong>${usd(result.plannedBuyFeesUsd)}</strong></div>
+  <div class="result-line planner-purchase-total"><span>Total cash to buy all ideas · premiums + fees (USD)</span><strong>${usd(result.plannedDebitUsd)}</strong></div>
+  <div class="result-line"><span>5-day risk budget used by these ideas (CAD)</span><strong>${cad(result.plannedReserveCad)}</strong></div>
+  <div class="result-line result-main ${result.overBudget?'negative':''}"><span>5-day risk budget left after all ideas (CAD)</span><strong>${cad(result.remainingCad)}</strong></div>
+  <div class="result-line"><span>${!result.complete?'Enter USD premiums for remaining drafts':result.overBudget?'Combined draft entries breach your CAD rolling risk limit':result.overIdeaCap?'Combined CAD budget fits; check per-idea CAD risk caps':'All priced drafts fit the CAD rolling risk budget'}</span><strong class="${result.overBudget?'neg':result.complete&&!result.overIdeaCap?'pos':'risk-warning'}">${result.overBudget?'OVER BUDGET':!result.complete?'INCOMPLETE':result.overIdeaCap?'CAP REVIEW':'FITS'}</strong></div>
+  <div class="planner-fx-note">FX used for estimated CAD risk: 1 USD = ${Number(m.account.fx).toFixed(4)} CAD (portfolio setting).</div>`;
 }
 function switchTab(tab){if(!['dashboard','positions','history','settings'].includes(tab))return;activeTab=tab;render();}
 function field(label,name,type='text',value='',opts={}){const attr=Object.entries(opts).map(([k,v])=>` ${k}="${esc(v)}"`).join('');return `<label class="${opts.full?'span-2':''}"><span>${esc(label)}</span><input name="${esc(name)}" type="${type}" value="${esc(value??'')}"${attr}></label>`;}

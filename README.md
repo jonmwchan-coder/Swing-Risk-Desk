@@ -1,3 +1,9 @@
+# v2.4: Quick size check clarifies USD cash and CAD risk (November 2026)
+
+Each hypothetical option idea now prominently displays the option premium cost in **USD** (whole contracts × expected USD premium per share × 100), the total estimated **USD cash to buy** including entry fees, the **CAD 5-session risk budget used** based on the configured stress percentage / strict mode / per-idea rounding, and **CAD risk budget left**. The basket summary separately totals USD premiums, USD buy fees, USD total cash, CAD budget usage and CAD remaining capacity. All displayed monetary values explicitly identify USD or CAD; the applied per-portfolio FX quote is visible. Blank/unpriced drafts are still not counted as zero-cost completed ideas.
+
+The CAD risk amount is a planning allowance deducted from the hypothetical remaining rolling-risk capacity, **not an actual brokerage charge** or guaranteed stop. The full USD purchase cost can still be lost. No change to calculations, recorded trades, JSON backups, account equity, commissions or cloud sync.
+
 # v2.3: Remember Quick size check inputs (November 2026)
 
 Quick size check now autosaves all draft fields, multi-idea rows, manual fee overrides, and custom stress values to persistent browser localStorage, kept separately per portfolio. Inputs survive navigation, reloads and closing/reopening the browser on the same origin/device. A status line shows the latest local save or storage failure; Clear ideas deletes drafts only for the selected portfolio. Existing sessionStorage drafts migrate automatically on first v2.3 visit and are removed only after successful local save. Not cloud-synced, not a trade, not in ledger backup or risk. Recheck saved premiums and FX before execution. Recording a draft removes only that recorded draft; other ideas remain. Reset data clears both current and legacy draft storage.

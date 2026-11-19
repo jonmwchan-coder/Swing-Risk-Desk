@@ -53,3 +53,33 @@ test('invalid inputs never consume risk or silently turn into a saved position',
  assert.equal(b.priced,1);assert.equal(b.rows[1].valid,false);assert.equal(b.rows[2].valid,false);
  assert.equal(b.plannedReserveCad,300);
 });
+
+// v2.4: the actual USD option cost must not be mistaken for CAD risk allocation.
+test('premium total explicitly excludes fees, and buy cash total is in USD before CAD risk conversion',()=>{
+ const b=calculatePlanBasket([row('smh',2,'1.50','1.54','70')],a,600);
+ assert.equal(b.rows[0].premiumTotalUsd,300); // 2 contracts * $1.50 USD per share * 100 shares
+ assert.equal(b.rows[0].debitUsd,301.54); // USD option premiums plus USD buy fees
+ assert.equal(b.rows[0].debitCad,422.156); // risk uses the portfolio FX
+ assert.equal(b.rows[0].reserveCad,300); // 70% stress loss, rounded up in $25 CAD steps
+ assert.equal(b.rows[0].remainingCad,300);
+ assert.equal(b.plannedPremiumUsd,300);
+ assert.equal(b.plannedBuyFeesUsd,1.54);
+ assert.equal(b.plannedDebitUsd,301.54);
+ assert.equal(b.plannedReserveCad,300);
+});
+test('multi-idea USD premium totals are independent of fee totals and CAD risk allocations',()=>{
+ const b=calculatePlanBasket([row('a',1,'0.75','0.77'),row('b',3,'2.00','2.31')],a,1000);
+ assert.equal(b.plannedPremiumUsd,675);
+ assert.equal(b.plannedBuyFeesUsd,3.08);
+ assert.equal(b.plannedDebitUsd,678.08);
+ assert.equal(b.rows[0].premiumTotalUsd,75);
+ assert.equal(b.rows[1].premiumTotalUsd,600);
+ assert.ok(b.plannedReserveCad>0);
+ assert.equal(b.plannedReserveCad, b.rows[0].reserveCad+b.rows[1].reserveCad);
+});
+test('strict mode CAD risk uses the entire USD buy cost converted at portfolio FX',()=>{
+ const b=calculatePlanBasket([row('smh',2,'1.50','1.54','20')],{...a,mode:'strict'},600);
+ assert.equal(b.plannedPremiumUsd,300);
+ assert.equal(b.plannedDebitUsd,301.54);
+ assert.equal(b.plannedReserveCad,425);
+});

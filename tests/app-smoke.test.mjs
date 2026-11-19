@@ -57,7 +57,13 @@ assert.match(getElementById('plannerSavedStatus').textContent,/Saved on this dev
 assert.match(fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),/data-action="clear-plan-ideas"/);
 assert.match(fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),/even after closing the tab/);
 assert.match(getElementById('plannerResult').innerHTML,/INCOMPLETE/);
-assert.match(getElementById('plannerResult').innerHTML,/Combined planned/);
+assert.match(getElementById('plannerResult').innerHTML,/Combined option premiums/);
+assert.match(getElementById('plannerResult').innerHTML,/Total cash to buy all ideas/);
+assert.match(getElementById('plannerResult').innerHTML,/5-day risk budget used by these ideas/);
+assert.match(getElementById('plannerResult').innerHTML,/USD \$0\.00/);
+assert.match(getElementById('plannerResult').innerHTML,/CAD \$[0-9]/);
+assert.match(getElementById('quickPlanner').innerHTML,/BUY PREMIUM \(USD\/SHARE\)/);
+assert.match(fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),/not money paid to IBKR/);
 assert.match(getElementById('importInbox').innerHTML,/Import exceptions/);
 
 // Wide-screen thesis/catalyst text should wrap without relying on the <=1100px breakpoint.
