@@ -62,7 +62,8 @@ assert.match(getElementById('plannerResult').innerHTML,/Total cash to buy all id
 assert.match(getElementById('plannerResult').innerHTML,/5-day risk budget used by these ideas/);
 assert.match(getElementById('plannerResult').innerHTML,/USD \$0\.00/);
 assert.match(getElementById('plannerResult').innerHTML,/CAD \$[0-9]/);
-assert.match(getElementById('quickPlanner').innerHTML,/BUY PREMIUM \(USD\/SHARE\)/);
+assert.match(getElementById('quickPlanner').innerHTML,/draft-compact-line/);
+assert.doesNotMatch(getElementById('quickPlanner').innerHTML,/class="draft-editor"/,'all ideas should start compact');
 assert.match(fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),/not money paid to IBKR/);
 assert.match(getElementById('importInbox').innerHTML,/Import exceptions/);
 
@@ -74,8 +75,8 @@ console.log('App module boot/render smoke passed.');
 const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');
 assert.match(html,/name="buyFeePerContractUsd"/);
 assert.match(html,/name="sellFeePerContractUsd"/);
-assert.match(getElementById('quickPlanner').innerHTML,/data-action="reset-draft-fee"/);
-assert.match(getElementById('quickPlanner').innerHTML,/name="fee"[^>]*value="0\.77"/);
+assert.match(getElementById('quickPlanner').innerHTML,/data-action="toggle-plan-details"/);
+assert.match(getElementById('quickPlanner').innerHTML,/draft-quote-detail/);
 
 // v2.0 loss rule must be visible, without suggesting that unrelated winners offset losses.
 assert.match(html,/ROLLING NET LOSSES/);

@@ -55,6 +55,7 @@ let asOfOverride=null;
 let toastTimer=null;
 let plannerPrefill=null;
 let selectedPreviewId=null;
+let expandedPlanId=null;
 let quoteRefreshBusy=false;
 let quoteRefreshMessage='';
 let quoteConnectionState='unknown'; // Never imply unconfigured or failed data are live quotes.
@@ -92,6 +93,7 @@ function dropPlannerIdea(draftId,renderAfter=true){
  if(index<0)return;
  ideas.splice(index,1);
  if(selectedPreviewId===draftId)selectedPreviewId=null;
+  if(expandedPlanId===draftId)expandedPlanId=null;
  if(!ideas.length)ideas.push(defaultPlanIdea(uid(),account().stressPct,false));
  persistPlannerDrafts();if(renderAfter)renderPlanner(analytics());
 }
@@ -268,6 +270,7 @@ function renderSettings(a){const f=$('settingsForm');const tracked=calculateAcco
  renderInbox();updateBackupBadge();
   $('customClosedDays').innerHTML=(state.customClosed||[]).map(d=>`<span class="date-tag">${esc(fmtDate(d,true))}<button type="button" data-action="remove-closed-day" data-date="${esc(d)}" aria-label="Remove closure ${esc(d)}">x</button></span>`).join('')||'<span class="help-line">No extra closure dates.</span>';
 }
+
 function renderPlanner(m){
  const ideas=plannerIdeas(m.account.id);
  if($('planSortSelect'))$('planSortSelect').value=planSortMode;
@@ -277,33 +280,33 @@ function renderPlanner(m){
   if(!idea.feeManual){const fee=estimateOrderFee(m.account,'BUY',idea.qty).toFixed(2);if(String(idea.fee)!==fee){idea.fee=fee;changed=true;}}
  }
  if(changed)persistPlannerDrafts();
- $('quickPlanner').innerHTML=sortPlanIdeas(ideas,planSortMode).map((idea,index)=>`<article class="draft-idea" data-draft-id="${esc(idea.id)}">
-  <div class="draft-head"><strong>${esc(idea.ticker||"NEW TICKER")}</strong><input type="text" name="name" maxlength="80" value="${esc(idea.name||"")}" placeholder="Custom idea name" aria-label="Idea name">
-   <button type="button" class="draft-preview-btn" data-action="analyze-idea" data-plan-id="${esc(idea.id)}" title="See modeled option return at different underlying prices and dates">${selectedPreviewId===idea.id?'Hide %':'Analyze %'}</button>
-   <button type="button" class="draft-record" data-action="plan-to-position" data-plan-id="${esc(idea.id)}" title="Open a prefilled New position form; no trade recorded until submitted">Record</button>
-   <button type="button" class="draft-remove" data-action="remove-plan-idea" data-plan-id="${esc(idea.id)}" aria-label="Remove draft idea ${index+1}" title="Remove this draft">×</button></div>
-  <div class="draft-contract-fields">
-   <label><span>TICKER</span><input type="text" name="ticker" maxlength="12" value="${esc(idea.ticker||'')}" placeholder="IREN" autocomplete="off" spellcheck="false"></label>
-   <label><span>EXPIRATION</span><input type="date" name="expiry" value="${esc(idea.expiry||'')}"></label>
-   <label><span>STRIKE (USD)</span><input type="number" name="strike" min="0.001" step="0.001" value="${esc(idea.strike||'')}"></label>
-   <label><span>TYPE</span><select name="optionType"><option value="Call" ${idea.optionType!=='Put'?'selected':''}>Call</option><option value="Put" ${idea.optionType==='Put'?'selected':''}>Put</option></select></label>
-  </div>
-  <div class="draft-fields">
-   <label><span>QTY</span><input type="number" inputmode="numeric" name="qty" min="1" step="1" value="${esc(idea.qty)}" aria-label="Idea ${index+1} contract quantity"></label>
-   <label><span>BUY PREMIUM (USD/SHARE)</span><input type="number" inputmode="decimal" name="price" min="0.01" step="0.01" value="${esc(idea.price)}" aria-label="Idea ${index+1} price per share in USD"></label>
-   <label><span>BUY FEES (USD) <button class="fee-reset-mini" type="button" data-action="reset-draft-fee" data-plan-id="${esc(idea.id)}" title="Apply per-contract portfolio default">Auto</button></span><input type="number" inputmode="decimal" name="fee" min="0" step="0.01" value="${esc(idea.fee)}" aria-label="Idea ${index+1} total entry commissions in USD" title="${idea.feeManual?'Manually overridden':'Estimated from portfolio fee rules'}"></label>
-   <label><span>EST. LOSS %</span><input type="number" inputmode="numeric" name="stress" min="0" max="100" step="1" value="${esc(idea.stress)}" aria-label="Idea ${index+1} stress loss percent" ${m.account.mode==='strict'?'title="Strict mode reserves 100% of debit"':''}></label>
-  </div>
-  <div class="draft-quote-status">${esc(idea.quoteMessage||'Select a contract, then Analyze % to retrieve the indicative quote.')}${idea.priceManual?' · Manual premium':''}</div>
-  <div class="draft-metrics" data-plan-status="${esc(idea.id)}"></div>
- </article>`).join('');
+ $('quickPlanner').innerHTML=sortPlanIdeas(ideas,planSortMode).map((idea,index)=>{
+  const editing=expandedPlanId===idea.id,active=editing||selectedPreviewId===idea.id;
+  const symbol=normalizeTicker(idea.ticker)||'NEW TICKER',name=idea.name||'Untitled idea',contract=draftContract(idea);
+  const contractText=contract?`${fmtDate(contract.expiry)} · ${contract.strike}${contract.optionType==='Put'?'P':'C'}`:'Select contract';
+  const moneyOrDash=v=>String(v??'').trim()&&Number.isFinite(Number(v))&&Number(v)>0?money(Number(v)):'—';
+  const premium=moneyOrDash(idea.price),mid=moneyOrDash(idea.marketMid),p=idea.preview||{};
+  const quote=idea.quoteStatus==='loading'?'Fetching quote…':idea.priceManual?`Manual premium${mid!=='—'?' · Mid '+mid:''}`:idea.quoteStatus==='indicative'?`Indicative mid ${mid}`:idea.quoteStatus==='unavailable'?'Quote unavailable':'Quote not loaded';
+  const quoteTone=idea.quoteStatus==='unavailable'?'warning':idea.priceManual?'manual':idea.quoteStatus==='indicative'?'indicative':'empty';
+  return `<article class="draft-idea ${active?'is-active':''} ${editing?'is-expanded':'is-collapsed'}" data-draft-id="${esc(idea.id)}">
+    <div class="draft-head"><div class="draft-identity"><strong class="draft-ticker" data-idea-ticker>${esc(symbol)}</strong><span class="draft-idea-name" data-idea-name>${esc(name)}</span><span class="draft-contract-pill" data-idea-contract>${esc(contractText)}</span></div>
+      <div class="draft-actions"><button type="button" class="draft-edit-btn" data-action="toggle-plan-details" data-plan-id="${esc(idea.id)}" aria-expanded="${editing}">${editing?'Done':'Edit'}</button><button type="button" class="draft-preview-btn" data-action="analyze-idea" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id}">${selectedPreviewId===idea.id?'Hide %':'Analyze %'}</button><button type="button" class="draft-record" data-action="plan-to-position" data-plan-id="${esc(idea.id)}">Record</button><button type="button" class="draft-remove" data-action="remove-plan-idea" data-plan-id="${esc(idea.id)}" aria-label="Remove ${esc(symbol)} ${esc(name)}">×</button></div></div>
+    <div class="draft-compact-line"><span class="draft-mini-field">Qty <strong data-idea-qty>${esc(idea.qty||'—')}</strong></span><span class="draft-mini-field">Premium <strong data-idea-premium>${esc(premium)}</strong><small>/share</small></span><span class="draft-mini-quote" data-tone="${quoteTone}" data-idea-quote>${esc(quote)}</span></div>
+    ${editing?`<div class="draft-editor"><div class="draft-editor-heading"><strong>Contract setup</strong><span>Independent contract and assumptions per idea</span></div>
+      <label class="draft-name-field"><span>IDEA NAME</span><input type="text" name="name" maxlength="80" value="${esc(idea.name||'')}" placeholder="Breakout continuation"></label>
+      <div class="draft-contract-fields"><label><span>TICKER</span><input type="text" name="ticker" maxlength="12" value="${esc(idea.ticker||'')}" placeholder="IREN" autocomplete="off" spellcheck="false"></label><label><span>EXPIRATION</span><input type="date" name="expiry" value="${esc(idea.expiry||'')}"></label><label><span>STRIKE (USD)</span><input type="number" name="strike" min="0.001" step="0.001" value="${esc(idea.strike||'')}"></label><label><span>TYPE</span><select name="optionType"><option value="Call" ${idea.optionType!=='Put'?'selected':''}>Call</option><option value="Put" ${idea.optionType==='Put'?'selected':''}>Put</option></select></label></div>
+      <div class="draft-editor-heading draft-editor-pricing"><strong>Entry &amp; risk</strong><span>Typing premium = manual override</span></div>
+      <div class="draft-fields"><label><span>QTY</span><input type="number" inputmode="numeric" name="qty" min="1" step="1" value="${esc(idea.qty)}" aria-label="Idea ${index+1} contract quantity"></label><label><span>BUY PREMIUM (USD/SHARE)</span><input type="number" inputmode="decimal" name="price" min="0.01" step="0.0001" value="${esc(idea.price)}" aria-label="Idea ${index+1} price per share in USD"></label><label><span>BUY FEES (USD) <button class="fee-reset-mini" type="button" data-action="reset-draft-fee" data-plan-id="${esc(idea.id)}">Auto</button></span><input type="number" inputmode="decimal" name="fee" min="0" step="0.01" value="${esc(idea.fee)}" aria-label="Idea ${index+1} total entry commissions in USD"></label><label><span>EST. LOSS %</span><input type="number" inputmode="numeric" name="stress" min="0" max="100" step="1" value="${esc(idea.stress)}" aria-label="Idea ${index+1} stress loss percent"></label></div></div>`:''}
+    <div class="draft-metrics" data-plan-status="${esc(idea.id)}"></div>
+    <details class="draft-quote-detail"><summary>Quote details</summary><div class="draft-quote-body"><div><span>Source</span><strong>${esc(p.quoteSource||'Not requested')}</strong></div><div><span>Bid / ask</span><strong>${esc(moneyOrDash(p.bid))} / ${esc(moneyOrDash(p.ask))}</strong></div><div><span>Midpoint</span><strong>${esc(mid)}</strong></div><div><span>Quote time (UTC)</span><strong>${esc(p.quoteAt||'Not available')}</strong></div><p>${esc(idea.quoteMessage||'Select a contract to request a quote.')}</p><small>Indicative Alpaca Basic, not executable OPRA quotes. Verify your broker quote.</small></div></details>
+   </article>`;
+ }).join('');
  const addBtn=document.querySelector('[data-action="add-plan-idea"]');
  if(addBtn)addBtn.disabled=ideas.length>=MAX_PLAN_IDEAS;
- updatePlannerMetrics(m);
- renderOptionPreview();
+ updatePlannerMetrics(m);renderOptionPreview();
 }
 function updatePlannerMetrics(m){
- const ideas=plannerIdeas(m.account.id);const result=calculatePlanBasket(ideas,m.account,m.availableCad);
+ const ideas=sortPlanIdeas(plannerIdeas(m.account.id),planSortMode);const result=calculatePlanBasket(ideas,m.account,m.availableCad);
  for(const r of result.rows){const el=[...document.querySelectorAll('[data-plan-status]')].find(x=>x.dataset.planStatus===r.id);if(!el)continue;
   if(!r.valid){el.className='draft-metrics draft-incomplete';el.textContent=r.reason;continue;}
   const warning=r.overIdeaCap?`<small class="draft-cap-warning">Above ${cad(m.account.ideaCapCad)} per-idea risk cap</small>`:'';
@@ -312,6 +315,14 @@ function updatePlannerMetrics(m){
     <div class="draft-metric"><span>Est. total cash to buy (USD)</span><strong>${usd(r.debitUsd)}</strong><small>Includes ${usd(r.fee)} estimated buy fees</small></div>
     <div class="draft-metric"><span>5-day risk budget used (CAD)</span><strong>${cad(r.reserveCad)}</strong><small>${m.account.mode==='strict'?'100% of estimated buy cost':`${r.stress}% assumed loss`} · not cash paid to IBKR</small>${warning}</div>
     <div class="draft-metric"><span>Risk budget left (CAD)</span><strong>${cad(r.remainingCad)}</strong><small>After this and preceding draft ideas</small></div>`;
+ }
+
+ const strip=$('plannerSummaryStrip');
+ if(strip){
+  const status=result.overBudget?'OVER BUDGET':!result.complete?'INCOMPLETE':result.overIdeaCap?'CAP REVIEW':'FITS';
+  strip.dataset.status=result.overBudget?'danger':!result.complete||result.overIdeaCap?'warning':'good';
+  const stats=[['IDEAS',String(result.total)],['TOTAL CASH · USD',usd(result.plannedDebitUsd)],['RISK USED · CAD',cad(result.plannedReserveCad)],['RISK LEFT · CAD',cad(result.remainingCad)],['STATUS',status],['PREMIUMS · USD',usd(result.plannedPremiumUsd)],['FEES · USD',usd(result.plannedBuyFeesUsd)]];
+  strip.innerHTML=stats.map(([label,value],index)=>`<div class="planner-summary-chip ${index===3?'planner-summary-left':index===4?'planner-summary-status':index>4?'planner-summary-secondary':''}"><span>${label}</span><strong>${value}</strong></div>`).join('');
  }
  $('planIdeaCount').textContent=`${result.total} of ${MAX_PLAN_IDEAS} drafts · ${result.priced} priced`;
  plannerSavedStatus();
@@ -394,6 +405,7 @@ async function refreshDraftPremium(idea){
   const bid=Number(data.optionBidUsd),ask=Number(data.optionAskUsd);
   if(data.optionBidUsd===null||data.optionAskUsd===null||!(bid>0&&ask>=bid))throw Error('No valid bid/ask for selected contract.');
   draft.marketMid=String(Math.round((bid+ask)*5000)/10000);
+   const preview=ensurePreview(draft);preview.spot=data.spotUsd??'';preview.ivPct=data.ivPct??'';preview.bid=data.optionBidUsd??'';preview.ask=data.optionAskUsd??'';preview.quoteAt=data.quoteAt||'';preview.quoteSource=data.provider||'Alpaca indicative';
   draft.contractSymbol=symbol;draft.quoteStatus='indicative';
   draft.quoteMessage=`Indicative bid ${bid.toFixed(2)} / ask ${ask.toFixed(2)} · midpoint ${Number(draft.marketMid).toFixed(2)} · ${data.quoteAt||'time unavailable'} UTC · ${verify.ok?'verified contract':'unverified listing'} · non-OPRA`;
   if(!draft.priceManual)draft.price=draft.marketMid;
@@ -797,10 +809,12 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'close-dialog':$('editorDialog').close();break;
  case 'today':asOfOverride=null;render();break;
  case 'plan-to-position':beginPlannedPosition(el.dataset.planId);break;
- case 'add-plan-idea':{const ideas=plannerIdeas();if(ideas.length>=MAX_PLAN_IDEAS){showToast(`Maximum ${MAX_PLAN_IDEAS} draft ideas.`);break;}const idea=defaultPlanIdea(uid(),account().stressPct,false);ideas.push(idea);persistPlannerDrafts();renderPlanner(analytics());document.querySelectorAll('.draft-idea [name="ticker"]')[ideas.length-1]?.focus();break;}
+ case 'add-plan-idea':{const ideas=plannerIdeas();if(ideas.length>=MAX_PLAN_IDEAS){showToast(`Maximum ${MAX_PLAN_IDEAS} draft ideas.`);break;}const idea=defaultPlanIdea(uid(),account().stressPct,false);ideas.push(idea);expandedPlanId=idea.id;selectedPreviewId=null;quoteRefreshToken++;persistPlannerDrafts();renderPlanner(analytics());[...document.querySelectorAll('.draft-idea')].find(x=>x.dataset.draftId===idea.id)?.querySelector('[name="ticker"]')?.focus();break;}
  case 'remove-plan-idea':dropPlannerIdea(el.dataset.planId);break;
- case 'clear-plan-ideas':{if(!confirm('Clear all saved Quick size check ideas for this portfolio? Recorded positions will not be affected.'))break;plannerDrafts[account().id]=[defaultPlanIdea(uid(),account().stressPct,false)];persistPlannerDrafts();renderPlanner(analytics());showToast('Saved size-check ideas cleared for this portfolio.');break;}
- case 'analyze-idea':{const opening=selectedPreviewId!==el.dataset.planId;selectedPreviewId=opening?el.dataset.planId:null;quoteRefreshMessage='';quoteConnectionState='unknown';renderPlanner(analytics());if(opening)$('optionPreview')?.scrollIntoView({block:'start',behavior:'smooth'});if(opening)void refreshOptionQuote();break;}
+  case 'toggle-plan-details':{expandedPlanId=expandedPlanId===el.dataset.planId?null:el.dataset.planId;if(expandedPlanId&&selectedPreviewId&&expandedPlanId!==selectedPreviewId){selectedPreviewId=null;quoteRefreshToken++;}renderPlanner(analytics());break;}
+  case 'collapse-plan-ideas':expandedPlanId=null;renderPlanner(analytics());break;
+ case 'clear-plan-ideas':{if(!confirm('Clear all saved Quick size check ideas for this portfolio? Recorded positions will not be affected.'))break;expandedPlanId=null;selectedPreviewId=null;quoteRefreshToken++;plannerDrafts[account().id]=[defaultPlanIdea(uid(),account().stressPct,false)];persistPlannerDrafts();renderPlanner(analytics());showToast('Saved size-check ideas cleared for this portfolio.');break;}
+ case 'analyze-idea':{const opening=selectedPreviewId!==el.dataset.planId;selectedPreviewId=opening?el.dataset.planId:null;expandedPlanId=null;quoteRefreshToken++;quoteRefreshMessage='';quoteConnectionState='unknown';renderPlanner(analytics());if(opening)$('optionPreview')?.scrollIntoView({block:'start',behavior:'smooth'});if(opening)void refreshOptionQuote();break;}
  case 'close-option-preview':selectedPreviewId=null;quoteRefreshToken++;renderPlanner(analytics());break;
  case 'preview-add-target':{const idea=currentPreviewIdea();if(!idea)break;const p=ensurePreview(idea);if(p.targets.length>=MAX_PREVIEW_TARGETS)break;const n=p.targets.filter(t=>t.name.startsWith('TP')).length+1;p.targets.push({id:uid(),name:`TP${n}`,price:''});persistPlannerDrafts();renderOptionPreview();break;}
  case 'preview-remove-target':{const p=ensurePreview(currentPreviewIdea());if(!p)break;p.targets=p.targets.filter(t=>t.id!==el.dataset.targetId);persistPlannerDrafts();renderOptionPreview();break;}
@@ -876,6 +890,7 @@ $('quickPlanner').addEventListener('input',e=>{
  if(name==='fee')idea.feeManual=true;
  if(name==='qty'&&!idea.feeManual){idea.fee=estimateOrderFee(account(),'BUY',idea.qty).toFixed(2);const fee=el.querySelector('[name="fee"]');if(fee)fee.value=idea.fee;}
  persistPlannerDrafts();updatePlannerMetrics(analytics());
+ const header=el.querySelector('[data-idea-ticker]');if(header){const sym=normalizeTicker(idea.ticker)||'NEW TICKER';header.textContent=sym;el.querySelector('[data-idea-name]').textContent=idea.name||'Untitled idea';const c=draftContract(idea);el.querySelector('[data-idea-contract]').textContent=c?`${fmtDate(c.expiry)} · ${c.strike}${c.optionType==='Put'?'P':'C'}`:'Select contract';el.querySelector('[data-idea-qty]').textContent=idea.qty||'—';el.querySelector('[data-idea-premium]').textContent=Number(idea.price)>0?money(Number(idea.price)):'—';}
  if(changed&&currentPreviewIdea()?.id===idea.id)renderOptionPreview();
 });
 $('quickPlanner').addEventListener('change',e=>{
