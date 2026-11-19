@@ -953,7 +953,8 @@ $('optionPreview').addEventListener('input',e=>{
  }else if(name==='exit-date'){
   const index=Number(e.target.dataset.dateIndex);if(!Number.isInteger(index)||index<0||index>=p.dates.length)return;
   if(!parseDay(e.target.value))return;
-  if(parseDay(idea.expiry)&&e.target.value>idea.expiry){showToast('Exit date cannot be after this option expires.');return;}
+  if(parseDay(idea.expiry)&&e.target.value>idea.expiry){e.target.value=p.dates[index];showToast('Exit date cannot be after this option expires.');return;}
+  if(p.dates.some((d,i)=>i!==index&&d===e.target.value)){e.target.value=p.dates[index];showToast('That exit date is already in this ticker plan.');return;}
   p.dates[index]=e.target.value;publishTickerLevels(idea);
  }else return;
  persistPlannerDrafts();updateOptionPreviewResults();
