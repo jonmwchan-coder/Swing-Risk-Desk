@@ -58,4 +58,14 @@ test('preview storage is bounded and preserves only valid field values',()=>{
  assert.deepEqual(p.dates,['2026-11-20']);assert.equal(p.targets[0].name,'TP3');
 });
 
+test('manual IV provenance persists across local draft serialization and missing-data refreshes',()=>{
+ const original=emptyPreview('2026-11-19');
+ assert.equal(original.ivManual,false);
+ const manual=normalizePreview({...original,ivPct:'48.3',ivManual:true},'2026-11-19');
+ assert.equal(manual.ivManual,true);
+ assert.equal(manual.ivPct,'48.3');
+ assert.equal(normalizePreview(manual,'2026-11-19').ivManual,true);
+ assert.equal(normalizePreview({...manual,ivManual:false},'2026-11-19').ivManual,false);
+});
+
 test('without bid or ask, user proposed entry is an unverified anchor rather than an invented real quote',()=>{const out=withPreview({bid:'',ask:''});assert.equal(out.valid,true);assert.equal(out.quoted,false);assert.match(out.anchorLabel,/UNVERIFIED/);assert.equal(out.anchorMid,5.2);});
