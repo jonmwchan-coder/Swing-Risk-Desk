@@ -378,6 +378,33 @@ function updateOptionPreviewResults(){
   <div class="preview-matrix-scroll" role="region" aria-label="Modeled option returns by exit date" tabindex="0"><table class="preview-matrix"><thead><tr><th>Underlying target</th>${heading}</tr></thead><tbody>${rows}</tbody></table></div>
   <small class="preview-footnote">Valuation anchored to ${esc(result.anchorLabel)} at current spot; that anchor mismatch is reduced toward expiration. Percent = net modeled USD P/L ÷ actual proposed USD purchase cost (quantity × buy premium × 100 + buy fees). Estimated sell fees are deducted. ${result.spread>0?`Assumes half the current indicative ${usd(result.spread)} bid/ask spread is lost on exit.`:'No spread discount: enter a bid and ask to model half-spread exit slippage.'} These are scenario estimates, not statistical expectancy or guaranteed proceeds.</small>`;
 }
+// One-time quote on contract selection for any draft, without opening the analysis panel.
+async function refreshDraftPremium(idea){
+ const key=draftContractKey(idea),symbol=buildOCCSymbol(draftContract(idea)),id=idea?.id;
+ if(!key||!symbol)return;
+ idea.quoteStatus='loading';idea.quoteMessage='Fetching exact option quote…';
+ try{
+  const verify=await fetch(`/api/option-contract?symbol=${encodeURIComponent(symbol)}`,{cache:'no-store'}).then(async r=>({status:r.status,ok:r.ok,data:await r.json().catch(()=>({}))})).catch(()=>({status:502,ok:false,data:{}}));
+  if(verify.status===404||verify.status===422)throw Error(verify.data.error||'Contract unavailable in Alpaca listing.');
+  const response=await fetch(`/api/option-quote?symbol=${encodeURIComponent(symbol)}`,{cache:'no-store'});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw Error(data.error||'Indicative quote unavailable.');
+  const draft=plannerIdeas().find(i=>i.id===id);
+  if(!draft||draftContractKey(draft)!==key)return;
+  const bid=Number(data.optionBidUsd),ask=Number(data.optionAskUsd);
+  if(data.optionBidUsd===null||data.optionAskUsd===null||!(bid>0&&ask>=bid))throw Error('No valid bid/ask for selected contract.');
+  draft.marketMid=String(Math.round((bid+ask)*5000)/10000);
+  draft.contractSymbol=symbol;draft.quoteStatus='indicative';
+  draft.quoteMessage=`Indicative bid ${bid.toFixed(2)} / ask ${ask.toFixed(2)} · midpoint ${Number(draft.marketMid).toFixed(2)} · ${data.quoteAt||'time unavailable'} UTC · ${verify.ok?'verified contract':'unverified listing'} · non-OPRA`;
+  if(!draft.priceManual)draft.price=draft.marketMid;
+  persistPlannerDrafts();renderPlanner(analytics());
+ }catch(err){
+  const draft=plannerIdeas().find(i=>i.id===id);
+  if(!draft||draftContractKey(draft)!==key)return;
+  draft.quoteStatus='unavailable';draft.quoteMessage=String(err.message||'Quote unavailable').slice(0,200);
+  persistPlannerDrafts();renderPlanner(analytics());
+ }
+}
 async function refreshOptionQuote(){
  const idea=currentPreviewIdea(),symbol=buildOCCSymbol(draftContract(idea)),contractKey=draftContractKey(idea);
  if(!idea||!symbol){quoteRefreshMessage='Enter a valid ticker, expiration, strike and call/put.';renderOptionPreview();return;}
@@ -855,7 +882,7 @@ $('quickPlanner').addEventListener('change',e=>{
  const node=e.target.closest('[data-draft-id]');
  if(!node||!['ticker','expiry','strike','optionType'].includes(e.target.name))return;
  const idea=plannerIdeas().find(x=>x.id===node.dataset.draftId);
- if(idea&&selectedPreviewId===idea.id&&draftContract(idea))void refreshOptionQuote();
+ if(idea&&draftContract(idea)){if(selectedPreviewId===idea.id)void refreshOptionQuote();else void refreshDraftPremium(idea);}
 });
 $('planSortSelect')?.addEventListener('change',e=>{
  planSortMode=PLAN_SORT_MODES.includes(e.target.value)?e.target.value:'created';
