@@ -9,7 +9,7 @@ export default async function handler(req,res){
  const symbol=String(req.query?.symbol||'').toUpperCase();
  if(!/^[A-Z][A-Z0-9.\-]{0,10}\d{6}[CP]\d{8}$/.test(symbol))return res.status(400).json({error:'Enter a standard U.S. option contract first.'});
  const id=process.env.ALPACA_DATA_KEY_ID,secret=process.env.ALPACA_DATA_SECRET_KEY;
- if(!id||!secret)return res.status(503).json({error:'Free quote refresh is not connected. Enter spot and IV manually, or configure free Alpaca Basic market-data API credentials in Vercel Environment Variables (ALPACA_DATA_KEY_ID and ALPACA_DATA_SECRET_KEY).'});
+ if(!id||!secret)return res.status(503).json({code:'NOT_CONFIGURED',error:'One-time free Alpaca Paper Only market-data setup is required. Add server-side API credentials in Vercel Environment Variables; no funded brokerage account is needed.'});
  const headers={'APCA-API-KEY-ID':id,'APCA-API-SECRET-KEY':secret,Accept:'application/json'};
  try{
   const optionUrl=`https://data.alpaca.markets/v1beta1/options/snapshots?symbols=${encodeURIComponent(symbol)}&feed=indicative`;

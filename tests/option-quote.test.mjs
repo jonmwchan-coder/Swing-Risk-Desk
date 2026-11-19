@@ -8,7 +8,7 @@ test('quote endpoint is read-only and safely refuses missing credentials',async(
  delete process.env.ALPACA_DATA_KEY_ID;
  try{
   const res=response();await handler(req(),res);
-  assert.equal(res.statusCode,503);assert.match(res.body.error,/not connected/);
+  assert.equal(res.statusCode,503);assert.equal(res.body.code,'NOT_CONFIGURED');assert.match(res.body.error,/setup is required/);
   assert.equal(res.headers['Cache-Control'],'no-store, max-age=0');
   const r2=response();await handler(req('bad-symbol'),r2);assert.equal(r2.statusCode,400);
   const r3=response();await handler(req(undefined,'POST'),r3);assert.equal(r3.statusCode,405);

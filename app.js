@@ -56,6 +56,7 @@ let plannerPrefill=null;
 let selectedPreviewId=null;
 let quoteRefreshBusy=false;
 let quoteRefreshMessage='';
+let quoteConnectionState='unknown'; // Never imply unconfigured or failed data are live quotes.
 const restoredPlanner=loadPlannerDrafts(globalThis.localStorage,globalThis.sessionStorage);
 let plannerDrafts=restoredPlanner.drafts;
 let plannerDraftSavedAt=restoredPlanner.savedAt;
@@ -317,7 +318,7 @@ function currentPreviewIdea(){return plannerIdeas().find(i=>i.id===selectedPrevi
 function ensurePreview(idea){if(!idea)return null;if(!idea.preview)idea.preview=emptyPreview(today(),state.customClosed||[]);return idea.preview;}
 function previewViewModel(idea){
  const contract=parsePlannedContract(idea.label);
- const result=projectOptionReturns({contract,preview:idea.preview,qty:Number(idea.qty),entryPremium:Number(idea.price),entryFeeUsd:Number(idea.fee||0),sellFeePerContractUsd:ratePerContract(account(),'SELL'),asOf:new Date()});
+ const result=projectOptionReturns({contract,preview:{...idea.preview,ratePct:'4',dividendPct:'0'},qty:Number(idea.qty),entryPremium:Number(idea.price),entryFeeUsd:Number(idea.fee||0),sellFeePerContractUsd:ratePerContract(account(),'SELL'),asOf:new Date()});
  return {contract,result};
 }
 function percentCell(cell){
@@ -330,24 +331,25 @@ function renderOptionPreview(){
  const idea=currentPreviewIdea();if(!idea){el.hidden=true;el.innerHTML='';return;}
  el.hidden=false;
  const p=ensurePreview(idea),parsed=parsePlannedContract(idea.label),symbol=buildOCCSymbol(parsed);
- const quote=p.quoteAt?`Last requested ${esc(p.quoteAt.replace('T',' ').slice(0,19))} UTC`:'No quote refreshed — manual values';
+ const quote=p.quoteAt?`As of ${esc(p.quoteAt.replace('T',' ').slice(0,19))} UTC`:'Not yet refreshed';
+ const marketNumber=(n,unit,places=2)=>{const v=Number(n);return String(n??'').trim()!==''&&Number.isFinite(v)&&v>0?`${unit} ${v.toFixed(places)}`:'----';};
+ const ready=Number(p.spot)>0&&Number(p.ivPct)>0;
+ const connectionHelp=quoteConnectionState==='not-configured'?`<div class="preview-connect" role="status"><strong>One-time free data connection needed</strong><p>Automatic spot, IV and indicative bid/ask require free Alpaca Paper Only API keys. The feed is <strong>not connected</strong> yet. You can set it up without funding an Alpaca brokerage account.</p><ol><li><a href="https://app.alpaca.markets/signup" target="_blank" rel="noopener noreferrer">Create a free Alpaca paper-only account</a> and generate paper API credentials.</li><li>In your existing Vercel project's <strong>Settings → Environment Variables</strong>, add <code>ALPACA_DATA_KEY_ID</code> and <code>ALPACA_DATA_SECRET_KEY</code> for Production, then redeploy.</li><li>Return and press <strong>Refresh quote</strong>. Quotes will then fill automatically when you click Analyze %.</li></ol><small>Never enter API secrets into this form or chat. They belong in the server's environment settings.</small></div>`:'';
  el.innerHTML=`<div class="option-preview-heading"><div><div class="overline">ONE IDEA AT A TIME</div><h3>Projected option return by date</h3><small>${esc(idea.label||'Enter a contract in the idea above')} · ${esc(account().name)}</small></div><button type="button" class="preview-close" data-action="close-option-preview" aria-label="Close option return preview">×</button></div>
-  <p class="preview-explainer">Enter today’s underlying price and the option’s current IV. The <strong>same IV is held fixed</strong> for future dates; time value is repriced for each date. Prices are theoretical, not expected fills.</p>
-  <div class="preview-inputs">
-   <label><span>Underlying now (USD)</span><input type="number" name="spot" inputmode="decimal" min="0.01" step="0.01" value="${esc(p.spot)}" placeholder="Stock price"></label>
-   <label><span>Quoted option IV (%)</span><input type="number" name="ivPct" inputmode="decimal" min="0.01" max="1000" step="0.1" value="${esc(p.ivPct)}" placeholder="e.g. 65.0"></label>
-   <label><span>Indicative bid (USD/sh)</span><input type="number" name="bid" inputmode="decimal" min="0" step="0.01" value="${esc(p.bid)}" placeholder="Optional"></label>
-   <label><span>Indicative ask (USD/sh)</span><input type="number" name="ask" inputmode="decimal" min="0" step="0.01" value="${esc(p.ask)}" placeholder="Optional"></label>
+  <p class="preview-explainer">Today’s underlying price and quoted IV are requested automatically when you select <strong>Analyze %</strong> (or press Refresh). Future dates are repriced at that <strong>unchanged IV</strong>, showing estimated time decay. Nothing is fetched in the background.</p>
+  <div class="preview-quote-card">
+   <div class="preview-market-grid"><div data-market-key="spot"><span>Underlying (USD)</span><strong>${marketNumber(p.spot,'USD')}</strong></div><div data-market-key="ivPct"><span>Option IV</span><strong>${String(p.ivPct??'').trim()&&Number(p.ivPct)>0?`${Number(p.ivPct).toFixed(1)}%`:'----'}</strong></div><div data-market-key="bid"><span>Indicative bid (USD/share)</span><strong>${marketNumber(p.bid,'USD')}</strong></div><div data-market-key="ask"><span>Indicative ask (USD/share)</span><strong>${marketNumber(p.ask,'USD')}</strong></div></div>
+   <div class="preview-quote-row"><button type="button" data-action="refresh-option-quote" ${!symbol||quoteRefreshBusy?'disabled':''} class="btn btn-outline preview-refresh">${quoteRefreshBusy?'Fetching quote…':'Refresh quote'}</button><div class="preview-quote-label"><span data-preview-quote-source>${esc(p.quoteSource||'Quote not connected')}</span> · <span data-preview-quote-at>${quote}</span>${quoteRefreshBusy?' · Looking up this exact contract…':''}${quoteRefreshMessage?`<div class="preview-warning" role="status">${esc(quoteRefreshMessage)}</div>`:''}</div></div>
+   ${connectionHelp}
+   <details class="preview-manual"><summary>Optional: enter quote values manually if the free feed is unavailable</summary><div class="preview-inputs"><label><span>Underlying price (USD)</span><input type="number" name="spot" inputmode="decimal" min="0.01" step="any" value="${esc(p.spot)}" placeholder="e.g. 16.50"></label><label><span>Option IV (%)</span><input type="number" name="ivPct" inputmode="decimal" min="0.01" max="1000" step="any" value="${esc(p.ivPct)}" placeholder="e.g. 65.0"></label><label><span>Option bid (USD/share)</span><input type="number" name="bid" inputmode="decimal" min="0" step="any" value="${esc(p.bid)}" placeholder="Optional"></label><label><span>Option ask (USD/share)</span><input type="number" name="ask" inputmode="decimal" min="0" step="any" value="${esc(p.ask)}" placeholder="Optional"></label></div></details>
   </div>
-  <div class="preview-quote-row"><button type="button" data-action="refresh-option-quote" ${!symbol||quoteRefreshBusy?'disabled':''} class="btn btn-outline preview-refresh">${quoteRefreshBusy?'Refreshing…':'Refresh free indicative quote'}</button><div class="preview-quote-label">${esc(p.quoteSource||'Manual inputs')} · ${esc(quote)}${quoteRefreshMessage?`<div class="preview-warning">${esc(quoteRefreshMessage)}</div>`:''}</div></div>
-  <div class="preview-advanced"><label>Interest rate (%) <input type="number" name="ratePct" inputmode="decimal" step="0.1" min="0" max="50" value="${esc(p.ratePct)}"></label><label>Annual dividend yield (%) <input type="number" name="dividendPct" inputmode="decimal" step="0.1" min="0" max="50" value="${esc(p.dividendPct)}"></label></div>
   <div class="preview-grid-head"><strong>Underlying price targets (USD)</strong><button type="button" class="btn btn-outline preview-add-btn" data-action="preview-add-target" ${p.targets.length>=MAX_PREVIEW_TARGETS?'disabled':''}>+ TP</button></div>
   <div class="preview-targets">${p.targets.map(t=>`<label class="preview-target-row" data-target-id="${esc(t.id)}"><strong>${esc(t.name)}</strong><input type="number" name="target-price" inputmode="decimal" min="0.01" step="0.01" value="${esc(t.price)}" placeholder="Underlying USD price">${!['stop','tp1','tp2'].includes(t.id)?`<button type="button" class="preview-remove-mini" data-action="preview-remove-target" data-target-id="${esc(t.id)}" aria-label="Remove ${esc(t.name)}">×</button>`:''}</label>`).join('')}</div>
   <div class="preview-grid-head"><strong>Exit dates · 4 PM ET</strong><button type="button" class="btn btn-outline preview-add-btn" data-action="preview-add-date" ${p.dates.length>=MAX_PREVIEW_DATES?'disabled':''}>+ Date</button></div>
   <div class="preview-dates">${p.dates.map((d,i)=>`<label class="preview-date-row"><span>${i===0?'Next session':i===1?'Second session':`Date ${i+1}`}</span><input type="date" name="exit-date" data-date-index="${i}" value="${esc(d)}" min="${esc(today())}" max="${esc(parsed.expiry||'2100-01-01')}">${p.dates.length>1?`<button type="button" class="preview-remove-mini" data-action="preview-remove-date" data-date-index="${i}" aria-label="Remove exit date">×</button>`:''}</label>`).join('')}</div>
   <div id="optionPreviewResults" aria-live="polite"></div>
-  <details class="preview-data-help"><summary>How free quote refresh works</summary><p>Alpaca Basic offers a <strong>free indicative</strong> U.S. options data feed, not official executable OPRA bid/ask. To connect it, create a free <a href="https://alpaca.markets/" target="_blank" rel="noopener noreferrer">Alpaca account</a> and add <code>ALPACA_DATA_KEY_ID</code> and <code>ALPACA_DATA_SECRET_KEY</code> to the existing Swing Risk Desk project’s Vercel Environment Variables. Redeploy. Keys remain on the Vercel server; never paste broker API keys into this calculator or chat. Manual inputs work without an account.</p></details>
-  <p class="preview-caution">Model assumes constant quoted IV, fixed interest/dividend yield and European-style valuation; current price is anchored to the indicative midpoint when supplied, otherwise to the planned buy premium as an unverified proxy. Real U.S. equity options are usually American-style; dividends, assignment, changing IV, bid/ask widening, earnings and early exercise can materially change the outcome. A quote is fetched <strong>only when you press Refresh</strong>. The entry premium in Quick Size Check is not changed automatically.</p>`;
+  <details class="preview-data-help"><summary>Quote source and pricing-model limitations</summary><p>The optional free Alpaca Basic feed provides indicative options prices (not executable OPRA quotes) and IEX underlying trades. A free paper-only account is needed; it does not trade or connect to IBKR. The model uses fixed internal 4% annual interest and 0% dividend yield assumptions, not live rates. Actual dividend-paying stocks, early assignment, IV changes, earnings, slippage and stale quotes can materially change the results. The manually entered Quick Size Check premium is never silently updated by this read-only preview.</p></details>
+  <p class="preview-caution">The projections are theoretical, with the same IV assumed for future dates—not a prediction of future IV, a guaranteed fill or statistical expectancy. The model is European-style; most U.S. stock options are American-style.</p>`;
  updateOptionPreviewResults();
 }
 function updateOptionPreviewResults(){
@@ -367,17 +369,18 @@ async function refreshOptionQuote(){
  const idea=currentPreviewIdea(),symbol=buildOCCSymbol(parsePlannedContract(idea?.label));
  if(!idea||!symbol){showToast('Enter a complete option symbol before refreshing.');return;}
  if(quoteRefreshBusy)return;
- quoteRefreshBusy=true;quoteRefreshMessage='';renderOptionPreview();
+ quoteRefreshBusy=true;quoteRefreshMessage='';quoteConnectionState='loading';renderOptionPreview();
  try{
   const response=await fetch(`/api/option-quote?symbol=${encodeURIComponent(symbol)}`,{cache:'no-store'});
   const data=await response.json().catch(()=>({}));
-  if(!response.ok)throw Error(data.error||'Free quote unavailable');
+  if(!response.ok){quoteConnectionState=data.code==='NOT_CONFIGURED'?'not-configured':'failed';throw Error(data.code==='NOT_CONFIGURED'?'Free quote provider not connected. Follow the one-time setup below.':data.error||'Free quote unavailable');}
   // Avoid applying a stale response if the selected idea or contract has changed.
   if(currentPreviewIdea()?.id!==idea.id||buildOCCSymbol(parsePlannedContract(idea.label))!==symbol)return;
   const p=ensurePreview(idea),set=(k,v)=>{if(v!==null&&v!==undefined&&Number.isFinite(Number(v)))p[k]=String(v);};
   set('spot',data.spotUsd);set('ivPct',data.ivPct);set('bid',data.optionBidUsd);set('ask',data.optionAskUsd);
   p.quoteAt=data.quoteAt||data.requestedAt||new Date().toISOString();
   p.quoteSource='Alpaca Basic indicative (not executable OPRA); underlying IEX';
+  quoteConnectionState='connected';
   quoteRefreshMessage=data.missingIv?'IV missing for this contract. Enter IV manually.':data.spotUsd===null?'Underlying IEX price missing. Enter spot manually.':'Indicative values refreshed on request.';
   persistPlannerDrafts();
  }catch(err){quoteRefreshMessage=String(err.message||'Refresh failed').slice(0,360);}
@@ -744,7 +747,7 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'add-plan-idea':{const ideas=plannerIdeas();if(ideas.length>=MAX_PLAN_IDEAS){showToast(`Maximum ${MAX_PLAN_IDEAS} draft ideas.`);break;}const idea=defaultPlanIdea(uid(),account().stressPct,false);ideas.push(idea);persistPlannerDrafts();renderPlanner(analytics());document.querySelectorAll('.draft-idea [name="label"]')[ideas.length-1]?.focus();break;}
  case 'remove-plan-idea':dropPlannerIdea(el.dataset.planId);break;
  case 'clear-plan-ideas':{if(!confirm('Clear all saved Quick size check ideas for this portfolio? Recorded positions will not be affected.'))break;plannerDrafts[account().id]=[defaultPlanIdea(uid(),account().stressPct,false)];persistPlannerDrafts();renderPlanner(analytics());showToast('Saved size-check ideas cleared for this portfolio.');break;}
- case 'analyze-idea':selectedPreviewId=selectedPreviewId===el.dataset.planId?null:el.dataset.planId;quoteRefreshMessage='';renderPlanner(analytics());break;
+ case 'analyze-idea':{const opening=selectedPreviewId!==el.dataset.planId;selectedPreviewId=opening?el.dataset.planId:null;quoteRefreshMessage='';quoteConnectionState='unknown';renderPlanner(analytics());if(opening)void refreshOptionQuote();break;}
  case 'close-option-preview':selectedPreviewId=null;renderPlanner(analytics());break;
  case 'preview-add-target':{const idea=currentPreviewIdea();if(!idea)break;const p=ensurePreview(idea);if(p.targets.length>=MAX_PREVIEW_TARGETS)break;const n=p.targets.filter(t=>t.name.startsWith('TP')).length+1;p.targets.push({id:uid(),name:`TP${n}`,price:''});persistPlannerDrafts();renderOptionPreview();break;}
  case 'preview-remove-target':{const p=ensurePreview(currentPreviewIdea());if(!p)break;p.targets=p.targets.filter(t=>t.id!==el.dataset.targetId);persistPlannerDrafts();renderOptionPreview();break;}
@@ -784,9 +787,15 @@ if(typeof globalThis.addEventListener==='function')globalThis.addEventListener('
 $('optionPreview').addEventListener('input',e=>{
  const idea=currentPreviewIdea();if(!idea)return;
  const p=ensurePreview(idea),name=e.target.name;
- if(['spot','ivPct','bid','ask','ratePct','dividendPct'].includes(name)){
+ if(['spot','ivPct','bid','ask'].includes(name)){
   p[name]=e.target.value;
-  if(['spot','ivPct','bid','ask'].includes(name)){p.quoteSource='Manual override';p.quoteAt='';quoteRefreshMessage='';}
+  if(['spot','ivPct','bid','ask'].includes(name)){
+   p.quoteSource='Manual override';p.quoteAt='';quoteRefreshMessage='';
+   const cell=document.querySelector(`[data-market-key="${name}"] strong`),amount=Number(p[name]);
+   if(cell)cell.textContent=String(p[name]||'').trim()&&Number.isFinite(amount)&&amount>0?(name==='ivPct'?`${amount.toFixed(1)}%`:`USD ${amount.toFixed(2)}`):'----';
+   const src=document.querySelector('[data-preview-quote-source]'),at=document.querySelector('[data-preview-quote-at]');
+   if(src)src.textContent='Manual override';if(at)at.textContent='Not yet refreshed';
+  }
  }else if(name==='target-price'){
   const t=p.targets.find(t=>t.id===e.target.closest('[data-target-id]')?.dataset.targetId);if(!t)return;t.price=e.target.value;
  }else if(name==='exit-date'){
@@ -799,7 +808,11 @@ $('quickPlanner').addEventListener('input',e=>{
  const draftEl=e.target.closest('[data-draft-id]');if(!draftEl)return;
  const idea=plannerIdeas().find(x=>x.id===draftEl.dataset.draftId);
  if(!idea||!['label','qty','price','fee','stress'].includes(e.target.name))return;
+ const oldContract=e.target.name==='label'?buildOCCSymbol(parsePlannedContract(idea.label)):null;
  idea[e.target.name]=e.target.value;
+ if(e.target.name==='label'&&oldContract!==buildOCCSymbol(parsePlannedContract(idea.label))&&idea.preview){
+  const p=idea.preview;p.spot='';p.ivPct='';p.bid='';p.ask='';p.quoteAt='';p.quoteSource='New contract needs refreshed quote';quoteConnectionState='unknown';quoteRefreshMessage='';
+ }
  if(e.target.name==='stress')idea.stressCustom=true;
  if(e.target.name==='fee')idea.feeManual=true;
  if(e.target.name==='qty'&&!idea.feeManual){idea.fee=estimateOrderFee(account(),'BUY',idea.qty).toFixed(2);const feeInput=draftEl.querySelector('[name=\"fee\"]');if(feeInput)feeInput.value=idea.fee;}

@@ -401,3 +401,23 @@ html,body{max-width:100%}
 @media(max-width:1100px){.draft-head{flex-wrap:wrap}.draft-head>input{flex-basis:40%}.preview-result-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.preview-result-summary>div:first-child{grid-column:1/-1}}
 @media(max-width:690px){.option-preview{padding:12px 10px}.preview-targets,.preview-dates{grid-template-columns:minmax(0,1fr)}.preview-target-row strong{width:50px}.preview-date-row span{width:75px}.preview-quote-row{align-items:flex-start}.preview-refresh{width:100%}.preview-matrix{min-width:390px}.preview-inputs{gap:7px}.draft-head>input{flex-basis:60%}}
 @media(max-width:365px){.preview-inputs,.preview-advanced{grid-template-columns:minmax(0,1fr)}.preview-result-summary{grid-template-columns:minmax(0,1fr)}.preview-result-summary>div:first-child{grid-column:auto}.draft-preview-btn{padding:6px 7px;font-size:10px}.draft-head>input{flex-basis:45%}}
+
+/* v2.6: compact quote snapshot and clearly separated one-time connection help. */
+.preview-quote-card{border:1px solid #345b6b;border-radius:10px;padding:11px;background:#0b2633;min-width:0;margin:12px 0}
+.preview-market-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.preview-market-grid>div{min-width:0;padding:9px;border-radius:8px;background:#102e3b;border:1px solid #31515f}
+.preview-market-grid span{display:block;font-size:10px;color:#a6cad4;margin-bottom:5px;overflow-wrap:anywhere}
+.preview-market-grid strong{display:block;font-size:15px;color:#e6f7f8;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.preview-connect{border:1px solid #8b7348;border-radius:9px;background:#302c25;padding:12px;margin:8px 0;color:#f2e5c6;font-size:11px;line-height:1.5}
+.preview-connect strong{display:block;font-size:13px;color:#ffdd98}
+.preview-connect p{margin:7px 0}
+.preview-connect ol{padding-left:20px;margin:9px 0}
+.preview-connect li{padding:2px 0}
+.preview-connect a{color:#a9deff;text-decoration:underline}
+.preview-connect code{overflow-wrap:anywhere;white-space:normal;color:#ddf0ff}
+.preview-connect small{color:#e3ceaa}
+.preview-manual{border-top:1px solid #335360;padding-top:11px;margin:10px 0 0;font-size:11px;color:#bed8dc}
+.preview-manual summary{cursor:pointer;font-weight:650}
+.preview-manual .preview-inputs{margin-bottom:0}
+@media(max-width:1100px){.preview-market-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:365px){.preview-market-grid strong{font-size:13px}.preview-quote-card{padding:8px}}
