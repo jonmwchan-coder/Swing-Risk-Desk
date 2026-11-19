@@ -882,15 +882,25 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'plan-to-position':beginPlannedPosition(el.dataset.planId);break;
  case 'add-plan-idea':{const ideas=plannerIdeas();if(ideas.length>=MAX_PLAN_IDEAS){showToast(`Maximum ${MAX_PLAN_IDEAS} draft ideas.`);break;}const idea=defaultPlanIdea(uid(),account().stressPct,false);ideas.push(idea);expandedPlanId=idea.id;selectedPreviewId=null;quoteRefreshToken++;persistPlannerDrafts();renderPlanner(analytics());[...document.querySelectorAll('.draft-idea')].find(x=>x.dataset.draftId===idea.id)?.querySelector('[name="ticker"]')?.focus();break;}
  case 'remove-plan-idea':dropPlannerIdea(el.dataset.planId);break;
+ case 'toggle-planner-copy':{const panel=$('plannerCopyPanel');if(!panel)break;if(panel.hidden)renderPlannerCopyChoices();else panel.hidden=true;break;}
+ case 'cancel-planner-copy':{const panel=$('plannerCopyPanel');if(panel)panel.hidden=true;break;}
+ case 'confirm-planner-copy':confirmPlannerCopy();break;
   case 'toggle-plan-details':{expandedPlanId=expandedPlanId===el.dataset.planId?null:el.dataset.planId;if(expandedPlanId&&selectedPreviewId&&expandedPlanId!==selectedPreviewId){selectedPreviewId=null;quoteRefreshToken++;}renderPlanner(analytics());break;}
   case 'collapse-plan-ideas':expandedPlanId=null;renderPlanner(analytics());break;
  case 'clear-plan-ideas':{if(!confirm('Clear all saved Quick size check ideas for this portfolio? Recorded positions will not be affected.'))break;expandedPlanId=null;selectedPreviewId=null;quoteRefreshToken++;plannerDrafts[account().id]=[defaultPlanIdea(uid(),account().stressPct,false)];persistPlannerDrafts();renderPlanner(analytics());showToast('Saved size-check ideas cleared for this portfolio.');break;}
- case 'analyze-idea':{const opening=selectedPreviewId!==el.dataset.planId;selectedPreviewId=opening?el.dataset.planId:null;expandedPlanId=null;quoteRefreshToken++;quoteRefreshMessage='';quoteConnectionState='unknown';renderPlanner(analytics());if(opening)$('optionPreview')?.scrollIntoView({block:'start',behavior:'smooth'});if(opening)void refreshOptionQuote();break;}
+ case 'analyze-idea':{const opening=selectedPreviewId!==el.dataset.planId;selectedPreviewId=opening?el.dataset.planId:null;if(opening)adoptTickerLevels(currentPreviewIdea());expandedPlanId=null;quoteRefreshToken++;quoteRefreshMessage='';quoteConnectionState='unknown';renderPlanner(analytics());if(opening)$('optionPreview')?.scrollIntoView({block:'start',behavior:'smooth'});if(opening)void refreshOptionQuote();break;}
  case 'close-option-preview':selectedPreviewId=null;quoteRefreshToken++;renderPlanner(analytics());break;
- case 'preview-add-target':{const idea=currentPreviewIdea();if(!idea)break;const p=ensurePreview(idea);if(p.targets.length>=MAX_PREVIEW_TARGETS)break;const n=p.targets.filter(t=>t.name.startsWith('TP')).length+1;p.targets.push({id:uid(),name:`TP${n}`,price:''});persistPlannerDrafts();renderOptionPreview();break;}
- case 'preview-remove-target':{const p=ensurePreview(currentPreviewIdea());if(!p)break;p.targets=p.targets.filter(t=>t.id!==el.dataset.targetId);persistPlannerDrafts();renderOptionPreview();break;}
- case 'preview-add-date':{const p=ensurePreview(currentPreviewIdea());if(!p||p.dates.length>=MAX_PREVIEW_DATES)break;let d=p.dates.at(-1)||today();d=nextSession(d,state.customClosed||[]);p.dates.push(d);persistPlannerDrafts();renderOptionPreview();break;}
- case 'preview-remove-date':{const p=ensurePreview(currentPreviewIdea());if(!p||p.dates.length<=1)break;p.dates.splice(Number(el.dataset.dateIndex),1);persistPlannerDrafts();renderOptionPreview();break;}
+ case 'preview-add-target':{const idea=currentPreviewIdea();if(!idea)break;const p=ensurePreview(idea);if(p.targets.length>=MAX_PREVIEW_TARGETS)break;const n=p.targets.filter(t=>t.name.startsWith('TP')).length+1;p.targets.push({id:uid(),name:`TP${n}`,price:''});publishTickerLevels(idea);persistPlannerDrafts();renderOptionPreview();break;}
+ case 'preview-remove-target':{const idea=currentPreviewIdea(),p=ensurePreview(idea);if(!p)break;p.targets=p.targets.filter(t=>t.id!==el.dataset.targetId);publishTickerLevels(idea);persistPlannerDrafts();renderOptionPreview();break;}
+ case 'preview-add-date':{const idea=currentPreviewIdea(),p=ensurePreview(idea);if(!p||p.dates.length>=MAX_PREVIEW_DATES)break;const shown=visibleTickerDates(idea).visible;let d=nextSession(shown.at(-1)?.date||today(),state.customClosed||[]);if(parseDay(idea.expiry)&&d>idea.expiry){showToast('This exit date would be after the selected option expires.');break;}if(p.dates.includes(d)){showToast('This exit date is already in the shared ticker plan.');break;}p.dates.push(d);p.dates.sort();publishTickerLevels(idea);persistPlannerDrafts();renderOptionPreview();break;}
+ case 'preview-remove-date':{const idea=currentPreviewIdea(),p=ensurePreview(idea);if(!p||p.dates.length<=1)break;p.dates.splice(Number(el.dataset.dateIndex),1);publishTickerLevels(idea);persistPlannerDrafts();renderOptionPreview();break;}
+ case 'toggle-ticker-link':{
+  const idea=currentPreviewIdea(),p=ensurePreview(idea);if(!p)break;
+  if(p.tickerLinked!==false){p.tickerLinked=false;p.tickerLinkEstablished=false;persistPlannerDrafts();renderOptionPreview();break;}
+  if(p.targets?.some(t=>String(t.price??'').trim())&&!confirm('Use the shared '+normalizeTicker(idea.ticker)+' '+idea.optionType.toLowerCase()+' plan? This replaces this idea’s own underlying Stop/TP levels and exit dates. Premium and IV stay separate.'))break;
+  const linked=adoptTickerLevels(idea,true);if(linked.reason==='solo')publishTickerLevels(idea);
+  persistPlannerDrafts();renderOptionPreview();break;
+ }
  case 'refresh-option-quote':void refreshOptionQuote();break;
  case 'enter-manual-iv':{const panel=$('optionPreview');const details=panel?.querySelector('.preview-manual');if(details)details.open=true;panel?.querySelector('input[name="ivPct"]')?.focus();break;}
  case 'reset-draft-fee':{const idea=plannerIdeas().find(x=>x.id===el.dataset.planId);if(idea){idea.feeManual=false;idea.fee=estimateOrderFee(account(),'BUY',idea.qty).toFixed(2);persistPlannerDrafts();renderPlanner(analytics());}break;}
