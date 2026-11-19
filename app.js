@@ -924,7 +924,7 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
 
 document.addEventListener('click',e=>{const tab=e.target.closest('[data-tab]');if(tab){switchTab(tab.dataset.tab);return;}const filter=e.target.closest('[data-filter]');if(filter){positionFilter=filter.dataset.filter;renderPositions(analytics());return;}const action=e.target.closest('[data-action]');if(action){runAction(action.dataset.action,action);}});
 $('editorDialog').addEventListener('click',e=>{if(e.target===$('editorDialog'))$('editorDialog').close();});
-$('accountSelect').addEventListener('change',e=>{activeAccountId=e.target.value;rememberAccount();render();});
+$('accountSelect').addEventListener('change',e=>{activeAccountId=e.target.value;selectedPreviewId=null;expandedPlanId=null;quoteRefreshToken++;quoteRefreshBusy=false;tickerInputOrigins.clear();if($('plannerCopyPanel'))$('plannerCopyPanel').hidden=true;rememberAccount();render();});
 $('asOfDate').addEventListener('change',e=>{const d=e.target.value;if(parseDay(d)){asOfOverride=d;render();}else showToast('Enter a valid date.');});
 // Browser tabs share the latest sizing ideas. A change in another tab is not a trade.
 if(typeof globalThis.addEventListener==='function')globalThis.addEventListener('storage',event=>{
@@ -947,10 +947,12 @@ $('optionPreview').addEventListener('input',e=>{
    if(src)src.textContent='Manual override';if(at)at.textContent='Not yet refreshed';
   }
  }else if(name==='target-price'){
-  const t=p.targets.find(t=>t.id===e.target.closest('[data-target-id]')?.dataset.targetId);if(!t)return;t.price=e.target.value;
+  const t=p.targets.find(t=>t.id===e.target.closest('[data-target-id]')?.dataset.targetId);if(!t)return;t.price=e.target.value;publishTickerLevels(idea);
  }else if(name==='exit-date'){
   const index=Number(e.target.dataset.dateIndex);if(!Number.isInteger(index)||index<0||index>=p.dates.length)return;
-  if(parseDay(e.target.value))p.dates[index]=e.target.value;else return;
+  if(!parseDay(e.target.value))return;
+  if(parseDay(idea.expiry)&&e.target.value>idea.expiry){showToast('Exit date cannot be after this option expires.');return;}
+  p.dates[index]=e.target.value;publishTickerLevels(idea);
  }else return;
  persistPlannerDrafts();updateOptionPreviewResults();
 });
@@ -959,6 +961,7 @@ $('quickPlanner').addEventListener('input',e=>{
  const idea=plannerIdeas().find(x=>x.id===el.dataset.draftId),name=e.target.name;
  if(!idea||!['name','ticker','expiry','strike','optionType','qty','price','fee','stress'].includes(name))return;
  const before=draftContractKey(idea);
+ if(['ticker','optionType'].includes(name)&&!tickerInputOrigins.has(idea.id))tickerInputOrigins.set(idea.id,tickerScenarioKey(idea));
  idea[name]=name==='ticker'?normalizeTicker(e.target.value):e.target.value;
  const changed=['ticker','expiry','strike','optionType'].includes(name)&&before!==draftContractKey(idea);
  if(changed){
@@ -980,8 +983,19 @@ $('quickPlanner').addEventListener('change',e=>{
  const node=e.target.closest('[data-draft-id]');
  if(!node||!['ticker','expiry','strike','optionType'].includes(e.target.name))return;
  const idea=plannerIdeas().find(x=>x.id===node.dataset.draftId);
- if(idea&&draftContract(idea)){if(selectedPreviewId===idea.id)void refreshOptionQuote();else void refreshDraftPremium(idea);}
+ if(!idea)return;
+ const oldGroup=tickerInputOrigins.get(idea.id);
+ tickerInputOrigins.delete(idea.id);
+ if(['ticker','optionType'].includes(e.target.name)&&oldGroup!==undefined&&oldGroup&&oldGroup!==tickerScenarioKey(idea)){
+  // New company/direction: clear old underlying targets, but keep contract's quote invalidation separate.
+  const p=ensurePreview(idea),fresh=emptyPreview(today(),state.customClosed||[]);
+  p.targets=fresh.targets;p.dates=fresh.dates;p.tickerLinked=true;p.tickerLinkEstablished=false;p.tickerPlanEditedAt='';
+ }
+ adoptTickerLevels(idea);
+ if(draftContract(idea)){if(selectedPreviewId===idea.id)void refreshOptionQuote();else void refreshDraftPremium(idea);}
+ else {persistPlannerDrafts();if(currentPreviewIdea()?.id===idea.id)renderOptionPreview();}
 });
+$('plannerCopyTarget')?.addEventListener('change',updatePlannerCopyHint);
 $('planSortSelect')?.addEventListener('change',e=>{
  planSortMode=PLAN_SORT_MODES.includes(e.target.value)?e.target.value:'created';
  try{localStorage.setItem(PLAN_SORT_KEY,planSortMode);}catch{}
