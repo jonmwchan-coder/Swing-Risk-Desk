@@ -23,9 +23,9 @@ test('quote refresh starts when Analyze % is selected or Refresh is explicitly c
  assert.match(app,/case 'refresh-option-quote':void refreshOptionQuote\(\);break;/);
  assert.match(app,/if\(opening\)void refreshOptionQuote\(\);/);
  assert.match(app,/fetch\(`\/api\/option-quote\?symbol=/);
- assert.match(app,/Quick Size Check premium is never silently updated/);
- assert.doesNotMatch(app,/idea\.price\s*=\s*data\./);
- assert.match(sw,/swing-risk-desk-shell-v2\.7/);
+ assert.match(app,/unless you manually override it/);
+ assert.match(app,/if\(valid&&!idea\.priceManual\)idea\.price=idea\.marketMid/);
+ assert.match(sw,/swing-risk-desk-shell-v2\.8/);
  assert.match(sw,/\/lib\/option-preview\.mjs/);
 });
 test('cost and model output always describe currencies and limitations',()=>{
