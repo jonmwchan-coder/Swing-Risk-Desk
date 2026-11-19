@@ -379,25 +379,33 @@ function updateOptionPreviewResults(){
   <small class="preview-footnote">Valuation anchored to ${esc(result.anchorLabel)} at current spot; that anchor mismatch is reduced toward expiration. Percent = net modeled USD P/L ÷ actual proposed USD purchase cost (quantity × buy premium × 100 + buy fees). Estimated sell fees are deducted. ${result.spread>0?`Assumes half the current indicative ${usd(result.spread)} bid/ask spread is lost on exit.`:'No spread discount: enter a bid and ask to model half-spread exit slippage.'} These are scenario estimates, not statistical expectancy or guaranteed proceeds.</small>`;
 }
 async function refreshOptionQuote(){
- const idea=currentPreviewIdea(),symbol=buildOCCSymbol(draftContract(idea));
- if(!idea||!symbol){showToast('Enter a complete option symbol before refreshing.');return;}
- if(quoteRefreshBusy)return;
- quoteRefreshBusy=true;quoteRefreshMessage='';quoteConnectionState='loading';renderOptionPreview();
+ const idea=currentPreviewIdea(),symbol=buildOCCSymbol(draftContract(idea)),contractKey=draftContractKey(idea);
+ if(!idea||!symbol){quoteRefreshMessage='Enter a valid ticker, expiration, strike and call/put.';renderOptionPreview();return;}
+ const token=++quoteRefreshToken;quoteRefreshBusy=true;quoteRefreshMessage='';quoteConnectionState='loading';renderOptionPreview();
  try{
   const response=await fetch(`/api/option-quote?symbol=${encodeURIComponent(symbol)}`,{cache:'no-store'});
   const data=await response.json().catch(()=>({}));
-  if(!response.ok){quoteConnectionState=data.code==='NOT_CONFIGURED'?'not-configured':'failed';throw Error(data.code==='NOT_CONFIGURED'?'Free quote provider not connected. Follow the one-time setup below.':data.error||'Free quote unavailable');}
-  // Avoid applying a stale response if the selected idea or contract has changed.
-  if(currentPreviewIdea()?.id!==idea.id||buildOCCSymbol(draftContract(idea))!==symbol)return;
+  if(!response.ok){quoteConnectionState=data.code==='NOT_CONFIGURED'?'not-configured':'failed';throw Error(data.error||'Indicative quote unavailable');}
+  if(token!==quoteRefreshToken||currentPreviewIdea()?.id!==idea.id||draftContractKey(idea)!==contractKey)return;
   const p=ensurePreview(idea),set=(k,v)=>{if(v!==null&&v!==undefined&&Number.isFinite(Number(v)))p[k]=String(v);};
+  p.spot='';p.ivPct='';p.bid='';p.ask='';
   set('spot',data.spotUsd);set('ivPct',data.ivPct);set('bid',data.optionBidUsd);set('ask',data.optionAskUsd);
-  p.quoteAt=data.quoteAt||data.requestedAt||new Date().toISOString();
-  p.quoteSource='Alpaca Basic indicative (not executable OPRA); underlying IEX';
+  p.quoteAt=data.quoteAt||'';p.quoteSource=data.provider||'Alpaca indicative';
+  const bid=Number(data.optionBidUsd),ask=Number(data.optionAskUsd);
+  const valid=data.optionBidUsd!==null&&data.optionAskUsd!==null&&Number.isFinite(bid)&&Number.isFinite(ask)&&bid>0&&ask>0&&ask>=bid;
+  idea.contractSymbol=symbol;idea.marketMid=valid?String(Math.round((bid+ask)*5000)/10000):'';
+  idea.quoteStatus=valid?'indicative':'unavailable';
+  idea.quoteMessage=valid?`Indicative bid ${bid.toFixed(2)} / ask ${ask.toFixed(2)} · midpoint ${Number(idea.marketMid).toFixed(2)} · ${p.quoteAt||'timestamp unavailable'} UTC · non-OPRA / non-executable`:'No valid indicative bid/ask. Enter a manual premium.';
+  if(valid&&!idea.priceManual)idea.price=idea.marketMid;
   quoteConnectionState='connected';
-  quoteRefreshMessage=data.missingIv?'IV missing for this contract. Enter IV manually.':data.spotUsd===null?'Underlying IEX price missing. Enter spot manually.':'Indicative values refreshed on request.';
+  quoteRefreshMessage=data.missingIv?'IV unavailable; enter manually.':data.spotUsd===null?'Underlying price unavailable; enter manually.':idea.quoteMessage;
   persistPlannerDrafts();
- }catch(err){quoteRefreshMessage=String(err.message||'Refresh failed').slice(0,360);}
- finally{quoteRefreshBusy=false;renderOptionPreview();}
+ }catch(err){
+  if(token===quoteRefreshToken&&currentPreviewIdea()?.id===idea?.id&&draftContractKey(idea)===contractKey){
+   idea.quoteStatus='unavailable';idea.quoteMessage=String(err.message||'Refresh failed').slice(0,200);
+   quoteRefreshMessage=idea.quoteMessage;persistPlannerDrafts();
+  }
+ }finally{if(token===quoteRefreshToken){quoteRefreshBusy=false;renderPlanner(analytics());}}
 }
 
 function switchTab(tab){if(!['dashboard','positions','history','settings'].includes(tab))return;activeTab=tab;render();}
