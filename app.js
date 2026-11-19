@@ -397,7 +397,7 @@ function confirmPlannerCopy(){
  $('plannerCopyPanel').hidden=true;
  renderPlanner(analytics());
  const target=state.accounts.find(x=>x.id===targetId);
- showToast(`Copied ${result.count} draft idea${result.count===1?'':'s'} to ${target?.name||'portfolio'}. Source unchanged; check target risk and refresh premiums.`);
+ showToast(`Copied ${result.count} draft idea${result.count===1?'':'s'} to ${target?.name||'portfolio'}. ${result.conflicts?result.conflicts+' conflicting same-ticker plan(s) kept independent. ':''}Source unchanged; review target risk and refresh premiums.`);
 }
 
 function previewViewModel(idea){
