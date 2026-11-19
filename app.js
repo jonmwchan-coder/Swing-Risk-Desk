@@ -10,7 +10,7 @@ import {buildSingleTradeHandoff,singleTradeExportFilename,TRADE_HANDOFF_SCHEMA} 
 import {emptyPreview,normalizePreview,projectOptionReturns,buildOCCSymbol,MAX_PREVIEW_DATES,MAX_PREVIEW_TARGETS,easternCloseMs} from './lib/option-preview.mjs';
 import {nextSession} from './lib/calendar.mjs';
 import {draftContract,draftContractKey,normalizeTicker,sortPlanIdeas,PLAN_SORT_MODES} from './lib/planner-contract.mjs';
-import {copyPlannerIdeas,isEmptyPlannerPlaceholder,tickerScenarioKey,hydrateTickerScenario,broadcastTickerScenario,visibleTickerDates} from './lib/planner-workflows.mjs';
+import {copyPlannerIdeas,isEmptyPlannerPlaceholder,isUneditedTickerScenario,tickerScenarioKey,hydrateTickerScenario,broadcastTickerScenario,visibleTickerDates} from './lib/planner-workflows.mjs';
 
 const STORAGE_KEY='swing-risk-desk:data:v1';
 const $=id=>document.getElementById(id);
@@ -94,6 +94,7 @@ function dropPlannerIdea(draftId,renderAfter=true){
  const ideas=plannerIdeas();const index=ideas.findIndex(x=>x.id===draftId);
  if(index<0)return;
  ideas.splice(index,1);
+ tickerInputOrigins.delete(draftId);
  if(selectedPreviewId===draftId)selectedPreviewId=null;
   if(expandedPlanId===draftId)expandedPlanId=null;
  if(!ideas.length)ideas.push(defaultPlanIdea(uid(),account().stressPct,false));
@@ -288,8 +289,8 @@ function renderPlanner(m){
   const contractText=contract?`${fmtDate(contract.expiry)} · ${contract.strike}${contract.optionType==='Put'?'P':'C'}`:'Select contract';
   const moneyOrDash=v=>String(v??'').trim()&&Number.isFinite(Number(v))&&Number(v)>0?money(Number(v)):'—';
   const premium=moneyOrDash(idea.price),mid=moneyOrDash(idea.marketMid),p=idea.preview||{};
-  const quote=idea.quoteStatus==='loading'?'Fetching quote…':idea.priceManual?`Manual premium${mid!=='—'?' · Mid '+mid:''}`:idea.quoteStatus==='indicative'?`Indicative mid ${mid}`:idea.quoteStatus==='unavailable'?'Quote unavailable':'Quote not loaded';
-  const quoteTone=idea.quoteStatus==='unavailable'?'warning':idea.priceManual?'manual':idea.quoteStatus==='indicative'?'indicative':'empty';
+  const quote=idea.quoteStatus==='loading'?'Fetching quote…':idea.priceManual?`Manual premium${mid!=='—'?' · Mid '+mid:''}`:idea.quoteStatus==='indicative'?`Indicative mid ${mid}`:idea.quoteStatus==='unavailable'?'Quote unavailable':idea.quoteStatus==='saved'?'Saved indicative quote · refresh':'Quote not loaded';
+  const quoteTone=idea.quoteStatus==='unavailable'?'warning':idea.priceManual?'manual':idea.quoteStatus==='indicative'?'indicative':idea.quoteStatus==='saved'?'warning':'empty';
   return `<article class="draft-idea ${active?'is-active':''} ${editing?'is-expanded':'is-collapsed'}" data-draft-id="${esc(idea.id)}">
     <div class="draft-head"><div class="draft-identity"><strong class="draft-ticker" data-idea-ticker>${esc(symbol)}</strong><span class="draft-idea-name" data-idea-name>${esc(name)}</span><span class="draft-contract-pill" data-idea-contract>${esc(contractText)}</span></div>
       <div class="draft-actions"><button type="button" class="draft-edit-btn" data-action="toggle-plan-details" data-plan-id="${esc(idea.id)}" aria-expanded="${editing}">${editing?'Done':'Edit'}</button><button type="button" class="draft-preview-btn" data-action="analyze-idea" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id}">${selectedPreviewId===idea.id?'Hide %':'Analyze %'}</button><button type="button" class="draft-record" data-action="plan-to-position" data-plan-id="${esc(idea.id)}">Record</button><button type="button" class="draft-remove" data-action="remove-plan-idea" data-plan-id="${esc(idea.id)}" aria-label="Remove ${esc(symbol)} ${esc(name)}">×</button></div></div>
@@ -305,6 +306,7 @@ function renderPlanner(m){
  }).join('');
  const addBtn=document.querySelector('[data-action="add-plan-idea"]');
  if(addBtn)addBtn.disabled=ideas.length>=MAX_PLAN_IDEAS;
+ const copyBtn=document.querySelector('[data-action="toggle-planner-copy"]');if(copyBtn)copyBtn.disabled=state.accounts.length<2;
  updatePlannerMetrics(m);renderOptionPreview();
 }
 function updatePlannerMetrics(m){
@@ -897,7 +899,7 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'toggle-ticker-link':{
   const idea=currentPreviewIdea(),p=ensurePreview(idea);if(!p)break;
   if(p.tickerLinked!==false){p.tickerLinked=false;p.tickerLinkEstablished=false;persistPlannerDrafts();renderOptionPreview();break;}
-  if(p.targets?.some(t=>String(t.price??'').trim())&&!confirm('Use the shared '+normalizeTicker(idea.ticker)+' '+idea.optionType.toLowerCase()+' plan? This replaces this idea’s own underlying Stop/TP levels and exit dates. Premium and IV stay separate.'))break;
+  if(!isUneditedTickerScenario(p,today(),state.customClosed||[])&&!confirm('Use the shared +normalizeTicker(idea.ticker)+' '+idea.optionType.toLowerCase()+' plan? This replaces this idea’s own underlying Stop/TP levels and exit dates. Premium and IV stay separate.'))break;
   const linked=adoptTickerLevels(idea,true);if(linked.reason==='solo')publishTickerLevels(idea);
   persistPlannerDrafts();renderOptionPreview();break;
  }
