@@ -617,3 +617,5 @@ html,body{max-width:100%}
  .option-preview-heading h3{font-size:18px}
  .preview-output-tag{margin-left:0}
 }
+
+.option-preview .preview-market-grid .preview-iv-source{display:block;margin-top:5px;font-size:9px;color:#b8a7e2;letter-spacing:.01em}
