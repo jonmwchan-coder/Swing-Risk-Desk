@@ -1,4 +1,4 @@
-# Swing Risk Desk v2.6 — one-click quote request and streamlined option return preview
+# Swing Risk Desk v2.7 — full-width sizing worksheet and option return projection
 
 Quick Size Check contains one optional **Analyze %** preview for a selected draft idea, with underlying stop/TP targets, additional TP levels, adjustable dates defaulted to the next two NYSE sessions, theoretical option returns (constant IV, changing time value), estimated sell commissions, and bid/ask half-spread sensitivity. All quote assumptions, targets and dates are **local, per-portfolio, per-draft**, not entered into the real trading ledger/cloud. Quote requests happen only on the user’s Refresh click.
 
@@ -129,6 +129,10 @@ If you already deployed v1.1:
 4. Reopen the same web address. Existing local v1 records are migrated in memory and saved using the original storage key after your next edit. Download a fresh full JSON backup immediately.
 
 If starting fresh, create a **new, preferably private GitHub repo**, upload the **contents** of this ZIP to its root, then import it under **Vercel → Add New → Project**. Framework is **Other**, with no build command. Do not upload private IBKR files or account backups to GitHub, including private repos: these are intended for import **inside the app**.
+
+## v2.7 Dashboard layout
+
+Dashboard sections are now vertically arranged, full width: **Session-aware Net loss ledger** above **Quick size check**, followed by the **selected option return by date** in a standalone full-width panel. The projection remains one selected idea at a time, and clicking **Analyze %** scrolls to that panel. The floating/risk and account calculations are unchanged. The quote API and keys are unchanged, as is local draft storage. The model's horizontal scroll is confined to its date matrix only on narrow screens.
 
 ## Daily workflow
 

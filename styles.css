@@ -421,3 +421,14 @@ html,body{max-width:100%}
 .preview-manual .preview-inputs{margin-bottom:0}
 @media(max-width:1100px){.preview-market-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:365px){.preview-market-grid strong{font-size:13px}.preview-quote-card{padding:8px}}
+
+
+/* v2.7: give the risk ledger, sizing worksheet, and selected option return
+   preview their own full-width rows, in the order used before entering a swing.
+   Never make the projection compete with the ledger for a half-width column. */
+.dashboard-panel-stack{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;margin-top:23px;min-width:0}
+.dashboard-panel-stack>.window-panel,.dashboard-panel-stack>.scenario-panel,.dashboard-panel-stack>.option-preview{width:100%;max-width:100%;min-width:0}
+.dashboard-panel-stack>.option-preview{margin-top:0}
+.dashboard-panel-stack .draft-ideas{min-width:0}
+@media(max-width:900px){.dashboard-panel-stack{margin-top:18px;gap:13px}}
+@media(max-width:690px){.dashboard-panel-stack{margin-top:16px;gap:12px}}
