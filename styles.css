@@ -619,3 +619,37 @@ html,body{max-width:100%}
 }
 
 .option-preview .preview-market-grid .preview-iv-source{display:block;margin-top:5px;font-size:9px;color:#b8a7e2;letter-spacing:.01em}
+
+
+/* Portfolio-copy mini picker and per-underlying scenario sharing. */
+.draft-copy-btn{
+ display:inline-flex;align-items:center;justify-content:center;min-height:34px;
+ border:1px solid #395c69;border-radius:8px;padding:6px 10px;background:#142b36;
+ color:#b9d8df;font-size:10px;font-weight:750;white-space:nowrap;cursor:pointer;
+}
+.draft-copy-btn:hover,.draft-copy-btn:focus-visible{color:#e4fff5;background:#1b3a44;border-color:#67a397}
+.draft-copy-btn:disabled{opacity:.45;cursor:not-allowed}
+.planner-copy-panel{display:flex;align-items:flex-end;flex-wrap:wrap;gap:10px 12px;padding:12px 13px;margin:0 0 12px;border:1px solid #44626e;border-radius:11px;background:#132934}
+.planner-copy-panel[hidden]{display:none!important}
+.planner-copy-title{flex:1 1 210px;display:flex;flex-direction:column;gap:3px;min-width:0}
+.planner-copy-title strong{font-size:12px;color:#d9f1ee}
+.planner-copy-title small{font-size:10px;color:#9bb6c0}
+.planner-copy-panel label{display:flex;flex-direction:column;gap:4px;min-width:min(100%,180px);font-size:10px;font-weight:800}
+.planner-copy-panel label>span{font-size:9px;color:#8faeb8;letter-spacing:.07em}
+.planner-copy-panel select{min-height:37px;border:1px solid #40616b;background:#0b1f2a;color:#e7f4f4;border-radius:8px;padding:6px 10px;max-width:260px}
+.planner-copy-panel .btn{min-height:37px;padding:7px 13px}
+.draft-copy-cancel{background:none;color:#a9c8ce;border:0;text-decoration:underline;font-size:11px;min-height:37px;padding:7px;cursor:pointer}
+.planner-copy-hint{font-size:10px;line-height:1.5;color:#a6c8cc;flex:1 0 100%;margin:0}
+.preview-ticker-sharing{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 13px;background:#2b3759ac;border:1px solid #5f7099;border-radius:10px;margin:13px 0}
+.preview-ticker-sharing>div{display:flex;flex-direction:column;gap:4px;min-width:0}
+.preview-ticker-sharing strong{font-size:11px;color:#e5e3ff}
+.preview-ticker-sharing small{font-size:10px;color:#b5c3e6;line-height:1.5}
+.preview-ticker-toggle{flex:none;min-height:33px;padding:7px 10px;border:1px solid #7484b6;border-radius:8px;background:#343c63;color:#e8e9ff;font-size:10px;font-weight:800;cursor:pointer}
+.preview-ticker-toggle:hover{background:#465683}
+.preview-expiry-note{font-size:10px;line-height:1.6;color:#efd6aa;background:#48382774;border:1px solid #8d765e;border-radius:8px;padding:8px 11px;margin:3px 0 8px}
+@media(max-width:690px){
+ .planner-copy-panel{align-items:stretch}
+ .planner-copy-title{flex-basis:100%}
+ .planner-copy-panel select{max-width:none;width:100%}
+ .preview-ticker-sharing{flex-wrap:wrap}
+}

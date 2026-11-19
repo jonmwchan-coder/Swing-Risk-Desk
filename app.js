@@ -10,6 +10,7 @@ import {buildSingleTradeHandoff,singleTradeExportFilename,TRADE_HANDOFF_SCHEMA} 
 import {emptyPreview,normalizePreview,projectOptionReturns,buildOCCSymbol,MAX_PREVIEW_DATES,MAX_PREVIEW_TARGETS,easternCloseMs} from './lib/option-preview.mjs';
 import {nextSession} from './lib/calendar.mjs';
 import {draftContract,draftContractKey,normalizeTicker,sortPlanIdeas,PLAN_SORT_MODES} from './lib/planner-contract.mjs';
+import {copyPlannerIdeas,isEmptyPlannerPlaceholder,isUneditedTickerScenario,tickerScenarioKey,hydrateTickerScenario,broadcastTickerScenario,visibleTickerDates} from './lib/planner-workflows.mjs';
 
 const STORAGE_KEY='swing-risk-desk:data:v1';
 const $=id=>document.getElementById(id);
@@ -56,6 +57,7 @@ let toastTimer=null;
 let plannerPrefill=null;
 let selectedPreviewId=null;
 let expandedPlanId=null;
+const tickerInputOrigins=new Map(); // Only reset underlying levels after a ticker/type change is finalized.
 let quoteRefreshBusy=false;
 let quoteRefreshMessage='';
 let quoteConnectionState='unknown'; // Never imply unconfigured or failed data are live quotes.
@@ -92,6 +94,7 @@ function dropPlannerIdea(draftId,renderAfter=true){
  const ideas=plannerIdeas();const index=ideas.findIndex(x=>x.id===draftId);
  if(index<0)return;
  ideas.splice(index,1);
+ tickerInputOrigins.delete(draftId);
  if(selectedPreviewId===draftId)selectedPreviewId=null;
   if(expandedPlanId===draftId)expandedPlanId=null;
  if(!ideas.length)ideas.push(defaultPlanIdea(uid(),account().stressPct,false));
@@ -286,8 +289,8 @@ function renderPlanner(m){
   const contractText=contract?`${fmtDate(contract.expiry)} · ${contract.strike}${contract.optionType==='Put'?'P':'C'}`:'Select contract';
   const moneyOrDash=v=>String(v??'').trim()&&Number.isFinite(Number(v))&&Number(v)>0?money(Number(v)):'—';
   const premium=moneyOrDash(idea.price),mid=moneyOrDash(idea.marketMid),p=idea.preview||{};
-  const quote=idea.quoteStatus==='loading'?'Fetching quote…':idea.priceManual?`Manual premium${mid!=='—'?' · Mid '+mid:''}`:idea.quoteStatus==='indicative'?`Indicative mid ${mid}`:idea.quoteStatus==='unavailable'?'Quote unavailable':'Quote not loaded';
-  const quoteTone=idea.quoteStatus==='unavailable'?'warning':idea.priceManual?'manual':idea.quoteStatus==='indicative'?'indicative':'empty';
+  const quote=idea.quoteStatus==='loading'?'Fetching quote…':idea.priceManual?`Manual premium${mid!=='—'?' · Mid '+mid:''}`:idea.quoteStatus==='indicative'?`Indicative mid ${mid}`:idea.quoteStatus==='unavailable'?'Quote unavailable':idea.quoteStatus==='saved'?'Saved indicative quote · refresh':'Quote not loaded';
+  const quoteTone=idea.quoteStatus==='unavailable'?'warning':idea.priceManual?'manual':idea.quoteStatus==='indicative'?'indicative':idea.quoteStatus==='saved'?'warning':'empty';
   return `<article class="draft-idea ${active?'is-active':''} ${editing?'is-expanded':'is-collapsed'}" data-draft-id="${esc(idea.id)}">
     <div class="draft-head"><div class="draft-identity"><strong class="draft-ticker" data-idea-ticker>${esc(symbol)}</strong><span class="draft-idea-name" data-idea-name>${esc(name)}</span><span class="draft-contract-pill" data-idea-contract>${esc(contractText)}</span></div>
       <div class="draft-actions"><button type="button" class="draft-edit-btn" data-action="toggle-plan-details" data-plan-id="${esc(idea.id)}" aria-expanded="${editing}">${editing?'Done':'Edit'}</button><button type="button" class="draft-preview-btn" data-action="analyze-idea" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id}">${selectedPreviewId===idea.id?'Hide %':'Analyze %'}</button><button type="button" class="draft-record" data-action="plan-to-position" data-plan-id="${esc(idea.id)}">Record</button><button type="button" class="draft-remove" data-action="remove-plan-idea" data-plan-id="${esc(idea.id)}" aria-label="Remove ${esc(symbol)} ${esc(name)}">×</button></div></div>
@@ -303,6 +306,7 @@ function renderPlanner(m){
  }).join('');
  const addBtn=document.querySelector('[data-action="add-plan-idea"]');
  if(addBtn)addBtn.disabled=ideas.length>=MAX_PLAN_IDEAS;
+ const copyBtn=document.querySelector('[data-action="toggle-planner-copy"]');if(copyBtn)copyBtn.disabled=state.accounts.length<2;
  updatePlannerMetrics(m);renderOptionPreview();
 }
 function updatePlannerMetrics(m){
@@ -340,9 +344,65 @@ function updatePlannerMetrics(m){
 // One on-demand preview for the selected hypothetical idea, never one chart per row.
 function currentPreviewIdea(){return plannerIdeas().find(i=>i.id===selectedPreviewId);}
 function ensurePreview(idea){if(!idea)return null;if(!idea.preview)idea.preview=emptyPreview(today(),state.customClosed||[]);return idea.preview;}
+function adoptTickerLevels(idea,force=false){
+ if(!idea)return {changed:false};
+ const info=hydrateTickerScenario(plannerIdeas(),idea,today(),state.customClosed||[],force);
+ if(info.changed)persistPlannerDrafts();
+ return info;
+}
+function publishTickerLevels(idea){
+ if(!idea)return;
+ broadcastTickerScenario(plannerIdeas(),idea,today(),state.customClosed||[]);
+}
+function tickerLinkInfo(idea){
+ const key=tickerScenarioKey(idea);
+ if(!key)return '';
+ const matches=plannerIdeas().filter(x=>x.id!==idea.id&&tickerScenarioKey(x)===key);
+ if(!matches.length)return '';
+ const linked=ensurePreview(idea).tickerLinked!==false;
+ const count=matches.filter(x=>x.preview?.tickerLinked!==false).length;
+ const symbol=normalizeTicker(idea.ticker),side=idea.optionType==='Put'?'puts':'calls';
+ return `<div class="preview-ticker-sharing"><div><strong>${esc(symbol)} ${side} · ${linked?'Shared underlying plan':'Independent underlying plan'}</strong><small>${linked?`Stop, TPs and exit dates are linked to ${count} other ${esc(symbol)} ${side} idea${count===1?'':'s'} in this portfolio. Option premiums and IV remain contract-specific.`:'This idea keeps its own levels and dates. Other ideas are not changed.'}</small></div><button type="button" data-action="toggle-ticker-link" class="preview-ticker-toggle">${linked?'Use own plan':'Use shared plan'}</button></div>`;
+}
+function renderPlannerCopyChoices(){
+ const panel=$('plannerCopyPanel'),select=$('plannerCopyTarget');
+ if(!panel||!select)return;
+ const destinations=state.accounts.filter(x=>x.id!==account().id);
+ if(!destinations.length){showToast('Create a second portfolio before copying ideas.');panel.hidden=true;return;}
+ const choice=select.value;
+ select.innerHTML=destinations.map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('');
+ if(destinations.some(x=>x.id===choice))select.value=choice;
+ panel.hidden=false;
+ updatePlannerCopyHint();
+}
+function updatePlannerCopyHint(){
+ const hint=$('plannerCopyHint'),select=$('plannerCopyTarget'),button=$('plannerCopyConfirm');
+ if(!hint||!select||!button)return;
+ const source=(plannerIdeas()||[]).filter(x=>!isEmptyPlannerPlaceholder(x));
+ const target=plannerDrafts[select.value]||[];
+ const preserved=target.length===1&&isEmptyPlannerPlaceholder(target[0])?0:target.length;
+ const capacity=MAX_PLAN_IDEAS-preserved;
+ const okay=state.accounts.some(x=>x.id===select.value)&&select.value!==account().id&&source.length>0&&source.length<=capacity;
+ button.disabled=!okay;
+ hint.textContent=source.length===0?'Nothing entered to copy yet.':source.length>capacity?`Target has ${preserved} idea${preserved===1?'':'s'}; ${source.length} more would exceed the ${MAX_PLAN_IDEAS}-idea limit. No existing ideas will be removed.`:`${source.length} idea${source.length===1?'':'s'} added to the target (${preserved} existing). Source stays unchanged. Risk and auto fees use the target portfolio settings.`;
+}
+function confirmPlannerCopy(){
+ const select=$('plannerCopyTarget'),targetId=select?.value;
+ const previous=plannerDrafts;
+ const result=copyPlannerIdeas(plannerDrafts,account().id,targetId,uid,state.accounts.map(x=>x.id));
+ if(!result.ok){showToast(result.reason);updatePlannerCopyHint();return;}
+ plannerDrafts=result.drafts;
+ persistPlannerDrafts();
+ if(!plannerStorageHealthy){plannerDrafts=previous;showToast('Could not save the copied ideas in this browser. Nothing has been committed.');return;}
+ $('plannerCopyPanel').hidden=true;
+ renderPlanner(analytics());
+ const target=state.accounts.find(x=>x.id===targetId);
+ showToast(`Copied ${result.count} draft idea${result.count===1?'':'s'} to ${target?.name||'portfolio'}. ${result.conflicts?result.conflicts+' conflicting same-ticker plan(s) kept independent. ':''}Source unchanged; review target risk and refresh premiums.`);
+}
+
 function previewViewModel(idea){
  const contract=draftContract(idea);
- const result=projectOptionReturns({contract,preview:{...idea.preview,ratePct:'4',dividendPct:'0'},qty:Number(idea.qty),entryPremium:Number(idea.price),entryFeeUsd:Number(idea.fee||0),sellFeePerContractUsd:ratePerContract(account(),'SELL'),asOf:new Date()});
+ const result=projectOptionReturns({contract,preview:{...idea.preview,dates:visibleTickerDates(idea).visible.map(x=>x.date),ratePct:'4',dividendPct:'0'},qty:Number(idea.qty),entryPremium:Number(idea.price),entryFeeUsd:Number(idea.fee||0),sellFeePerContractUsd:ratePerContract(account(),'SELL'),asOf:new Date()});
  return {contract,result};
 }
 function percentCell(cell){
@@ -355,6 +415,10 @@ function renderOptionPreview(){
  const idea=currentPreviewIdea();if(!idea){el.hidden=true;el.innerHTML='';return;}
  el.hidden=false;
  const p=ensurePreview(idea),parsed=draftContract(idea)||{},symbol=buildOCCSymbol(parsed);
+ const {visible:shownExitDates,excluded:unavailableExitDates}=visibleTickerDates(idea);
+ const lastExitDate=shownExitDates.at(-1)?.date||today();
+ const nextExitDate=nextSession(lastExitDate,state.customClosed||[]);
+ const canAddExitDate=p.dates.length<MAX_PREVIEW_DATES && (!parseDay(parsed.expiry)||nextExitDate<=parsed.expiry);
  const quote=p.quoteAt?`As of ${esc(p.quoteAt.replace('T',' ').slice(0,19))} UTC`:'Not yet refreshed';
  const marketNumber=(n,unit,places=2)=>{const v=Number(n);return String(n??'').trim()!==''&&Number.isFinite(v)&&v>0?`${unit} ${v.toFixed(places)}`:'----';};
  const ivUnavailable=quoteConnectionState==='connected'&&!(Number(p.ivPct)>0);
@@ -370,10 +434,12 @@ function renderOptionPreview(){
    ${ivHelp}
    <details class="preview-manual"><summary>Optional: enter quote values manually if the free feed is unavailable</summary><div class="preview-inputs"><label><span>Underlying price (USD)</span><input type="number" name="spot" inputmode="decimal" min="0.01" step="any" value="${esc(p.spot)}" placeholder="e.g. 16.50"></label><label><span>Option IV (%)</span><input type="number" name="ivPct" inputmode="decimal" min="0.01" max="1000" step="any" value="${esc(p.ivPct)}" placeholder="e.g. 65.0"></label><label><span>Option bid (USD/share)</span><input type="number" name="bid" inputmode="decimal" min="0" step="any" value="${esc(p.bid)}" placeholder="Optional"></label><label><span>Option ask (USD/share)</span><input type="number" name="ask" inputmode="decimal" min="0" step="any" value="${esc(p.ask)}" placeholder="Optional"></label></div></details>
   </div>
+  ${tickerLinkInfo(idea)}
   <div class="preview-grid-head"><strong><span class="preview-step-number">02</span> Underlying price targets (USD)</strong><button type="button" class="btn btn-outline preview-add-btn" data-action="preview-add-target" ${p.targets.length>=MAX_PREVIEW_TARGETS?'disabled':''}>+ TP</button></div>
   <div class="preview-targets">${p.targets.map(t=>`<label class="preview-target-row" data-target-id="${esc(t.id)}"><strong>${esc(t.name)}</strong><input type="number" name="target-price" inputmode="decimal" min="0.01" step="0.01" value="${esc(t.price)}" placeholder="Underlying USD price">${!['stop','tp1','tp2'].includes(t.id)?`<button type="button" class="preview-remove-mini" data-action="preview-remove-target" data-target-id="${esc(t.id)}" aria-label="Remove ${esc(t.name)}">×</button>`:''}</label>`).join('')}</div>
-  <div class="preview-grid-head"><strong><span class="preview-step-number">03</span> Exit dates · 4 PM ET</strong><button type="button" class="btn btn-outline preview-add-btn" data-action="preview-add-date" ${p.dates.length>=MAX_PREVIEW_DATES?'disabled':''}>+ Date</button></div>
-  <div class="preview-dates">${p.dates.map((d,i)=>`<label class="preview-date-row"><span>${i===0?'Next session':i===1?'Second session':`Date ${i+1}`}</span><input type="date" name="exit-date" data-date-index="${i}" value="${esc(d)}" min="${esc(today())}" max="${esc(parsed.expiry||'2100-01-01')}">${p.dates.length>1?`<button type="button" class="preview-remove-mini" data-action="preview-remove-date" data-date-index="${i}" aria-label="Remove exit date">×</button>`:''}</label>`).join('')}</div>
+  <div class="preview-grid-head"><strong><span class="preview-step-number">03</span> Exit dates · 4 PM ET</strong><button type="button" class="btn btn-outline preview-add-btn" data-action="preview-add-date" ${!canAddExitDate?'disabled':''}>+ Date</button></div>
+  <div class="preview-dates">${shownExitDates.map(({date,index},i)=>`<label class="preview-date-row"><span>${i===0?'Next session':i===1?'Second session':`Date ${i+1}`}</span><input type="date" name="exit-date" data-date-index="${index}" value="${esc(date)}" min="${esc(today())}" max="${esc(parsed.expiry||'2100-01-01')}">${p.dates.length>1?`<button type="button" class="preview-remove-mini" data-action="preview-remove-date" data-date-index="${index}" aria-label="Remove exit date">×</button>`:''}</label>`).join('')}</div>
+  ${unavailableExitDates.length?`<p class="preview-expiry-note" role="note">${unavailableExitDates.length} ticker-plan exit date${unavailableExitDates.length===1?'':'s'} after ${esc(fmtDate(parsed.expiry,true))} excluded for this contract. The dates remain saved for longer-expiring ${esc(normalizeTicker(idea.ticker))} options.</p>`:''}
   <div class="preview-output-title"><span class="preview-step-number">04</span><div><strong>Scenario return matrix</strong><small>Price × date · net projected percentage after fees</small></div><span class="preview-output-tag">MODEL, NOT FORECAST</span></div>
   <div id="optionPreviewResults" aria-live="polite"></div>
   <details class="preview-data-help"><summary>Quote source and pricing-model limitations</summary><p>The optional free Alpaca Basic feed provides indicative options prices (not executable OPRA quotes) and IEX underlying trades. A free paper-only account is needed; it does not trade or connect to IBKR. The model uses fixed internal 4% annual interest and 0% dividend yield assumptions, not live rates. Actual dividend-paying stocks, early assignment, IV changes, earnings, slippage and stale quotes can materially change the results. Quick Size Check premium defaults to a valid indicative midpoint, unless you manually override it.</p></details>
@@ -384,6 +450,7 @@ function updateOptionPreviewResults(){
  const container=$('optionPreviewResults'),idea=currentPreviewIdea();if(!container||!idea)return;
  const {result,contract}=previewViewModel(idea);
  if(!result.valid){container.innerHTML=`<div class="preview-prompt">${esc(result.reason)}</div>`;return;}
+ if(!result.dateHeaders.length){container.innerHTML='<div class="preview-prompt">No exit dates occur on or before this contract expiration. Adjust the shared plan, or use an independent plan for this option.</div>';return;}
  const dates=result.dateHeaders;
  const expMs=easternCloseMs(contract.expiry);
  const heading=dates.map(d=>`<th>${esc(fmtDate(d,true))}<small>${d===contract.expiry?'Expiration':d+' 4 PM ET'}</small></th>`).join('');
@@ -817,15 +884,25 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'plan-to-position':beginPlannedPosition(el.dataset.planId);break;
  case 'add-plan-idea':{const ideas=plannerIdeas();if(ideas.length>=MAX_PLAN_IDEAS){showToast(`Maximum ${MAX_PLAN_IDEAS} draft ideas.`);break;}const idea=defaultPlanIdea(uid(),account().stressPct,false);ideas.push(idea);expandedPlanId=idea.id;selectedPreviewId=null;quoteRefreshToken++;persistPlannerDrafts();renderPlanner(analytics());[...document.querySelectorAll('.draft-idea')].find(x=>x.dataset.draftId===idea.id)?.querySelector('[name="ticker"]')?.focus();break;}
  case 'remove-plan-idea':dropPlannerIdea(el.dataset.planId);break;
+ case 'toggle-planner-copy':{const panel=$('plannerCopyPanel');if(!panel)break;if(panel.hidden)renderPlannerCopyChoices();else panel.hidden=true;break;}
+ case 'cancel-planner-copy':{const panel=$('plannerCopyPanel');if(panel)panel.hidden=true;break;}
+ case 'confirm-planner-copy':confirmPlannerCopy();break;
   case 'toggle-plan-details':{expandedPlanId=expandedPlanId===el.dataset.planId?null:el.dataset.planId;if(expandedPlanId&&selectedPreviewId&&expandedPlanId!==selectedPreviewId){selectedPreviewId=null;quoteRefreshToken++;}renderPlanner(analytics());break;}
   case 'collapse-plan-ideas':expandedPlanId=null;renderPlanner(analytics());break;
  case 'clear-plan-ideas':{if(!confirm('Clear all saved Quick size check ideas for this portfolio? Recorded positions will not be affected.'))break;expandedPlanId=null;selectedPreviewId=null;quoteRefreshToken++;plannerDrafts[account().id]=[defaultPlanIdea(uid(),account().stressPct,false)];persistPlannerDrafts();renderPlanner(analytics());showToast('Saved size-check ideas cleared for this portfolio.');break;}
- case 'analyze-idea':{const opening=selectedPreviewId!==el.dataset.planId;selectedPreviewId=opening?el.dataset.planId:null;expandedPlanId=null;quoteRefreshToken++;quoteRefreshMessage='';quoteConnectionState='unknown';renderPlanner(analytics());if(opening)$('optionPreview')?.scrollIntoView({block:'start',behavior:'smooth'});if(opening)void refreshOptionQuote();break;}
+ case 'analyze-idea':{const opening=selectedPreviewId!==el.dataset.planId;selectedPreviewId=opening?el.dataset.planId:null;if(opening)adoptTickerLevels(currentPreviewIdea());expandedPlanId=null;quoteRefreshToken++;quoteRefreshMessage='';quoteConnectionState='unknown';renderPlanner(analytics());if(opening)$('optionPreview')?.scrollIntoView({block:'start',behavior:'smooth'});if(opening)void refreshOptionQuote();break;}
  case 'close-option-preview':selectedPreviewId=null;quoteRefreshToken++;renderPlanner(analytics());break;
- case 'preview-add-target':{const idea=currentPreviewIdea();if(!idea)break;const p=ensurePreview(idea);if(p.targets.length>=MAX_PREVIEW_TARGETS)break;const n=p.targets.filter(t=>t.name.startsWith('TP')).length+1;p.targets.push({id:uid(),name:`TP${n}`,price:''});persistPlannerDrafts();renderOptionPreview();break;}
- case 'preview-remove-target':{const p=ensurePreview(currentPreviewIdea());if(!p)break;p.targets=p.targets.filter(t=>t.id!==el.dataset.targetId);persistPlannerDrafts();renderOptionPreview();break;}
- case 'preview-add-date':{const p=ensurePreview(currentPreviewIdea());if(!p||p.dates.length>=MAX_PREVIEW_DATES)break;let d=p.dates.at(-1)||today();d=nextSession(d,state.customClosed||[]);p.dates.push(d);persistPlannerDrafts();renderOptionPreview();break;}
- case 'preview-remove-date':{const p=ensurePreview(currentPreviewIdea());if(!p||p.dates.length<=1)break;p.dates.splice(Number(el.dataset.dateIndex),1);persistPlannerDrafts();renderOptionPreview();break;}
+ case 'preview-add-target':{const idea=currentPreviewIdea();if(!idea)break;const p=ensurePreview(idea);if(p.targets.length>=MAX_PREVIEW_TARGETS)break;const n=p.targets.filter(t=>t.name.startsWith('TP')).length+1;p.targets.push({id:uid(),name:`TP${n}`,price:''});publishTickerLevels(idea);persistPlannerDrafts();renderOptionPreview();break;}
+ case 'preview-remove-target':{const idea=currentPreviewIdea(),p=ensurePreview(idea);if(!p)break;p.targets=p.targets.filter(t=>t.id!==el.dataset.targetId);publishTickerLevels(idea);persistPlannerDrafts();renderOptionPreview();break;}
+ case 'preview-add-date':{const idea=currentPreviewIdea(),p=ensurePreview(idea);if(!p||p.dates.length>=MAX_PREVIEW_DATES)break;const shown=visibleTickerDates(idea).visible;let d=nextSession(shown.at(-1)?.date||today(),state.customClosed||[]);if(parseDay(idea.expiry)&&d>idea.expiry){showToast('This exit date would be after the selected option expires.');break;}if(p.dates.includes(d)){showToast('This exit date is already in the shared ticker plan.');break;}p.dates.push(d);p.dates.sort();publishTickerLevels(idea);persistPlannerDrafts();renderOptionPreview();break;}
+ case 'preview-remove-date':{const idea=currentPreviewIdea(),p=ensurePreview(idea);if(!p||p.dates.length<=1)break;p.dates.splice(Number(el.dataset.dateIndex),1);publishTickerLevels(idea);persistPlannerDrafts();renderOptionPreview();break;}
+ case 'toggle-ticker-link':{
+  const idea=currentPreviewIdea(),p=ensurePreview(idea);if(!p)break;
+  if(p.tickerLinked!==false){p.tickerLinked=false;p.tickerLinkEstablished=false;persistPlannerDrafts();renderOptionPreview();break;}
+  if(!isUneditedTickerScenario(p,today(),state.customClosed||[])&&!confirm('Use the shared '+normalizeTicker(idea.ticker)+' '+idea.optionType.toLowerCase()+' plan? This replaces this idea’s own underlying Stop/TP levels and exit dates. Premium and IV stay separate.'))break;
+  const linked=adoptTickerLevels(idea,true);if(linked.reason==='solo')publishTickerLevels(idea);
+  persistPlannerDrafts();renderOptionPreview();break;
+ }
  case 'refresh-option-quote':void refreshOptionQuote();break;
  case 'enter-manual-iv':{const panel=$('optionPreview');const details=panel?.querySelector('.preview-manual');if(details)details.open=true;panel?.querySelector('input[name="ivPct"]')?.focus();break;}
  case 'reset-draft-fee':{const idea=plannerIdeas().find(x=>x.id===el.dataset.planId);if(idea){idea.feeManual=false;idea.fee=estimateOrderFee(account(),'BUY',idea.qty).toFixed(2);persistPlannerDrafts();renderPlanner(analytics());}break;}
@@ -849,7 +926,7 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
 
 document.addEventListener('click',e=>{const tab=e.target.closest('[data-tab]');if(tab){switchTab(tab.dataset.tab);return;}const filter=e.target.closest('[data-filter]');if(filter){positionFilter=filter.dataset.filter;renderPositions(analytics());return;}const action=e.target.closest('[data-action]');if(action){runAction(action.dataset.action,action);}});
 $('editorDialog').addEventListener('click',e=>{if(e.target===$('editorDialog'))$('editorDialog').close();});
-$('accountSelect').addEventListener('change',e=>{activeAccountId=e.target.value;rememberAccount();render();});
+$('accountSelect').addEventListener('change',e=>{activeAccountId=e.target.value;selectedPreviewId=null;expandedPlanId=null;quoteRefreshToken++;quoteRefreshBusy=false;tickerInputOrigins.clear();if($('plannerCopyPanel'))$('plannerCopyPanel').hidden=true;rememberAccount();render();});
 $('asOfDate').addEventListener('change',e=>{const d=e.target.value;if(parseDay(d)){asOfOverride=d;render();}else showToast('Enter a valid date.');});
 // Browser tabs share the latest sizing ideas. A change in another tab is not a trade.
 if(typeof globalThis.addEventListener==='function')globalThis.addEventListener('storage',event=>{
@@ -872,10 +949,13 @@ $('optionPreview').addEventListener('input',e=>{
    if(src)src.textContent='Manual override';if(at)at.textContent='Not yet refreshed';
   }
  }else if(name==='target-price'){
-  const t=p.targets.find(t=>t.id===e.target.closest('[data-target-id]')?.dataset.targetId);if(!t)return;t.price=e.target.value;
+  const t=p.targets.find(t=>t.id===e.target.closest('[data-target-id]')?.dataset.targetId);if(!t)return;t.price=e.target.value;publishTickerLevels(idea);
  }else if(name==='exit-date'){
   const index=Number(e.target.dataset.dateIndex);if(!Number.isInteger(index)||index<0||index>=p.dates.length)return;
-  if(parseDay(e.target.value))p.dates[index]=e.target.value;else return;
+  if(!parseDay(e.target.value))return;
+  if(parseDay(idea.expiry)&&e.target.value>idea.expiry){e.target.value=p.dates[index];showToast('Exit date cannot be after this option expires.');return;}
+  if(p.dates.some((d,i)=>i!==index&&d===e.target.value)){e.target.value=p.dates[index];showToast('That exit date is already in this ticker plan.');return;}
+  p.dates[index]=e.target.value;publishTickerLevels(idea);
  }else return;
  persistPlannerDrafts();updateOptionPreviewResults();
 });
@@ -884,6 +964,7 @@ $('quickPlanner').addEventListener('input',e=>{
  const idea=plannerIdeas().find(x=>x.id===el.dataset.draftId),name=e.target.name;
  if(!idea||!['name','ticker','expiry','strike','optionType','qty','price','fee','stress'].includes(name))return;
  const before=draftContractKey(idea);
+ if(['ticker','optionType'].includes(name)&&!tickerInputOrigins.has(idea.id))tickerInputOrigins.set(idea.id,tickerScenarioKey(idea));
  idea[name]=name==='ticker'?normalizeTicker(e.target.value):e.target.value;
  const changed=['ticker','expiry','strike','optionType'].includes(name)&&before!==draftContractKey(idea);
  if(changed){
@@ -905,8 +986,19 @@ $('quickPlanner').addEventListener('change',e=>{
  const node=e.target.closest('[data-draft-id]');
  if(!node||!['ticker','expiry','strike','optionType'].includes(e.target.name))return;
  const idea=plannerIdeas().find(x=>x.id===node.dataset.draftId);
- if(idea&&draftContract(idea)){if(selectedPreviewId===idea.id)void refreshOptionQuote();else void refreshDraftPremium(idea);}
+ if(!idea)return;
+ const oldGroup=tickerInputOrigins.get(idea.id);
+ tickerInputOrigins.delete(idea.id);
+ if(['ticker','optionType'].includes(e.target.name)&&oldGroup!==undefined&&oldGroup&&oldGroup!==tickerScenarioKey(idea)){
+  // New company/direction: clear old underlying targets, but keep contract's quote invalidation separate.
+  const p=ensurePreview(idea),fresh=emptyPreview(today(),state.customClosed||[]);
+  p.targets=fresh.targets;p.dates=fresh.dates;p.tickerLinked=true;p.tickerLinkEstablished=false;p.tickerPlanEditedAt='';
+ }
+ adoptTickerLevels(idea);
+ if(draftContract(idea)){if(selectedPreviewId===idea.id)void refreshOptionQuote();else void refreshDraftPremium(idea);}
+ else {persistPlannerDrafts();if(currentPreviewIdea()?.id===idea.id)renderOptionPreview();}
 });
+$('plannerCopyTarget')?.addEventListener('change',updatePlannerCopyHint);
 $('planSortSelect')?.addEventListener('change',e=>{
  planSortMode=PLAN_SORT_MODES.includes(e.target.value)?e.target.value:'created';
  try{localStorage.setItem(PLAN_SORT_KEY,planSortMode);}catch{}
