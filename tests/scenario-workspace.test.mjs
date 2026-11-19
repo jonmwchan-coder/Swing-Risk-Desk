@@ -14,12 +14,13 @@ test('selected idea highlight continues to follow active analysis or editor only
 
 test('projection is unmistakably its own scenario workspace',()=>{
  assert.match(app,/SCENARIO STUDIO · WHAT-IF MODEL/);
- assert.match(app,/WHAT-IF ANALYSIS/);
+ assert.doesNotMatch(app,/class="preview-lab-intro"/);
+ assert.doesNotMatch(app,/<strong>WHAT-IF ANALYSIS<\/strong>/);
  assert.match(app,/MODEL, NOT FORECAST/);
  assert.match(app,/class="preview-output-title"/);
  assert.match(app,/Scenario return matrix/);
  assert.match(styles,/\.option-preview\{[\s\S]*--studio-lilac:/);
- assert.match(styles,/\.preview-lab-intro\{/);
+ assert.doesNotMatch(styles,/\.preview-lab-intro\{/);
  assert.match(styles,/\.option-preview \.preview-matrix td\.preview-profit-cell\{/);
  assert.match(styles,/\.option-preview \.preview-matrix td\.preview-loss-cell\{/);
  assert.match(sw,/swing-risk-desk-shell-v2\.9-compact-simulation/);
