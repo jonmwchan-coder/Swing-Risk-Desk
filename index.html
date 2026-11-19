@@ -77,7 +77,14 @@
           <div id="plannerSummaryStrip" class="planner-summary-strip" aria-live="polite" aria-label="Planned portfolio impact at a glance"></div>
           <div class="draft-toolbar">
             <div class="draft-sort-bar"><label for="planSortSelect">SORT IDEAS</label><select id="planSortSelect" aria-label="Sort saved ideas"><option value="created">Original order</option><option value="ticker">Ticker A-Z</option><option value="name">Idea name A-Z</option><option value="expiry">Expiration earliest first</option></select></div>
-            <div class="draft-add-bar"><button type="button" class="btn btn-outline draft-add-btn" data-action="add-plan-idea">+ Add idea</button><button type="button" class="draft-collapse-all" data-action="collapse-plan-ideas">Collapse all</button><span id="planIdeaCount" class="draft-count"></span><button type="button" class="draft-clear-btn" data-action="clear-plan-ideas" title="Remove only this portfolio's saved hypothetical sizing ideas">Clear ideas</button></div>
+            <div class="draft-add-bar"><button type="button" class="btn btn-outline draft-add-btn" data-action="add-plan-idea">+ Add idea</button><button type="button" class="draft-collapse-all" data-action="collapse-plan-ideas">Collapse all</button><span id="planIdeaCount" class="draft-count"></span><button type="button" class="draft-copy-btn" data-action="toggle-planner-copy" title="Copy these hypothetical sizing ideas to another existing portfolio; does not record a trade">Copy to portfolio…</button><button type="button" class="draft-clear-btn" data-action="clear-plan-ideas" title="Remove only this portfolio's saved hypothetical sizing ideas">Clear ideas</button></div>
+          </div>
+          <div id="plannerCopyPanel" class="planner-copy-panel" hidden aria-label="Copy Quick Size Check ideas to another portfolio">
+            <div class="planner-copy-title"><strong>Copy saved sizing ideas</strong><small>Drafts only — no trades, account balances, or recorded positions.</small></div>
+            <label for="plannerCopyTarget"><span>DESTINATION PORTFOLIO</span><select id="plannerCopyTarget" aria-label="Select destination portfolio"></select></label>
+            <button type="button" id="plannerCopyConfirm" class="btn btn-subtle" data-action="confirm-planner-copy">Copy ideas</button>
+            <button type="button" class="draft-copy-cancel" data-action="cancel-planner-copy">Cancel</button>
+            <p id="plannerCopyHint" class="planner-copy-hint" aria-live="polite"></p>
           </div>
           <div id="quickPlanner" class="draft-ideas" role="group" aria-label="Saved, individually expandable planned option entries"></div>
           <div class="draft-saved-status" id="plannerSavedStatus" aria-live="polite">Auto-saved on this device</div>
@@ -168,7 +175,7 @@
       <div class="bottom-danger"><button type="button" class="text-link text-delete" data-action="reset-data">Reset all locally saved data</button><small>Does not change anything in Google Sheets or IBKR.</small></div>
     </section>
   </main>
-  <footer><span>SWING RISK DESK / v2.9 UI preview</span><span>Process over P&amp;L. All figures in CAD unless marked USD.</span></footer>
+  <footer><span>SWING RISK DESK / v3.0 draft preview</span><span>Process over P&amp;L. All figures in CAD unless marked USD.</span></footer>
 </div>
 <dialog id="editorDialog" class="editor-dialog"><div class="dialog-content"><div class="dialog-header"><div><div class="overline" id="dialogEyebrow">POSITION</div><h2 id="dialogTitle">New position</h2></div><button type="button" class="icon-button" data-action="close-dialog" aria-label="Close dialog">&#10005;</button></div><div id="dialogBody"></div></div></dialog>
 <input id="importFile" type="file" accept=".json,.csv,application/json,text/csv" hidden>
