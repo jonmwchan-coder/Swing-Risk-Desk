@@ -268,6 +268,7 @@ function renderSettings(a){const f=$('settingsForm');const tracked=calculateAcco
 }
 function renderPlanner(m){
  const ideas=plannerIdeas(m.account.id);
+ if($('planSortSelect'))$('planSortSelect').value=planSortMode;
  let changed=false;
  for(const idea of ideas){
   if(!idea.stressCustom&&String(idea.stress)!==String(m.account.stressPct)){idea.stress=String(m.account.stressPct);changed=true;}
@@ -279,12 +280,19 @@ function renderPlanner(m){
    <button type="button" class="draft-preview-btn" data-action="analyze-idea" data-plan-id="${esc(idea.id)}" title="See modeled option return at different underlying prices and dates">${selectedPreviewId===idea.id?'Hide %':'Analyze %'}</button>
    <button type="button" class="draft-record" data-action="plan-to-position" data-plan-id="${esc(idea.id)}" title="Open a prefilled New position form; no trade recorded until submitted">Record</button>
    <button type="button" class="draft-remove" data-action="remove-plan-idea" data-plan-id="${esc(idea.id)}" aria-label="Remove draft idea ${index+1}" title="Remove this draft">×</button></div>
+  <div class="draft-contract-fields">
+   <label><span>TICKER</span><input type="text" name="ticker" maxlength="12" value="${esc(idea.ticker||'')}" placeholder="IREN" autocomplete="off" spellcheck="false"></label>
+   <label><span>EXPIRATION</span><input type="date" name="expiry" value="${esc(idea.expiry||'')}"></label>
+   <label><span>STRIKE (USD)</span><input type="number" name="strike" min="0.001" step="0.001" value="${esc(idea.strike||'')}"></label>
+   <label><span>TYPE</span><select name="optionType"><option value="Call" ${idea.optionType!=='Put'?'selected':''}>Call</option><option value="Put" ${idea.optionType==='Put'?'selected':''}>Put</option></select></label>
+  </div>
   <div class="draft-fields">
    <label><span>QTY</span><input type="number" inputmode="numeric" name="qty" min="1" step="1" value="${esc(idea.qty)}" aria-label="Idea ${index+1} contract quantity"></label>
    <label><span>BUY PREMIUM (USD/SHARE)</span><input type="number" inputmode="decimal" name="price" min="0.01" step="0.01" value="${esc(idea.price)}" aria-label="Idea ${index+1} price per share in USD"></label>
    <label><span>BUY FEES (USD) <button class="fee-reset-mini" type="button" data-action="reset-draft-fee" data-plan-id="${esc(idea.id)}" title="Apply per-contract portfolio default">Auto</button></span><input type="number" inputmode="decimal" name="fee" min="0" step="0.01" value="${esc(idea.fee)}" aria-label="Idea ${index+1} total entry commissions in USD" title="${idea.feeManual?'Manually overridden':'Estimated from portfolio fee rules'}"></label>
    <label><span>EST. LOSS %</span><input type="number" inputmode="numeric" name="stress" min="0" max="100" step="1" value="${esc(idea.stress)}" aria-label="Idea ${index+1} stress loss percent" ${m.account.mode==='strict'?'title="Strict mode reserves 100% of debit"':''}></label>
   </div>
+  <div class="draft-quote-status">${esc(idea.quoteMessage||'Select a contract, then Analyze % to retrieve the indicative quote.')}${idea.priceManual?' · Manual premium':''}</div>
   <div class="draft-metrics" data-plan-status="${esc(idea.id)}"></div>
  </article>`).join('');
  const addBtn=document.querySelector('[data-action="add-plan-idea"]');
