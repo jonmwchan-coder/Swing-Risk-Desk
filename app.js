@@ -357,20 +357,25 @@ function renderOptionPreview(){
  const p=ensurePreview(idea),parsed=draftContract(idea)||{},symbol=buildOCCSymbol(parsed);
  const quote=p.quoteAt?`As of ${esc(p.quoteAt.replace('T',' ').slice(0,19))} UTC`:'Not yet refreshed';
  const marketNumber=(n,unit,places=2)=>{const v=Number(n);return String(n??'').trim()!==''&&Number.isFinite(v)&&v>0?`${unit} ${v.toFixed(places)}`:'----';};
- const ready=Number(p.spot)>0&&Number(p.ivPct)>0;
+ const ivUnavailable=quoteConnectionState==='connected'&&!(Number(p.ivPct)>0);
+ const ivHelp=ivUnavailable?`<div class="preview-iv-help" role="status"><div><strong>IV not supplied by Alpaca for this contract</strong><p>The free snapshot can include a bid/ask without a usable implied volatility. Enter the IV displayed in your broker's option chain for this exact strike and expiration to calculate returns. The model won't guess an IV.</p></div><button type="button" class="preview-enter-iv" data-action="enter-manual-iv">Enter broker IV</button></div>`:'';
  const connectionHelp=quoteConnectionState==='not-configured'?`<div class="preview-connect" role="status"><strong>One-time free data connection needed</strong><p>Automatic spot, IV and indicative bid/ask require free Alpaca Paper Only API keys. The feed is <strong>not connected</strong> yet. You can set it up without funding an Alpaca brokerage account.</p><ol><li><a href="https://app.alpaca.markets/signup" target="_blank" rel="noopener noreferrer">Create a free Alpaca paper-only account</a> and generate paper API credentials.</li><li>In your existing Vercel project's <strong>Settings → Environment Variables</strong>, add <code>ALPACA_DATA_KEY_ID</code> and <code>ALPACA_DATA_SECRET_KEY</code> for Production, then redeploy.</li><li>Return and press <strong>Refresh quote</strong>. Quotes will then fill automatically when you click Analyze %.</li></ol><small>Never enter API secrets into this form or chat. They belong in the server's environment settings.</small></div>`:'';
- el.innerHTML=`<div class="option-preview-heading"><div><div class="overline">ONE IDEA AT A TIME</div><h3>Projected option return by date</h3><small>${esc([idea.ticker,idea.name,idea.expiry,idea.strike,idea.optionType].filter(Boolean).join(' · ')||'Enter a contract')} · ${esc(account().name)}</small></div><button type="button" class="preview-close" data-action="close-option-preview" aria-label="Close option return preview">×</button></div>
+ el.innerHTML=`<div class="option-preview-heading"><div class="preview-title-stack"><div class="overline">SCENARIO STUDIO · WHAT-IF MODEL</div><h3>Projected option return by date</h3><small>${esc([idea.ticker,idea.name,idea.expiry,idea.strike,idea.optionType].filter(Boolean).join(' · ')||'Enter a contract')} · ${esc(account().name)}</small></div><div class="preview-heading-actions"><span class="preview-mode-tag">HYPOTHETICAL RETURNS</span><button type="button" class="preview-close" data-action="close-option-preview" aria-label="Close option return preview">×</button></div></div>
+  <div class="preview-lab-intro"><strong>WHAT-IF ANALYSIS</strong><p>Explore option returns at different underlying prices and exit dates. Unlike Quick Size Check above, these are theoretical scenario outcomes, <em>not</em> your five-session CAD risk reserve.</p></div>
   <p class="preview-explainer">Today’s underlying price and quoted IV are requested automatically when you select <strong>Analyze %</strong> (or press Refresh). Future dates are repriced at that <strong>unchanged IV</strong>, showing estimated time decay. Nothing is fetched in the background.</p>
   <div class="preview-quote-card">
+   <div class="preview-workspace-step"><span>01</span><strong>Market reference</strong><small>Indicative snapshot or your manual inputs</small></div>
    <div class="preview-market-grid"><div data-market-key="spot"><span>Underlying (USD)</span><strong>${marketNumber(p.spot,'USD')}</strong></div><div data-market-key="ivPct"><span>Option IV</span><strong>${String(p.ivPct??'').trim()&&Number(p.ivPct)>0?`${Number(p.ivPct).toFixed(1)}%`:'----'}</strong></div><div data-market-key="bid"><span>Indicative bid (USD/share)</span><strong>${marketNumber(p.bid,'USD')}</strong></div><div data-market-key="ask"><span>Indicative ask (USD/share)</span><strong>${marketNumber(p.ask,'USD')}</strong></div></div>
    <div class="preview-quote-row"><button type="button" data-action="refresh-option-quote" ${!symbol||quoteRefreshBusy?'disabled':''} class="btn btn-outline preview-refresh">${quoteRefreshBusy?'Fetching quote…':'Refresh quote'}</button><div class="preview-quote-label"><span data-preview-quote-source>${esc(p.quoteSource||'Quote not connected')}</span> · <span data-preview-quote-at>${quote}</span>${quoteRefreshBusy?' · Looking up this exact contract…':''}${quoteRefreshMessage?`<div class="preview-warning" role="status">${esc(quoteRefreshMessage)}</div>`:''}</div></div>
    ${connectionHelp}
+   ${ivHelp}
    <details class="preview-manual"><summary>Optional: enter quote values manually if the free feed is unavailable</summary><div class="preview-inputs"><label><span>Underlying price (USD)</span><input type="number" name="spot" inputmode="decimal" min="0.01" step="any" value="${esc(p.spot)}" placeholder="e.g. 16.50"></label><label><span>Option IV (%)</span><input type="number" name="ivPct" inputmode="decimal" min="0.01" max="1000" step="any" value="${esc(p.ivPct)}" placeholder="e.g. 65.0"></label><label><span>Option bid (USD/share)</span><input type="number" name="bid" inputmode="decimal" min="0" step="any" value="${esc(p.bid)}" placeholder="Optional"></label><label><span>Option ask (USD/share)</span><input type="number" name="ask" inputmode="decimal" min="0" step="any" value="${esc(p.ask)}" placeholder="Optional"></label></div></details>
   </div>
-  <div class="preview-grid-head"><strong>Underlying price targets (USD)</strong><button type="button" class="btn btn-outline preview-add-btn" data-action="preview-add-target" ${p.targets.length>=MAX_PREVIEW_TARGETS?'disabled':''}>+ TP</button></div>
+  <div class="preview-grid-head"><strong><span class="preview-step-number">02</span> Underlying price targets (USD)</strong><button type="button" class="btn btn-outline preview-add-btn" data-action="preview-add-target" ${p.targets.length>=MAX_PREVIEW_TARGETS?'disabled':''}>+ TP</button></div>
   <div class="preview-targets">${p.targets.map(t=>`<label class="preview-target-row" data-target-id="${esc(t.id)}"><strong>${esc(t.name)}</strong><input type="number" name="target-price" inputmode="decimal" min="0.01" step="0.01" value="${esc(t.price)}" placeholder="Underlying USD price">${!['stop','tp1','tp2'].includes(t.id)?`<button type="button" class="preview-remove-mini" data-action="preview-remove-target" data-target-id="${esc(t.id)}" aria-label="Remove ${esc(t.name)}">×</button>`:''}</label>`).join('')}</div>
-  <div class="preview-grid-head"><strong>Exit dates · 4 PM ET</strong><button type="button" class="btn btn-outline preview-add-btn" data-action="preview-add-date" ${p.dates.length>=MAX_PREVIEW_DATES?'disabled':''}>+ Date</button></div>
+  <div class="preview-grid-head"><strong><span class="preview-step-number">03</span> Exit dates · 4 PM ET</strong><button type="button" class="btn btn-outline preview-add-btn" data-action="preview-add-date" ${p.dates.length>=MAX_PREVIEW_DATES?'disabled':''}>+ Date</button></div>
   <div class="preview-dates">${p.dates.map((d,i)=>`<label class="preview-date-row"><span>${i===0?'Next session':i===1?'Second session':`Date ${i+1}`}</span><input type="date" name="exit-date" data-date-index="${i}" value="${esc(d)}" min="${esc(today())}" max="${esc(parsed.expiry||'2100-01-01')}">${p.dates.length>1?`<button type="button" class="preview-remove-mini" data-action="preview-remove-date" data-date-index="${i}" aria-label="Remove exit date">×</button>`:''}</label>`).join('')}</div>
+  <div class="preview-output-title"><span class="preview-step-number">04</span><div><strong>Scenario return matrix</strong><small>Price × date · net projected percentage after fees</small></div><span class="preview-output-tag">MODEL, NOT FORECAST</span></div>
   <div id="optionPreviewResults" aria-live="polite"></div>
   <details class="preview-data-help"><summary>Quote source and pricing-model limitations</summary><p>The optional free Alpaca Basic feed provides indicative options prices (not executable OPRA quotes) and IEX underlying trades. A free paper-only account is needed; it does not trade or connect to IBKR. The model uses fixed internal 4% annual interest and 0% dividend yield assumptions, not live rates. Actual dividend-paying stocks, early assignment, IV changes, earnings, slippage and stale quotes can materially change the results. Quick Size Check premium defaults to a valid indicative midpoint, unless you manually override it.</p></details>
   <p class="preview-caution">The projections are theoretical, with the same IV assumed for future dates—not a prediction of future IV, a guaranteed fill or statistical expectancy. The model is European-style; most U.S. stock options are American-style.</p>`;
@@ -383,9 +388,10 @@ function updateOptionPreviewResults(){
  const dates=result.dateHeaders;
  const expMs=easternCloseMs(contract.expiry);
  const heading=dates.map(d=>`<th>${esc(fmtDate(d,true))}<small>${d===contract.expiry?'Expiration':d+' 4 PM ET'}</small></th>`).join('');
- const rows=result.rows.map(r=>`<tr><th>${esc(r.name)}<small>${r.spotPrice>0?usd(r.spotPrice):'Set target price'}</small></th>${r.values.map(x=>`<td>${percentCell(x)}</td>`).join('')}</tr>`).join('');
+ const rows=result.rows.map(r=>`<tr><th>${esc(r.name)}<small>${r.spotPrice>0?usd(r.spotPrice):'Set target price'}</small></th>${r.values.map(x=>`<td class="${!x.valid?'preview-empty-cell':x.returnPct>=0?'preview-profit-cell':'preview-loss-cell'}">${percentCell(x)}</td>`).join('')}</tr>`).join('');
  const theta=result.thetaNextCalendarDayUsdPerContract;
  container.innerHTML=`<div class="preview-result-summary"><div><span>Modeled 1-day theta · unchanged stock / IV</span><strong class="${theta<0?'preview-negative':'preview-positive'}">${usd(theta)} / contract / calendar day</strong></div><div><span>Entry cost incl. fees</span><strong>${usd(result.baseCostUsd)}</strong></div><div><span>IV assumed at every date</span><strong>${result.ivPct.toFixed(1)}%</strong></div></div>
+  <div class="preview-matrix-legend"><span class="preview-legend-gain">Positive modeled net return</span><span class="preview-legend-loss">Negative modeled net return</span></div>
   <div class="preview-matrix-scroll" role="region" aria-label="Modeled option returns by exit date" tabindex="0"><table class="preview-matrix"><thead><tr><th>Underlying target</th>${heading}</tr></thead><tbody>${rows}</tbody></table></div>
   <small class="preview-footnote">Valuation anchored to ${esc(result.anchorLabel)} at current spot; that anchor mismatch is reduced toward expiration. Percent = net modeled USD P/L ÷ actual proposed USD purchase cost (quantity × buy premium × 100 + buy fees). Estimated sell fees are deducted. ${result.spread>0?`Assumes half the current indicative ${usd(result.spread)} bid/ask spread is lost on exit.`:'No spread discount: enter a bid and ask to model half-spread exit slippage.'} These are scenario estimates, not statistical expectancy or guaranteed proceeds.</small>`;
 }
@@ -405,7 +411,7 @@ async function refreshDraftPremium(idea){
   const bid=Number(data.optionBidUsd),ask=Number(data.optionAskUsd);
   if(data.optionBidUsd===null||data.optionAskUsd===null||!(bid>0&&ask>=bid))throw Error('No valid bid/ask for selected contract.');
   draft.marketMid=String(Math.round((bid+ask)*5000)/10000);
-   const preview=ensurePreview(draft);preview.spot=data.spotUsd??'';preview.ivPct=data.ivPct??'';preview.bid=data.optionBidUsd??'';preview.ask=data.optionAskUsd??'';preview.quoteAt=data.quoteAt||'';preview.quoteSource=data.provider||'Alpaca indicative';
+   const preview=ensurePreview(draft);preview.spot=data.spotUsd??'';if(!preview.ivManual||!(Number(preview.ivPct)>0))preview.ivPct=data.ivPct??'';preview.bid=data.optionBidUsd??'';preview.ask=data.optionAskUsd??'';preview.quoteAt=data.quoteAt||'';preview.quoteSource=data.provider||'Alpaca indicative';
   draft.contractSymbol=symbol;draft.quoteStatus='indicative';
   draft.quoteMessage=`Indicative bid ${bid.toFixed(2)} / ask ${ask.toFixed(2)} · midpoint ${Number(draft.marketMid).toFixed(2)} · ${data.quoteAt||'time unavailable'} UTC · ${verify.ok?'verified contract':'unverified listing'} · non-OPRA`;
   if(!draft.priceManual)draft.price=draft.marketMid;
@@ -432,8 +438,9 @@ async function refreshOptionQuote(){
   if(!response.ok){quoteConnectionState=data.code==='NOT_CONFIGURED'?'not-configured':'failed';throw Error(data.error||'Indicative quote unavailable');}
   if(token!==quoteRefreshToken||currentPreviewIdea()?.id!==idea.id||draftContractKey(idea)!==contractKey)return;
   const p=ensurePreview(idea),set=(k,v)=>{if(v!==null&&v!==undefined&&Number.isFinite(Number(v)))p[k]=String(v);};
+  const manualIv=p.ivManual&&Number(p.ivPct)>0?p.ivPct:null;
   p.spot='';p.ivPct='';p.bid='';p.ask='';
-  set('spot',data.spotUsd);set('ivPct',data.ivPct);set('bid',data.optionBidUsd);set('ask',data.optionAskUsd);
+  set('spot',data.spotUsd);if(manualIv!==null)p.ivPct=manualIv;else set('ivPct',data.ivPct);set('bid',data.optionBidUsd);set('ask',data.optionAskUsd);
   p.quoteAt=data.quoteAt||'';p.quoteSource=data.provider||'Alpaca indicative';
   const bid=Number(data.optionBidUsd),ask=Number(data.optionAskUsd);
   const valid=data.optionBidUsd!==null&&data.optionAskUsd!==null&&Number.isFinite(bid)&&Number.isFinite(ask)&&bid>0&&ask>0&&ask>=bid;
@@ -442,7 +449,7 @@ async function refreshOptionQuote(){
   idea.quoteMessage=valid?`Indicative bid ${bid.toFixed(2)} / ask ${ask.toFixed(2)} · midpoint ${Number(idea.marketMid).toFixed(2)} · ${p.quoteAt||'timestamp unavailable'} UTC · non-OPRA / non-executable · ${verification}`:'No valid indicative bid/ask. Enter a manual premium.';
   if(valid&&!idea.priceManual)idea.price=idea.marketMid;
   quoteConnectionState='connected';
-  quoteRefreshMessage=data.missingIv?'IV unavailable; enter manually.':data.spotUsd===null?'Underlying price unavailable; enter manually.':idea.quoteMessage;
+  quoteRefreshMessage=data.missingIv&&!(Number(p.ivPct)>0)?'Alpaca returned no usable implied volatility. Enter your broker IV to run the simulation.':data.spotUsd===null?'Underlying price unavailable; enter manually.':idea.quoteMessage;
   persistPlannerDrafts();
  }catch(err){
   if(token===quoteRefreshToken&&currentPreviewIdea()?.id===idea?.id&&draftContractKey(idea)===contractKey){
@@ -821,6 +828,7 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'preview-add-date':{const p=ensurePreview(currentPreviewIdea());if(!p||p.dates.length>=MAX_PREVIEW_DATES)break;let d=p.dates.at(-1)||today();d=nextSession(d,state.customClosed||[]);p.dates.push(d);persistPlannerDrafts();renderOptionPreview();break;}
  case 'preview-remove-date':{const p=ensurePreview(currentPreviewIdea());if(!p||p.dates.length<=1)break;p.dates.splice(Number(el.dataset.dateIndex),1);persistPlannerDrafts();renderOptionPreview();break;}
  case 'refresh-option-quote':void refreshOptionQuote();break;
+ case 'enter-manual-iv':{const panel=$('optionPreview');const details=panel?.querySelector('.preview-manual');if(details)details.open=true;panel?.querySelector('input[name="ivPct"]')?.focus();break;}
  case 'reset-draft-fee':{const idea=plannerIdeas().find(x=>x.id===el.dataset.planId);if(idea){idea.feeManual=false;idea.fee=estimateOrderFee(account(),'BUY',idea.qty).toFixed(2);persistPlannerDrafts();renderPlanner(analytics());}break;}
  case 'export-trade':exportTrade(id);break;
  case 'export-backup':exportBackup();break;
@@ -856,6 +864,7 @@ $('optionPreview').addEventListener('input',e=>{
  const p=ensurePreview(idea),name=e.target.name;
  if(['spot','ivPct','bid','ask'].includes(name)){
   p[name]=e.target.value;
+  if(name==='ivPct'){p.ivManual=Number(p.ivPct)>0;const notice=$('optionPreview')?.querySelector('.preview-iv-help');if(notice)notice.hidden=Boolean(p.ivManual);}
   if(['spot','ivPct','bid','ask'].includes(name)){
    p.quoteSource='Manual override';p.quoteAt='';quoteRefreshMessage='';
    const cell=document.querySelector(`[data-market-key="${name}"] strong`),amount=Number(p[name]);
@@ -880,7 +889,7 @@ $('quickPlanner').addEventListener('input',e=>{
  const changed=['ticker','expiry','strike','optionType'].includes(name)&&before!==draftContractKey(idea);
  if(changed){
   quoteRefreshToken++;quoteRefreshBusy=false;
-  const p=ensurePreview(idea);p.spot='';p.ivPct='';p.bid='';p.ask='';p.quoteAt='';p.quoteSource='New contract requires new quote';
+  const p=ensurePreview(idea);p.spot='';p.ivPct='';p.ivManual=false;p.bid='';p.ask='';p.quoteAt='';p.quoteSource='New contract requires new quote';
   idea.marketMid='';idea.contractSymbol='';idea.quoteStatus='';idea.quoteMessage='Contract changed — Analyze % to refresh quote.';
   if(!idea.priceManual){idea.price='';const price=el.querySelector('[name="price"]');if(price)price.value='';}
   quoteConnectionState='unknown';quoteRefreshMessage='';
