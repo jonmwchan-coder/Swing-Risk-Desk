@@ -899,7 +899,7 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'toggle-ticker-link':{
   const idea=currentPreviewIdea(),p=ensurePreview(idea);if(!p)break;
   if(p.tickerLinked!==false){p.tickerLinked=false;p.tickerLinkEstablished=false;persistPlannerDrafts();renderOptionPreview();break;}
-  if(!isUneditedTickerScenario(p,today(),state.customClosed||[])&&!confirm('Use the shared +normalizeTicker(idea.ticker)+' '+idea.optionType.toLowerCase()+' plan? This replaces this idea’s own underlying Stop/TP levels and exit dates. Premium and IV stay separate.'))break;
+  if(!isUneditedTickerScenario(p,today(),state.customClosed||[])&&!confirm('Use the shared '+normalizeTicker(idea.ticker)+' '+idea.optionType.toLowerCase()+' plan? This replaces this idea’s own underlying Stop/TP levels and exit dates. Premium and IV stay separate.'))break;
   const linked=adoptTickerLevels(idea,true);if(linked.reason==='solo')publishTickerLevels(idea);
   persistPlannerDrafts();renderOptionPreview();break;
  }
