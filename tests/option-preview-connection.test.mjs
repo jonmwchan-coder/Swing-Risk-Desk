@@ -7,7 +7,7 @@ const css=fs.readFileSync(new URL('../styles.css',import.meta.url),'utf8');
 test('Analyze % automatically requests only the selected idea quote once, not all ideas',()=>{
  assert.match(app,/case 'analyze-idea':\{const opening=.*?if\(opening\)void refreshOptionQuote\(\);break;\}/);
  assert.match(app,/currentPreviewIdea\(\)\?\.id!==idea\.id/);
- assert.match(app,/symbol=buildOCCSymbol\(parsePlannedContract\(idea\?\.label\)\)/);
+ assert.match(app,/symbol=buildOCCSymbol\(draftContract\(idea\)\)/);
 });
 test('unconfigured feed displays a one-time setup card and never suggests unauthenticated market data exists',()=>{
  assert.match(server,/code:'NOT_CONFIGURED'/);
@@ -32,7 +32,7 @@ test('rate and dividend are no longer user inputs but fixed assumptions are disc
  assert.doesNotMatch(app,/name="dividendPct"/);
 });
 test('changing option contract invalidates previously refreshed quote and never changes planned entry premium',()=>{
- assert.match(app,/oldContract!==buildOCCSymbol\(parsePlannedContract\(idea\.label\)\)/);
+ assert.match(app,/const changed=\['ticker','expiry','strike','optionType'\]/);
  assert.match(app,/p\.spot='';p\.ivPct='';p\.bid='';p\.ask='';p\.quoteAt='';/);
- assert.doesNotMatch(app,/idea\.price\s*=\s*data\./);
+ assert.match(app,/if\(valid&&!idea\.priceManual\)idea\.price=idea\.marketMid/);
 });

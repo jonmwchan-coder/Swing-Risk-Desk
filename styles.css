@@ -432,3 +432,15 @@ html,body{max-width:100%}
 .dashboard-panel-stack .draft-ideas{min-width:0}
 @media(max-width:900px){.dashboard-panel-stack{margin-top:18px;gap:13px}}
 @media(max-width:690px){.dashboard-panel-stack{margin-top:16px;gap:12px}}
+
+/* v2.8 structured swing option inputs */
+.draft-contract-fields{display:grid;grid-template-columns:1fr 1.55fr 1fr .9fr;gap:8px;margin-top:10px}
+.draft-contract-fields label{min-width:0}
+.draft-contract-fields label>span{display:block;min-height:17px;font-size:9px;letter-spacing:.06em;font-weight:750;color:#9ac0c8}
+.draft-contract-fields input,.draft-contract-fields select{width:100%;min-width:0;min-height:38px;padding:6px 8px;border-radius:8px;border:1px solid #41616e;background:#091a24;color:#e3f2f0;font-size:13px}
+.draft-quote-status{font-size:10px;color:#9ac0c8;margin-top:8px;overflow-wrap:anywhere}
+.draft-sort-bar{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin:8px 0}
+.draft-sort-bar label{font-size:10px;font-weight:800;color:#98b7c2;letter-spacing:.05em}
+.draft-sort-bar select{background:#102c38;color:#e0f5f0;border:1px solid #456271;border-radius:8px;min-height:34px;padding:5px 8px}
+@media(max-width:690px){.draft-contract-fields{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:370px){.draft-sort-bar{justify-content:flex-start;flex-wrap:wrap}}
