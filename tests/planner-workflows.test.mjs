@@ -70,6 +70,32 @@ test('unlink prevents broadcast, and shorter expiration omits incompatible share
  one.preview.targets[0].price='168';broadcastTickerScenario([one,short],one,day);
  assert.equal(short.preview.targets[0].price,'175');
 });
+test('copying into a portfolio with different NVDA underlying targets never overwrites its existing plan',()=>{
+ const source=plan(idea('src'),175,185,190);
+ const dest=plan(idea('existing'),165,175,180);
+ const drafts={a:[source],b:[dest]};
+ const result=copyPlannerIdeas(drafts,'a','b',()=> 'copied',['a','b']);
+ assert.equal(result.ok,true);assert.equal(result.conflicts,1);
+ assert.equal(result.drafts.b[0].preview.targets[0].price,'165');
+ assert.equal(result.drafts.b[1].preview.targets[0].price,'175');
+ assert.equal(result.drafts.b[1].preview.tickerLinked,false);
+ result.drafts.b[1].preview.targets[0].price='172';
+ broadcastTickerScenario(result.drafts.b,result.drafts.b[1],day);
+ assert.equal(result.drafts.b[0].preview.targets[0].price,'165');
+});
+test('old empty previews with two default sessions can adopt the current ticker plan',()=>{
+ const original=plan(idea('src'),175,185,190);
+ const peer=idea('old');
+ peer.preview=emptyPreview('2026-11-10');
+ broadcastTickerScenario([original],original,day);
+ const result=hydrateTickerScenario([original,peer],peer,day);
+ assert.equal(result.reason,'adopted');
+ assert.equal(peer.preview.targets[0].price,'175');
+});
+test('a draft with an edited quantity is not mistaken for a blank placeholder when copying',()=>{
+ const qty=defaultPlanIdea('only');qty.qty='3';
+ assert.equal(isEmptyPlannerPlaceholder(qty),false);
+});
 test('link metadata is persisted by preview normalization without inheriting per-contract IV',()=>{
  const iv=normalizePreview({...emptyPreview(day),ivManual:true,ivPct:'70',tickerLinked:false,tickerLinkEstablished:true,tickerPlanEditedAt:'2026-11-19T19:00:00Z'},day);
  assert.equal(iv.ivManual,true);assert.equal(iv.tickerLinked,false);assert.equal(iv.tickerLinkEstablished,true);
