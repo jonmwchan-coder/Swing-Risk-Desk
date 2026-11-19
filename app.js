@@ -10,6 +10,7 @@ import {buildSingleTradeHandoff,singleTradeExportFilename,TRADE_HANDOFF_SCHEMA} 
 import {emptyPreview,normalizePreview,projectOptionReturns,buildOCCSymbol,MAX_PREVIEW_DATES,MAX_PREVIEW_TARGETS,easternCloseMs} from './lib/option-preview.mjs';
 import {nextSession} from './lib/calendar.mjs';
 import {draftContract,draftContractKey,normalizeTicker,sortPlanIdeas,PLAN_SORT_MODES} from './lib/planner-contract.mjs';
+import {copyPlannerIdeas,isEmptyPlannerPlaceholder,tickerScenarioKey,hydrateTickerScenario,broadcastTickerScenario,visibleTickerDates} from './lib/planner-workflows.mjs';
 
 const STORAGE_KEY='swing-risk-desk:data:v1';
 const $=id=>document.getElementById(id);
@@ -56,6 +57,7 @@ let toastTimer=null;
 let plannerPrefill=null;
 let selectedPreviewId=null;
 let expandedPlanId=null;
+const tickerInputOrigins=new Map(); // Only reset underlying levels after a ticker/type change is finalized.
 let quoteRefreshBusy=false;
 let quoteRefreshMessage='';
 let quoteConnectionState='unknown'; // Never imply unconfigured or failed data are live quotes.
@@ -340,9 +342,65 @@ function updatePlannerMetrics(m){
 // One on-demand preview for the selected hypothetical idea, never one chart per row.
 function currentPreviewIdea(){return plannerIdeas().find(i=>i.id===selectedPreviewId);}
 function ensurePreview(idea){if(!idea)return null;if(!idea.preview)idea.preview=emptyPreview(today(),state.customClosed||[]);return idea.preview;}
+function adoptTickerLevels(idea,force=false){
+ if(!idea)return {changed:false};
+ const info=hydrateTickerScenario(plannerIdeas(),idea,today(),state.customClosed||[],force);
+ if(info.changed)persistPlannerDrafts();
+ return info;
+}
+function publishTickerLevels(idea){
+ if(!idea)return;
+ broadcastTickerScenario(plannerIdeas(),idea,today(),state.customClosed||[]);
+}
+function tickerLinkInfo(idea){
+ const key=tickerScenarioKey(idea);
+ if(!key)return '';
+ const matches=plannerIdeas().filter(x=>x.id!==idea.id&&tickerScenarioKey(x)===key);
+ if(!matches.length)return '';
+ const linked=ensurePreview(idea).tickerLinked!==false;
+ const count=matches.filter(x=>x.preview?.tickerLinked!==false).length;
+ const symbol=normalizeTicker(idea.ticker),side=idea.optionType==='Put'?'puts':'calls';
+ return `<div class="preview-ticker-sharing"><div><strong>${esc(symbol)} ${side} · ${linked?'Shared underlying plan':'Independent underlying plan'}</strong><small>${linked?`Stop, TPs and exit dates are linked to ${count} other ${esc(symbol)} ${side} idea${count===1?'':'s'} in this portfolio. Option premiums and IV remain contract-specific.`:'This idea keeps its own levels and dates. Other ideas are not changed.'}</small></div><button type="button" data-action="toggle-ticker-link" class="preview-ticker-toggle">${linked?'Use own plan':'Use shared plan'}</button></div>`;
+}
+function renderPlannerCopyChoices(){
+ const panel=$('plannerCopyPanel'),select=$('plannerCopyTarget');
+ if(!panel||!select)return;
+ const destinations=state.accounts.filter(x=>x.id!==account().id);
+ if(!destinations.length){showToast('Create a second portfolio before copying ideas.');panel.hidden=true;return;}
+ const choice=select.value;
+ select.innerHTML=destinations.map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('');
+ if(destinations.some(x=>x.id===choice))select.value=choice;
+ panel.hidden=false;
+ updatePlannerCopyHint();
+}
+function updatePlannerCopyHint(){
+ const hint=$('plannerCopyHint'),select=$('plannerCopyTarget'),button=$('plannerCopyConfirm');
+ if(!hint||!select||!button)return;
+ const source=(plannerIdeas()||[]).filter(x=>!isEmptyPlannerPlaceholder(x));
+ const target=plannerDrafts[select.value]||[];
+ const preserved=target.length===1&&isEmptyPlannerPlaceholder(target[0])?0:target.length;
+ const capacity=MAX_PLAN_IDEAS-preserved;
+ const okay=state.accounts.some(x=>x.id===select.value)&&select.value!==account().id&&source.length>0&&source.length<=capacity;
+ button.disabled=!okay;
+ hint.textContent=source.length===0?'Nothing entered to copy yet.':source.length>capacity?`Target has ${preserved} idea${preserved===1?'':'s'}; ${source.length} more would exceed the ${MAX_PLAN_IDEAS}-idea limit. No existing ideas will be removed.`:`${source.length} idea${source.length===1?'':'s'} added to the target (${preserved} existing). Source stays unchanged. Risk and auto fees use the target portfolio settings.`;
+}
+function confirmPlannerCopy(){
+ const select=$('plannerCopyTarget'),targetId=select?.value;
+ const previous=plannerDrafts;
+ const result=copyPlannerIdeas(plannerDrafts,account().id,targetId,uid,state.accounts.map(x=>x.id));
+ if(!result.ok){showToast(result.reason);updatePlannerCopyHint();return;}
+ plannerDrafts=result.drafts;
+ persistPlannerDrafts();
+ if(!plannerStorageHealthy){plannerDrafts=previous;showToast('Could not save the copied ideas in this browser. Nothing has been committed.');return;}
+ $('plannerCopyPanel').hidden=true;
+ renderPlanner(analytics());
+ const target=state.accounts.find(x=>x.id===targetId);
+ showToast(`Copied ${result.count} draft idea${result.count===1?'':'s'} to ${target?.name||'portfolio'}. Source unchanged; check target risk and refresh premiums.`);
+}
+
 function previewViewModel(idea){
  const contract=draftContract(idea);
- const result=projectOptionReturns({contract,preview:{...idea.preview,ratePct:'4',dividendPct:'0'},qty:Number(idea.qty),entryPremium:Number(idea.price),entryFeeUsd:Number(idea.fee||0),sellFeePerContractUsd:ratePerContract(account(),'SELL'),asOf:new Date()});
+ const result=projectOptionReturns({contract,preview:{...idea.preview,dates:visibleTickerDates(idea).visible.map(x=>x.date),ratePct:'4',dividendPct:'0'},qty:Number(idea.qty),entryPremium:Number(idea.price),entryFeeUsd:Number(idea.fee||0),sellFeePerContractUsd:ratePerContract(account(),'SELL'),asOf:new Date()});
  return {contract,result};
 }
 function percentCell(cell){
