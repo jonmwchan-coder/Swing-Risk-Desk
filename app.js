@@ -413,6 +413,10 @@ function renderOptionPreview(){
  const idea=currentPreviewIdea();if(!idea){el.hidden=true;el.innerHTML='';return;}
  el.hidden=false;
  const p=ensurePreview(idea),parsed=draftContract(idea)||{},symbol=buildOCCSymbol(parsed);
+ const {visible:shownExitDates,excluded:unavailableExitDates}=visibleTickerDates(idea);
+ const lastExitDate=shownExitDates.at(-1)?.date||today();
+ const nextExitDate=nextSession(lastExitDate,state.customClosed||[]);
+ const canAddExitDate=p.dates.length<MAX_PREVIEW_DATES && (!parseDay(parsed.expiry)||nextExitDate<=parsed.expiry);
  const quote=p.quoteAt?`As of ${esc(p.quoteAt.replace('T',' ').slice(0,19))} UTC`:'Not yet refreshed';
  const marketNumber=(n,unit,places=2)=>{const v=Number(n);return String(n??'').trim()!==''&&Number.isFinite(v)&&v>0?`${unit} ${v.toFixed(places)}`:'----';};
  const ivUnavailable=quoteConnectionState==='connected'&&!(Number(p.ivPct)>0);
@@ -428,10 +432,12 @@ function renderOptionPreview(){
    ${ivHelp}
    <details class="preview-manual"><summary>Optional: enter quote values manually if the free feed is unavailable</summary><div class="preview-inputs"><label><span>Underlying price (USD)</span><input type="number" name="spot" inputmode="decimal" min="0.01" step="any" value="${esc(p.spot)}" placeholder="e.g. 16.50"></label><label><span>Option IV (%)</span><input type="number" name="ivPct" inputmode="decimal" min="0.01" max="1000" step="any" value="${esc(p.ivPct)}" placeholder="e.g. 65.0"></label><label><span>Option bid (USD/share)</span><input type="number" name="bid" inputmode="decimal" min="0" step="any" value="${esc(p.bid)}" placeholder="Optional"></label><label><span>Option ask (USD/share)</span><input type="number" name="ask" inputmode="decimal" min="0" step="any" value="${esc(p.ask)}" placeholder="Optional"></label></div></details>
   </div>
+  ${tickerLinkInfo(idea)}
   <div class="preview-grid-head"><strong><span class="preview-step-number">02</span> Underlying price targets (USD)</strong><button type="button" class="btn btn-outline preview-add-btn" data-action="preview-add-target" ${p.targets.length>=MAX_PREVIEW_TARGETS?'disabled':''}>+ TP</button></div>
   <div class="preview-targets">${p.targets.map(t=>`<label class="preview-target-row" data-target-id="${esc(t.id)}"><strong>${esc(t.name)}</strong><input type="number" name="target-price" inputmode="decimal" min="0.01" step="0.01" value="${esc(t.price)}" placeholder="Underlying USD price">${!['stop','tp1','tp2'].includes(t.id)?`<button type="button" class="preview-remove-mini" data-action="preview-remove-target" data-target-id="${esc(t.id)}" aria-label="Remove ${esc(t.name)}">×</button>`:''}</label>`).join('')}</div>
-  <div class="preview-grid-head"><strong><span class="preview-step-number">03</span> Exit dates · 4 PM ET</strong><button type="button" class="btn btn-outline preview-add-btn" data-action="preview-add-date" ${p.dates.length>=MAX_PREVIEW_DATES?'disabled':''}>+ Date</button></div>
-  <div class="preview-dates">${p.dates.map((d,i)=>`<label class="preview-date-row"><span>${i===0?'Next session':i===1?'Second session':`Date ${i+1}`}</span><input type="date" name="exit-date" data-date-index="${i}" value="${esc(d)}" min="${esc(today())}" max="${esc(parsed.expiry||'2100-01-01')}">${p.dates.length>1?`<button type="button" class="preview-remove-mini" data-action="preview-remove-date" data-date-index="${i}" aria-label="Remove exit date">×</button>`:''}</label>`).join('')}</div>
+  <div class="preview-grid-head"><strong><span class="preview-step-number">03</span> Exit dates · 4 PM ET</strong><button type="button" class="btn btn-outline preview-add-btn" data-action="preview-add-date" ${!canAddExitDate?'disabled':''}>+ Date</button></div>
+  <div class="preview-dates">${shownExitDates.map(({date,index},i)=>`<label class="preview-date-row"><span>${i===0?'Next session':i===1?'Second session':`Date ${i+1}`}</span><input type="date" name="exit-date" data-date-index="${index}" value="${esc(date)}" min="${esc(today())}" max="${esc(parsed.expiry||'2100-01-01')}">${p.dates.length>1?`<button type="button" class="preview-remove-mini" data-action="preview-remove-date" data-date-index="${index}" aria-label="Remove exit date">×</button>`:''}</label>`).join('')}</div>
+  ${unavailableExitDates.length?`<p class="preview-expiry-note" role="note">${unavailableExitDates.length} ticker-plan exit date${unavailableExitDates.length===1?'':'s'} after ${esc(fmtDate(parsed.expiry,true))} excluded for this contract. The dates remain saved for longer-expiring ${esc(normalizeTicker(idea.ticker))} options.</p>`:''}
   <div class="preview-output-title"><span class="preview-step-number">04</span><div><strong>Scenario return matrix</strong><small>Price × date · net projected percentage after fees</small></div><span class="preview-output-tag">MODEL, NOT FORECAST</span></div>
   <div id="optionPreviewResults" aria-live="polite"></div>
   <details class="preview-data-help"><summary>Quote source and pricing-model limitations</summary><p>The optional free Alpaca Basic feed provides indicative options prices (not executable OPRA quotes) and IEX underlying trades. A free paper-only account is needed; it does not trade or connect to IBKR. The model uses fixed internal 4% annual interest and 0% dividend yield assumptions, not live rates. Actual dividend-paying stocks, early assignment, IV changes, earnings, slippage and stale quotes can materially change the results. Quick Size Check premium defaults to a valid indicative midpoint, unless you manually override it.</p></details>
@@ -442,6 +448,7 @@ function updateOptionPreviewResults(){
  const container=$('optionPreviewResults'),idea=currentPreviewIdea();if(!container||!idea)return;
  const {result,contract}=previewViewModel(idea);
  if(!result.valid){container.innerHTML=`<div class="preview-prompt">${esc(result.reason)}</div>`;return;}
+ if(!result.dateHeaders.length){container.innerHTML='<div class="preview-prompt">No exit dates occur on or before this contract expiration. Adjust the shared plan, or use an independent plan for this option.</div>';return;}
  const dates=result.dateHeaders;
  const expMs=easternCloseMs(contract.expiry);
  const heading=dates.map(d=>`<th>${esc(fmtDate(d,true))}<small>${d===contract.expiry?'Expiration':d+' 4 PM ET'}</small></th>`).join('');
