@@ -383,6 +383,11 @@ async function refreshOptionQuote(){
  if(!idea||!symbol){quoteRefreshMessage='Enter a valid ticker, expiration, strike and call/put.';renderOptionPreview();return;}
  const token=++quoteRefreshToken;quoteRefreshBusy=true;quoteRefreshMessage='';quoteConnectionState='loading';renderOptionPreview();
  try{
+  let verification='Contract listing unverified';
+  const check=await fetch(`/api/option-contract?symbol=${encodeURIComponent(symbol)}`,{cache:'no-store'}).then(async response=>({ok:response.ok,status:response.status,data:await response.json().catch(()=>({}))})).catch(()=>({ok:false,status:502,data:{code:'VALIDATION_UNAVAILABLE'}}));
+  if(token!==quoteRefreshToken||currentPreviewIdea()?.id!==idea.id||draftContractKey(idea)!==contractKey)return;
+  if(check.status===404||check.status===422)throw Error(check.data.error||'Selected contract is not active in Alpaca.');
+  if(check.ok)verification='Contract verified active by Alpaca';
   const response=await fetch(`/api/option-quote?symbol=${encodeURIComponent(symbol)}`,{cache:'no-store'});
   const data=await response.json().catch(()=>({}));
   if(!response.ok){quoteConnectionState=data.code==='NOT_CONFIGURED'?'not-configured':'failed';throw Error(data.error||'Indicative quote unavailable');}
@@ -395,7 +400,7 @@ async function refreshOptionQuote(){
   const valid=data.optionBidUsd!==null&&data.optionAskUsd!==null&&Number.isFinite(bid)&&Number.isFinite(ask)&&bid>0&&ask>0&&ask>=bid;
   idea.contractSymbol=symbol;idea.marketMid=valid?String(Math.round((bid+ask)*5000)/10000):'';
   idea.quoteStatus=valid?'indicative':'unavailable';
-  idea.quoteMessage=valid?`Indicative bid ${bid.toFixed(2)} / ask ${ask.toFixed(2)} · midpoint ${Number(idea.marketMid).toFixed(2)} · ${p.quoteAt||'timestamp unavailable'} UTC · non-OPRA / non-executable`:'No valid indicative bid/ask. Enter a manual premium.';
+  idea.quoteMessage=valid?`Indicative bid ${bid.toFixed(2)} / ask ${ask.toFixed(2)} · midpoint ${Number(idea.marketMid).toFixed(2)} · ${p.quoteAt||'timestamp unavailable'} UTC · non-OPRA / non-executable · ${verification}`:'No valid indicative bid/ask. Enter a manual premium.';
   if(valid&&!idea.priceManual)idea.price=idea.marketMid;
   quoteConnectionState='connected';
   quoteRefreshMessage=data.missingIv?'IV unavailable; enter manually.':data.spotUsd===null?'Underlying price unavailable; enter manually.':idea.quoteMessage;
