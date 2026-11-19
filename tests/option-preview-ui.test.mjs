@@ -1,0 +1,42 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const app=fs.readFileSync(new URL('../app.js',import.meta.url),'utf8');
+const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');
+const css=fs.readFileSync(new URL('../styles.css',import.meta.url),'utf8');
+const sw=fs.readFileSync(new URL('../sw.js',import.meta.url),'utf8');
+test('preview is selected per idea rather than rendered for each quick-size-check row',()=>{
+ assert.match(app,/let selectedPreviewId=null/);
+ assert.match(app,/data-action="analyze-idea"/);
+ assert.match(app,/selectedPreviewId===el\.dataset\.planId\?null:el\.dataset\.planId/);
+ assert.match(app,/el\.hidden=true;el\.innerHTML='';return;/);
+ assert.match(html,/id="optionPreview"[^>]+hidden/);
+ assert.match(app,/function renderOptionPreview\(\)/);
+});
+test('next sessions, custom exit dates and extra TP targets have explicit controls',()=>{
+ assert.match(app,/preview-add-date/);assert.match(app,/preview-add-target/);
+ assert.match(app,/name="exit-date"/);assert.match(app,/name="target-price"/);
+ assert.match(app,/MAX_PREVIEW_TARGETS/);
+ assert.match(app,/Exit dates · 4 PM ET/);
+});
+test('quote refresh is requested only by an explicit button, does not replace entry premium',()=>{
+ assert.match(app,/case 'refresh-option-quote':void refreshOptionQuote\(\);break;/);
+ assert.match(app,/fetch\(`\/api\/option-quote\?symbol=/);
+ assert.match(app,/entry premium in Quick Size Check is not changed automatically/);
+ assert.doesNotMatch(app,/idea\.price\s*=\s*data\./);
+ assert.match(sw,/swing-risk-desk-shell-v2\.5/);
+ assert.match(sw,/\/lib\/option-preview\.mjs/);
+});
+test('cost and model output always describe currencies and limitations',()=>{
+ assert.match(app,/Underlying now \(USD\)/);
+ assert.match(app,/Indicative bid \(USD\/sh\)/);
+ assert.match(app,/Modeled 1-day theta/);
+ assert.match(app,/USD.*net/);
+ assert.match(app,/European-style valuation/);
+ assert.match(app,/quote is fetched <strong>only when you press Refresh<\/strong>/i);
+});
+test('scrolling is confined to matrix; phone sizing remains responsive',()=>{
+ assert.match(css,/\.preview-matrix-scroll\{[^}]*max-width:100%;overflow-x:auto/);
+ assert.match(css,/@media\(max-width:690px\)\{\.option-preview/);
+ assert.match(css,/\.option-preview\[hidden\]\{display:none!important\}/);
+});

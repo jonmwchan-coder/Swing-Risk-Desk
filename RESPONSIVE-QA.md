@@ -1,3 +1,9 @@
+# v2.5 visual/interaction verification
+
+Ran the original index.html, styles.css, app.js and library modules via an inline Playwright browser harness with synthetic option inputs (no real user data), width 320 / 390 / 768 / 1100 / 1440. All sizes showed the one selected-idea preview and a two-date matrix, with **no document horizontal overflow** and **no JavaScript page errors**. The compact matrix alone is horizontally scrollable on phones. Added TP and date interactions produced a new row and column and recalculated percentages without touching recorded positions. Model tests cover calendar-time decay, weekends/NYSE holiday date defaults, the expiry intrinsic payoff, price/IV input validation, fee-inclusive P/L, half-spread indicative assumptions and quote-midpoint anchoring. `npm test`: 105/105 passing.
+
+Provider credentials were **not** available during these tests: success and error responses from the optional read-only Alpaca backend are tested with mocked market-data responses. No claim of a successful real Alpaca connection or authentic OPRA quote.
+
 # Responsive and functional QA — Swing Risk Desk v1.2
 
 ## Screen sizes and layouts

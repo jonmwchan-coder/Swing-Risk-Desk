@@ -1,3 +1,15 @@
+# Swing Risk Desk v2.5 — date-aware option return preview (free/manual first)
+
+Quick Size Check contains one optional **Analyze %** preview for a selected draft idea, with underlying stop/TP targets, additional TP levels, adjustable dates defaulted to the next two NYSE sessions, theoretical option returns (constant IV, changing time value), estimated sell commissions, and bid/ask half-spread sensitivity. All quote assumptions, targets and dates are **local, per-portfolio, per-draft**, not entered into the real trading ledger/cloud. Quote requests happen only on the user’s Refresh click.
+
+The model uses the European Black–Scholes approximation with editable flat interest rate and dividend yield, calendar-time decay (including weekends), and expiration intrinsic payoff. U.S. single-stock options are American-style; dividends, early exercise, discontinuous price paths, and changing volatility mean results are illustrative, not execution forecasts. Theta is a *local one-calendar-day model difference at constant spot and IV*, not a probability-weighted expectancy.
+
+**Zero-cost immediately:** type today’s underlying spot and option IV manually (option bid/ask optional). **Optional free quote refresh:** provision your own free Alpaca Basic API credentials in the existing Vercel project’s server-side environment as `ALPACA_DATA_KEY_ID` and `ALPACA_DATA_SECRET_KEY`, then redeploy. The `/api/option-quote` read-only endpoint uses Alpaca Basic’s *indicative*, modified option quotes and IEX underlying trade, not OPRA NBBO or guaranteed executable bids/asks. Credentials are never sent to the browser or repository. No default credential is bundled; manual mode works without setup. Free quotes may be missing, stale, or only indicative. Do not use paid market feeds by accident. Cboe’s delayed quote dashboard forbids automated extraction, so it is not used.
+
+**Validation:** `npm test`; no changes to real position/exit accounting, rolling CAD risk, IBKR imports, cloud records, or full backup schema.
+
+---
+
 # v2.4: Quick size check clarifies USD cash and CAD risk (November 2026)
 
 Each hypothetical option idea now prominently displays the option premium cost in **USD** (whole contracts × expected USD premium per share × 100), the total estimated **USD cash to buy** including entry fees, the **CAD 5-session risk budget used** based on the configured stress percentage / strict mode / per-idea rounding, and **CAD risk budget left**. The basket summary separately totals USD premiums, USD buy fees, USD total cash, CAD budget usage and CAD remaining capacity. All displayed monetary values explicitly identify USD or CAD; the applied per-portfolio FX quote is visible. Blank/unpriced drafts are still not counted as zero-cost completed ideas.

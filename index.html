@@ -78,8 +78,9 @@
           <div class="draft-add-bar"><button type="button" class="btn btn-outline draft-add-btn" data-action="add-plan-idea">+ Add idea</button><span id="planIdeaCount" class="draft-count"></span><button type="button" class="draft-clear-btn" data-action="clear-plan-ideas" title="Remove only this portfolio’s saved hypothetical sizing ideas">Clear ideas</button></div>
           <div class="draft-saved-status" id="plannerSavedStatus" aria-live="polite">Auto-saved on this device</div>
           <div class="planner-result" id="plannerResult" aria-live="polite"></div>
+          <section id="optionPreview" class="option-preview" hidden aria-label="Projected option return by target and date"></section>
           <p class="help-line planner-risk-explainer"><strong>What is the CAD risk budget used?</strong> It is how much of your rolling 5-session loss allowance this hypothetical purchase would consume, assuming the selected loss %. It is <strong>not money paid to IBKR</strong> and not a guaranteed stop. The <strong>USD total cash to buy</strong> is premiums + estimated buy fees; an option can lose its full purchase cost.</p>
-          <p class="help-line draft-disclaimer">Draft ideas are remembered on this browser, even after closing the tab, and kept separately per portfolio. They do not use real account capacity, enter the trade journal, or sync across devices or into cloud backups. Recheck saved premiums and FX before executing; an option’s full debit can still be lost.</p>
+          <p class="help-line draft-disclaimer">Option preview assumptions and target levels are saved on this device too. Free indicative quote refresh is optional and requires you to configure an Alpaca Basic account. Draft ideas are remembered on this browser, even after closing the tab, and kept separately per portfolio. They do not use real account capacity, enter the trade journal, or sync across devices or into cloud backups. Recheck saved premiums and FX before executing; an option’s full debit can still be lost.</p>
         </section>
       </div>
       <section class="panel runway-panel">
@@ -160,7 +161,7 @@
       <div class="bottom-danger"><button type="button" class="text-link text-delete" data-action="reset-data">Reset all locally saved data</button><small>Does not change anything in Google Sheets or IBKR.</small></div>
     </section>
   </main>
-  <footer><span>SWING RISK DESK / v2.4</span><span>Process over P&amp;L. All figures in CAD unless marked USD.</span></footer>
+  <footer><span>SWING RISK DESK / v2.5</span><span>Process over P&amp;L. All figures in CAD unless marked USD.</span></footer>
 </div>
 <dialog id="editorDialog" class="editor-dialog"><div class="dialog-content"><div class="dialog-header"><div><div class="overline" id="dialogEyebrow">POSITION</div><h2 id="dialogTitle">New position</h2></div><button type="button" class="icon-button" data-action="close-dialog" aria-label="Close dialog">&#10005;</button></div><div id="dialogBody"></div></div></dialog>
 <input id="importFile" type="file" accept=".json,.csv,application/json,text/csv" hidden>
