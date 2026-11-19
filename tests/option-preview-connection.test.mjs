@@ -26,7 +26,7 @@ test('spot, IV, bid and ask display automatically as read-only quote fields with
  assert.match(css,/\.preview-market-grid\{display:grid/);
 });
 test('rate and dividend are no longer user inputs but fixed assumptions are disclosed',()=>{
- assert.match(app,/preview:\{\.\.\.idea\.preview,ratePct:'4',dividendPct:'0'\}/);
+ assert.match(app,/preview:\{\.\.\.idea\.preview,dates:visibleTickerDates\(idea\)\.visible\.map\(x=>x\.date\),ratePct:'4',dividendPct:'0'\}/);
  assert.match(app,/fixed internal 4% annual interest and 0% dividend yield assumptions/);
  assert.doesNotMatch(app,/name="ratePct"/);
  assert.doesNotMatch(app,/name="dividendPct"/);
