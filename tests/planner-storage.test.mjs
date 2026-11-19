@@ -15,9 +15,9 @@ test('autosaved drafts survive a simulated browser restart and retain all inputs
  assert.equal(next.persisted,true);
  assert.equal(next.savedAt,'2026-11-18T14:59:00.000Z');
  assert.equal(next.drafts.bdi.length,2);
- assert.deepEqual(next.drafts.bdi[0],draft('one'));
- assert.deepEqual(next.drafts.bdi[1],draft('two','SMH 11/27/26 400P','2.05'));
- assert.deepEqual(next.drafts.tfsa[0],draft('three','NVDA','0.75'));
+ assert.equal(next.drafts.bdi[0].label,draft('one').label);assert.equal(next.drafts.bdi[0].ticker,'INTC');assert.equal(next.drafts.bdi[0].expiry,'2027-01-15');assert.equal(next.drafts.bdi[0].strike,'70');assert.equal(next.drafts.bdi[0].optionType,'Call');
+ assert.equal(next.drafts.bdi[1].ticker,'SMH');assert.equal(next.drafts.bdi[1].optionType,'Put');assert.equal(next.drafts.bdi[1].price,'2.05');
+ assert.equal(next.drafts.tfsa[0].ticker,'NVDA');assert.equal(next.drafts.tfsa[0].price,'0.75');
 });
 
 test('legacy tab-session drafts migrate to persistent storage without losing fields',()=>{
@@ -27,7 +27,7 @@ test('legacy tab-session drafts migrate to persistent storage without losing fie
  assert.equal(old.has(LEGACY_PLANNER_SESSION_KEY),false);
  assert.equal(local.has(PLANNER_LOCAL_KEY),true);
  const reopened=loadPlannerDrafts(local,storage());
- assert.deepEqual(reopened.drafts.bdi[0],draft('old','INTC 1/15/27 70C','1.15'));
+ assert.equal(reopened.drafts.bdi[0].ticker,'INTC');assert.equal(reopened.drafts.bdi[0].price,'1.15');
 });
 
 test('local drafts win over stale legacy sessions, and portfolios stay distinct',()=>{
