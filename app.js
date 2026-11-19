@@ -58,6 +58,7 @@ let selectedPreviewId=null;
 let quoteRefreshBusy=false;
 let quoteRefreshMessage='';
 let quoteConnectionState='unknown'; // Never imply unconfigured or failed data are live quotes.
+let quoteRefreshToken=0;
 const PLAN_SORT_KEY='swing-risk-desk:idea-sort:v1';
 let planSortMode=(()=>{try{const v=localStorage.getItem(PLAN_SORT_KEY);return PLAN_SORT_MODES.includes(v)?v:'created';}catch{return 'created';}})();
 const restoredPlanner=loadPlannerDrafts(globalThis.localStorage,globalThis.sessionStorage);
@@ -97,6 +98,7 @@ function dropPlannerIdea(draftId,renderAfter=true){
 function beginPlannedPosition(draftId){
  const draft=plannerIdeas().find(x=>x.id===draftId);
  if(!draft)return showToast('That draft is no longer present.');
+ if(!draftContract(draft))return showToast('Enter a valid ticker, expiry, strike and call/put before recording.');
  const candidate=calculatePlanBasket([draft],account(),analytics().availableCad).rows[0];
  if(!candidate?.valid)return showToast(candidate?.reason||'Enter a valid size before recording.');
  plannerPrefill={...draft,draftId,...draftContract(draft)};
@@ -759,7 +761,7 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'remove-plan-idea':dropPlannerIdea(el.dataset.planId);break;
  case 'clear-plan-ideas':{if(!confirm('Clear all saved Quick size check ideas for this portfolio? Recorded positions will not be affected.'))break;plannerDrafts[account().id]=[defaultPlanIdea(uid(),account().stressPct,false)];persistPlannerDrafts();renderPlanner(analytics());showToast('Saved size-check ideas cleared for this portfolio.');break;}
  case 'analyze-idea':{const opening=selectedPreviewId!==el.dataset.planId;selectedPreviewId=opening?el.dataset.planId:null;quoteRefreshMessage='';quoteConnectionState='unknown';renderPlanner(analytics());if(opening)$('optionPreview')?.scrollIntoView({block:'start',behavior:'smooth'});if(opening)void refreshOptionQuote();break;}
- case 'close-option-preview':selectedPreviewId=null;renderPlanner(analytics());break;
+ case 'close-option-preview':selectedPreviewId=null;quoteRefreshToken++;renderPlanner(analytics());break;
  case 'preview-add-target':{const idea=currentPreviewIdea();if(!idea)break;const p=ensurePreview(idea);if(p.targets.length>=MAX_PREVIEW_TARGETS)break;const n=p.targets.filter(t=>t.name.startsWith('TP')).length+1;p.targets.push({id:uid(),name:`TP${n}`,price:''});persistPlannerDrafts();renderOptionPreview();break;}
  case 'preview-remove-target':{const p=ensurePreview(currentPreviewIdea());if(!p)break;p.targets=p.targets.filter(t=>t.id!==el.dataset.targetId);persistPlannerDrafts();renderOptionPreview();break;}
  case 'preview-add-date':{const p=ensurePreview(currentPreviewIdea());if(!p||p.dates.length>=MAX_PREVIEW_DATES)break;let d=p.dates.at(-1)||today();d=nextSession(d,state.customClosed||[]);p.dates.push(d);persistPlannerDrafts();renderOptionPreview();break;}
@@ -816,19 +818,36 @@ $('optionPreview').addEventListener('input',e=>{
  persistPlannerDrafts();updateOptionPreviewResults();
 });
 $('quickPlanner').addEventListener('input',e=>{
- const draftEl=e.target.closest('[data-draft-id]');if(!draftEl)return;
- const idea=plannerIdeas().find(x=>x.id===draftEl.dataset.draftId);
- if(!idea||!['label','qty','price','fee','stress'].includes(e.target.name))return;
- const oldContract=e.target.name==='label'?buildOCCSymbol(parsePlannedContract(idea.label)):null;
- idea[e.target.name]=e.target.value;
- if(e.target.name==='label'&&oldContract!==buildOCCSymbol(parsePlannedContract(idea.label))&&idea.preview){
-  const p=idea.preview;p.spot='';p.ivPct='';p.bid='';p.ask='';p.quoteAt='';p.quoteSource='New contract needs refreshed quote';quoteConnectionState='unknown';quoteRefreshMessage='';
+ const el=e.target.closest('[data-draft-id]');if(!el)return;
+ const idea=plannerIdeas().find(x=>x.id===el.dataset.draftId),name=e.target.name;
+ if(!idea||!['name','ticker','expiry','strike','optionType','qty','price','fee','stress'].includes(name))return;
+ const before=draftContractKey(idea);
+ idea[name]=name==='ticker'?normalizeTicker(e.target.value):e.target.value;
+ const changed=['ticker','expiry','strike','optionType'].includes(name)&&before!==draftContractKey(idea);
+ if(changed){
+  quoteRefreshToken++;quoteRefreshBusy=false;
+  const p=ensurePreview(idea);p.spot='';p.ivPct='';p.bid='';p.ask='';p.quoteAt='';p.quoteSource='New contract requires new quote';
+  idea.marketMid='';idea.contractSymbol='';idea.quoteStatus='';idea.quoteMessage='Contract changed — Analyze % to refresh quote.';
+  if(!idea.priceManual){idea.price='';const price=el.querySelector('[name="price"]');if(price)price.value='';}
+  quoteConnectionState='unknown';quoteRefreshMessage='';
  }
- if(e.target.name==='stress')idea.stressCustom=true;
- if(e.target.name==='fee')idea.feeManual=true;
- if(e.target.name==='qty'&&!idea.feeManual){idea.fee=estimateOrderFee(account(),'BUY',idea.qty).toFixed(2);const feeInput=draftEl.querySelector('[name=\"fee\"]');if(feeInput)feeInput.value=idea.fee;}
+ if(name==='price')idea.priceManual=String(idea.price).trim()!=='';
+ if(name==='stress')idea.stressCustom=true;
+ if(name==='fee')idea.feeManual=true;
+ if(name==='qty'&&!idea.feeManual){idea.fee=estimateOrderFee(account(),'BUY',idea.qty).toFixed(2);const fee=el.querySelector('[name="fee"]');if(fee)fee.value=idea.fee;}
  persistPlannerDrafts();updatePlannerMetrics(analytics());
- if(e.target.name==='label'&&currentPreviewIdea()?.id===idea.id)renderOptionPreview();
+ if(changed&&currentPreviewIdea()?.id===idea.id)renderOptionPreview();
+});
+$('quickPlanner').addEventListener('change',e=>{
+ const node=e.target.closest('[data-draft-id]');
+ if(!node||!['ticker','expiry','strike','optionType'].includes(e.target.name))return;
+ const idea=plannerIdeas().find(x=>x.id===node.dataset.draftId);
+ if(idea&&selectedPreviewId===idea.id&&draftContract(idea))void refreshOptionQuote();
+});
+$('planSortSelect')?.addEventListener('change',e=>{
+ planSortMode=PLAN_SORT_MODES.includes(e.target.value)?e.target.value:'created';
+ try{localStorage.setItem(PLAN_SORT_KEY,planSortMode);}catch{}
+ renderPlanner(analytics());
 });
 $('settingsForm').addEventListener('submit',saveSettings);
 $('cloudSignInForm').addEventListener('submit',async e=>{e.preventDefault();const btn=$('cloudSignIn');btn.disabled=true;
