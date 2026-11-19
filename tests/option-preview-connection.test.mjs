@@ -33,6 +33,6 @@ test('rate and dividend are no longer user inputs but fixed assumptions are disc
 });
 test('changing option contract invalidates previously refreshed quote and never changes planned entry premium',()=>{
  assert.match(app,/const changed=\['ticker','expiry','strike','optionType'\]/);
- assert.match(app,/p\.spot='';p\.ivPct='';p\.bid='';p\.ask='';p\.quoteAt='';/);
+ assert.match(app,/p\.spot='';p\.ivPct='';p\.ivManual=false;p\.bid='';p\.ask='';p\.quoteAt='';/);
  assert.match(app,/if\(valid&&!idea\.priceManual\)idea\.price=idea\.marketMid/);
 });
