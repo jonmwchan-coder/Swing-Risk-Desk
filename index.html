@@ -174,7 +174,7 @@
         <p id="cloudAccount" class="help-line">Not signed in</p>
         <form id="cloudSignInForm" class="cloud-login"><label><span>EMAIL FOR PRIVATE SIGN-IN</span><input id="cloudEmail" type="email" autocomplete="email" placeholder="you@example.com" maxlength="254" required disabled></label><button id="cloudSignIn" class="btn btn-primary" type="submit" disabled>Email sign-in link</button></form>
         <div class="data-actions"><button id="cloudSyncNow" class="btn btn-outline" type="button" disabled>Sync now / check other devices</button><button id="cloudSignOut" class="btn btn-subtle" type="button" hidden>Sign out of cloud</button></div>
-        <div class="tiny-info"><strong>Safety:</strong> Browser saves are immediate. Cloud saves require an active connection and signed-in session; if cloud is offline, keep working locally and export a complete JSON backup. Connecting a browser with separate data asks before merging. Cloud sync does not update the DK trading master automatically.</div>
+        <div class="tiny-info"><strong>Safety:</strong> Browser saves are immediate. Signed-in devices check the private cloud when the app is opened, brought to the foreground, and periodically while visible. Updates are not instantaneous; offline edits stay local until reconnection. Executions and dated journal notes are reconciled by ID before any cloud save; do not use a local browser restore to replace a newer cloud ledger. Always keep external JSON backups. Cloud sync never updates the DK trading master automatically.</div>
       </section>
       <section class="panel calendar-panel"><div class="overline">MARKET CALENDAR</div><h3>Custom non-trading days</h3><p>Official NYSE 2026-2028 market holidays are included; early-closing days still count as sessions. Add an exceptional closure date if needed.</p>
         <form id="closedDayForm" class="closed-day-form"><label><span>CLOSED DATE</span><input name="date" type="date" required></label><button type="submit" class="btn btn-outline">Add closure</button></form>
@@ -183,7 +183,7 @@
       <div class="bottom-danger"><button type="button" class="text-link text-delete" data-action="reset-data">Reset all locally saved data</button><small>Does not change anything in Google Sheets or IBKR.</small></div>
     </section>
   </main>
-  <footer><span>SWING RISK DESK / v3.1 preview</span><span>Process over P&amp;L. All figures in CAD unless marked USD.</span></footer>
+  <footer><span>SWING RISK DESK / v3.2 cloud sync safety preview</span><span>Process over P&amp;L. All figures in CAD unless marked USD.</span></footer>
 </div>
 <dialog id="editorDialog" class="editor-dialog"><div class="dialog-content"><div class="dialog-header"><div><div class="overline" id="dialogEyebrow">POSITION</div><h2 id="dialogTitle">New position</h2></div><button type="button" class="icon-button" data-action="close-dialog" aria-label="Close dialog">&#10005;</button></div><div id="dialogBody"></div></div></dialog>
 <input id="importFile" type="file" accept=".json,.csv,application/json,text/csv" hidden>

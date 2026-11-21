@@ -23,7 +23,7 @@ test('projection is unmistakably its own scenario workspace',()=>{
  assert.doesNotMatch(styles,/\.preview-lab-intro\{/);
  assert.match(styles,/\.option-preview \.preview-matrix td\.preview-profit-cell\{/);
  assert.match(styles,/\.option-preview \.preview-matrix td\.preview-loss-cell\{/);
- assert.match(sw,/swing-risk-desk-shell-v3\.1-risk-policy/);
+ assert.match(sw,/swing-risk-desk-shell-v3\.2-safe-cloud-sync/);
 });
 
 test('missing-IV response is explained and manual IV is retained on quote refresh',()=>{

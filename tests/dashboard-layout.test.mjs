@@ -22,6 +22,6 @@ test('Analyze % brings the selected standalone preview into view, retaining quot
  assert.match(app,/\$\('optionPreview'\)\?\.scrollIntoView\(\{block:'start',behavior:'smooth'\}\)/);
  assert.match(app,/if\(opening\)\$\('optionPreview'\)\?\.scrollIntoView/);
  assert.match(app,/void refreshOptionQuote\(\)/);
- assert.match(sw,/swing-risk-desk-shell-v3\.1-risk-policy/);
- assert.match(html,/SWING RISK DESK \/ v3\.1 preview/);
+ assert.match(sw,/swing-risk-desk-shell-v3\.2-safe-cloud-sync/);
+ assert.match(html,/SWING RISK DESK \/ v3\.2 cloud sync safety preview/);
 });
