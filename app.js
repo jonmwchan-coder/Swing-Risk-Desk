@@ -881,7 +881,7 @@ function restoreArchive(id){const item=(state.archive||[]).find(x=>x.id===id);if
     p[key].push(structuredClone(item.record.tx));
   }else if(item.kind==='adjustment')state.adjustments.push(structuredClone(item.record));
   for(const p of state.positions){const a=state.accounts.find(x=>x.id===p.accountId);if(calculatePosition(p,a,'9999-12-31').issues.length)throw new Error(`Restoring ${p.ticker} would cause an impossible execution sequence.`);}
-  state.archive=state.archive.filter(x=>x.id!==id);save();render();showToast('Archived record restored.');
+  item.restoredAt=new Date().toISOString();save();render();showToast('Archived record restored. Restoration kept in cloud history.');
  }catch(err){state=snapshot;showToast(err.message);}
 }
 function deleteTransaction(posId,txId,side){const p=findPosition(posId);const key=side==='BUY'?'fills':'exits';const tx=p[key].find(t=>t.id===txId);if(!tx)return showToast('Transaction not found.');
