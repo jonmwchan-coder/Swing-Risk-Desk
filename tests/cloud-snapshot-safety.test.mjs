@@ -91,6 +91,7 @@ test('same-login device with obsolete marker adopts complete cloud without creat
   local.revision++;
   await c.syncNow();
   assert.equal(cloud.revision,15);
+  assert.equal(cloud.state.syncProtocolVersion,2,'cloud writes must identify the safe sync protocol');
   assert.deepEqual(cloud.state.positions[0].exits.map(e=>e.id),['tp1','tp2']);
   assert.equal(cloud.state.positions[0].journalEntries.length,3);
  }finally{if(oldLocalStorage===undefined)delete globalThis.localStorage;else globalThis.localStorage=oldLocalStorage;}
