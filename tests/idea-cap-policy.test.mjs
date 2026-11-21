@@ -74,6 +74,9 @@ test('allocation choice explicitly changes optional guide without changing rolli
  assert.ok(app.includes("if(!save())"));
  assert.ok(app.includes("activeIdeaCapCad(m.account)"));
  assert.ok(app.includes("const ideaCap=activeIdeaCapCad(m.account)"));
- assert.ok(app.includes("Switch"));
+ const capHandler=app.split("$('plannerCapMode')?.addEventListener('change',e=>{")[1]?.split("$('planSortSelect')?.addEventListener")[0];
+ assert.ok(capHandler,"missing risk-policy change handler");
+ assert.doesNotMatch(capHandler,/confirm\s*\(/,"switching to flexible or fixed must not open a confirmation pop-up");
+ assert.match(capHandler,/a\.ideaCapMode=mode;/);
  assert.ok(html.includes("Neither setting changes the portfolio"));
 });
