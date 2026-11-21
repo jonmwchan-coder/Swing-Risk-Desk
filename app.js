@@ -302,7 +302,7 @@ function renderPlanner(m){
     <div class="draft-head"><div class="draft-identity"><strong class="draft-ticker" data-idea-ticker>${esc(symbol)}</strong><span class="draft-idea-name" data-idea-name>${esc(name)}</span><span class="draft-contract-pill" data-idea-contract>${esc(contractText)}</span></div>
       <div class="draft-actions"><button type="button" class="draft-edit-btn" data-action="toggle-plan-details" data-plan-id="${esc(idea.id)}" aria-expanded="${editing}">${editing?'Done':'Edit'}</button><button type="button" class="draft-preview-btn" data-action="analyze-idea" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id}">${selectedPreviewId===idea.id?'Hide %':'Analyze %'}</button><button type="button" class="draft-record" data-action="plan-to-position" data-plan-id="${esc(idea.id)}">Record</button><button type="button" class="draft-remove" data-action="remove-plan-idea" data-plan-id="${esc(idea.id)}" aria-label="Remove ${esc(symbol)} ${esc(name)}">×</button></div></div>
     <div class="draft-compact-line"><span class="draft-mini-field">Qty <strong data-idea-qty>${esc(idea.qty||'—')}</strong></span><span class="draft-mini-field">Premium <strong data-idea-premium>${esc(premium)}</strong><small>/share</small></span><span class="draft-mini-quote" data-tone="${quoteTone}" data-idea-quote>${esc(quote)}</span></div>
-    ${overCap?`<div class="draft-cap-alert" role="status"><strong>ABOVE FIXED IDEA CAP · +${cad(capOverCad)}</strong><span>This idea uses ${cad(riskRow.reserveCad)} vs your ${cad(fixedIdeaCap)} guide. Rolling pool is separate.</span><button type="button" data-action="focus-cap-policy" title="Review your fixed versus flexible risk allocation">Review policy</button></div>`:''}
+    <div class="draft-cap-alert" data-cap-warning="${esc(idea.id)}" role="status" ${overCap?'':'hidden'}>${overCap?`<strong>ABOVE FIXED IDEA CAP · +${cad(capOverCad)}</strong><span>This idea uses ${cad(riskRow.reserveCad)} vs your ${cad(fixedIdeaCap)} guide. Rolling pool is separate.</span><button type="button" data-action="focus-cap-policy" title="Review your fixed versus flexible risk allocation">Review policy</button>`:''}</div>
     ${editing?`<div class="draft-editor"><div class="draft-editor-heading"><strong>Contract setup</strong><span>Independent contract and assumptions per idea</span></div>
       <label class="draft-name-field"><span>IDEA NAME</span><input type="text" name="name" maxlength="80" value="${esc(idea.name||'')}" placeholder="Breakout continuation"></label>
       <div class="draft-contract-fields"><label><span>TICKER</span><input type="text" name="ticker" maxlength="12" value="${esc(idea.ticker||'')}" placeholder="IREN" autocomplete="off" spellcheck="false"></label><label><span>EXPIRATION</span><input type="date" name="expiry" value="${esc(idea.expiry||'')}"></label><label><span>STRIKE (USD)</span><input type="number" name="strike" min="0.001" step="0.001" value="${esc(idea.strike||'')}"></label><label><span>TYPE</span><select name="optionType"><option value="Call" ${idea.optionType!=='Put'?'selected':''}>Call</option><option value="Put" ${idea.optionType==='Put'?'selected':''}>Put</option></select></label></div>
@@ -319,9 +319,17 @@ function renderPlanner(m){
 }
 function updatePlannerMetrics(m){
  const ideas=sortPlanIdeas(plannerIdeas(m.account.id),planSortMode);const result=calculatePlanBasket(ideas,m.account,m.availableCad);
+ const activeCap=activeIdeaCapCad(m.account);
  for(const r of result.rows){const el=[...document.querySelectorAll('[data-plan-status]')].find(x=>x.dataset.planStatus===r.id);if(!el)continue;
+  const warnEl=[...document.querySelectorAll('[data-cap-warning]')].find(x=>x.dataset.capWarning===r.id);
+  if(warnEl){
+   warnEl.hidden=!r.valid||!r.overIdeaCap;
+   const overCad=r.valid&&r.overIdeaCap?r.reserveCad-activeCap:0;
+   if(!warnEl.hidden)warnEl.innerHTML=`<strong>ABOVE FIXED IDEA CAP · +${cad(overCad)}</strong><span>This idea uses ${cad(r.reserveCad)} vs your ${cad(activeCap)} guide. Rolling pool is separate.</span><button type="button" data-action="focus-cap-policy">Review policy</button>`;
+   warnEl.closest?.('.draft-idea')?.classList?.toggle('is-over-idea-cap',!warnEl.hidden);
+  }
   if(!r.valid){el.className='draft-metrics draft-incomplete';el.textContent=r.reason;continue;}
-  const warning=r.overIdeaCap?`<small class="draft-cap-warning">Above ${cad(m.account.ideaCapCad)} per-idea risk cap</small>`:'';
+  const warning=r.overIdeaCap?`<small class="draft-cap-warning">Fixed guide exceeded by ${cad(r.reserveCad-activeCap)} (limit ${cad(activeCap)})</small>`:'';
   el.className=`draft-metrics ${r.overBudget?'draft-breach':''}`;
   el.innerHTML=`<div class="draft-metric draft-premium-total"><span>Option premiums (USD)</span><strong>${usd(r.premiumTotalUsd)}</strong><small>${r.qty} contracts × ${usd(r.price)} per share × 100</small></div>
     <div class="draft-metric"><span>Est. total cash to buy (USD)</span><strong>${usd(r.debitUsd)}</strong><small>Includes ${usd(r.fee)} estimated buy fees</small></div>
@@ -329,6 +337,18 @@ function updatePlannerMetrics(m){
     <div class="draft-metric"><span>Risk budget left (CAD)</span><strong>${cad(r.remainingCad)}</strong><small>After this and preceding draft ideas</small></div>`;
  }
 
+ const capMode=$('plannerCapMode'),capHelp=$('plannerCapPolicyHelp');
+ if(capMode)capMode.value=activeCap===null?'pool':'fixed';
+ if(capHelp)capHelp.textContent=activeCap===null
+  ?`Flexible: share ${cad(Math.max(0,result.availableCad))} currently available across one or several ideas. No individual cap warning; the combined rolling budget still applies.`
+  :`Fixed: each idea is compared with ${cad(activeCap)}. A warning is advisory; the combined rolling risk ceiling still applies.`;
+ const flags=$('plannerCapFlagSummary'),offenders=result.rows.filter(r=>r.valid&&r.overIdeaCap);
+ if(flags){
+  flags.hidden=!offenders.length;
+  flags.innerHTML=offenders.length?`<strong>${offenders.length} idea${offenders.length===1?'':'s'} above your ${cad(activeCap)} fixed guide:</strong>
+    <div class="planner-cap-offenders">${offenders.map(r=>{const idea=ideas.find(i=>i.id===r.id);const name=[normalizeTicker(idea?.ticker)||'UNTITLED',idea?.name].filter(Boolean).join(' · ');return `<button type="button" data-action="jump-to-cap-idea" data-plan-id="${esc(r.id)}">${esc(name)} · +${cad(r.reserveCad-activeCap)} over <span>Review idea</span></button>`;}).join('')}</div>
+    <small>Use the risk policy selector to switch to Flexible rolling pool if you're intentionally concentrating risk. This does not increase the rolling ceiling.</small>`:''; 
+ }
  const strip=$('plannerSummaryStrip');
  if(strip){
   const status=result.overBudget?'OVER BUDGET':!result.complete?'INCOMPLETE':result.overIdeaCap?'CAP REVIEW':'FITS';
