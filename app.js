@@ -340,7 +340,7 @@ function updatePlannerMetrics(m){
  const capMode=$('plannerCapMode'),capHelp=$('plannerCapPolicyHelp');
  if(capMode)capMode.value=activeCap===null?'pool':'fixed';
  if(capHelp)capHelp.textContent=activeCap===null
-  ?`Flexible: share ${cad(Math.max(0,result.availableCad))} currently available across one or several ideas. No individual cap warning; the combined rolling budget still applies.`
+  ?`Flexible: share ${cad(Math.max(0,result.availableCad))} currently available across one or several ideas. No individual cap warning; the combined rolling budget still applies. ${m.account.mode==='strict'?'Strict mode reserves the full option debit.':'Stress-loss reserves are estimates, not worst-case losses; an option can lose its full debit.'}`
   :`Fixed: each idea is compared with ${cad(activeCap)}. A warning is advisory; the combined rolling risk ceiling still applies.`;
  const flags=$('plannerCapFlagSummary'),offenders=result.rows.filter(r=>r.valid&&r.overIdeaCap);
  if(flags){
