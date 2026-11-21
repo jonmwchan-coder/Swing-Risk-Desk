@@ -712,7 +712,7 @@ function editExit(positionId,txId){const p=findPosition(positionId),tx=p.exits.f
  dialog(`Exit context: ${p.ticker}`,'THE WHY, NOT THE FILL',body,d=>{
   const next={reason:getText(d,'reason'),tpLabel:getText(d,'tpLabel'),underlyingAtExit:optional(getText(d,'underlyingAtExit')),notes:getText(d,'notes')};
   const changed=Object.keys(next).filter(k=>JSON.stringify(next[k]??'')!==JSON.stringify(tx[k]??''));
-  if(changed.length){makeJournalEntry(p,{date:today(),kind:'Exit annotation change',source:`App annotation for ${tx.date} ${tx.time||''} / ${tx.id}`,text:`Updated exit ${tx.date} (${tx.qty} contracts): ${changed.map(k=>`${k}: [${String(tx[k]??'')||'blank'}] -> [${String(next[k]??'')||'blank'}]`).join('\n')}`});Object.assign(tx,next);}
+  if(changed.length){makeJournalEntry(p,{date:today(),kind:'Exit annotation change',source:`App annotation for ${tx.date} ${tx.time||''} / ${tx.id}`,text:`Updated exit ${tx.date} (${tx.qty} contracts): ${changed.map(k=>`${k}: [${String(tx[k]??'')||'blank'}] -> [${String(next[k]??'')||'blank'}]`).join('\n')}`});Object.assign(tx,next,{annotationEditedAt:new Date().toISOString()});}
   showToast(`Exit details saved; ${changed.length} change(s) in journal history.`);return true;});
 }
 function openPositionDetail(id){positionFilter='all';activeTab='positions';render();const item=$('positionsFull').querySelectorAll('[data-position]');for(const el of item)if(el.dataset.position===id){const details=el.querySelector('details');if(details)details.open=true;el.scrollIntoView({block:'center',behavior:'smooth'});break;}}
