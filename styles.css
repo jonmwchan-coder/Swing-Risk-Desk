@@ -653,3 +653,53 @@ html,body{max-width:100%}
  .planner-copy-panel select{max-width:none;width:100%}
  .preview-ticker-sharing{flex-wrap:wrap}
 }
+
+
+/* v3.1: one clear warning per offending idea, and explicit portfolio risk policy. */
+.planner-cap-policy{
+ display:flex;align-items:center;gap:8px 15px;flex-wrap:wrap;
+ margin:0 0 10px;padding:9px 11px;
+ border:1px solid #31505c;border-radius:10px;background:#102733;
+}
+.planner-cap-policy label{display:flex;align-items:center;gap:9px;flex-wrap:wrap;color:#b6d5df;font-weight:750;font-size:10px;letter-spacing:.02em}
+.planner-cap-policy select{min-height:32px;border:1px solid #4d7280;background:#162e3a;color:#e2f5f1;border-radius:7px;padding:5px 9px;font-size:11px;max-width:100%}
+.planner-cap-policy-help{flex:1 1 265px;font-size:10px;line-height:1.45;color:#9cb9c4}
+.planner-cap-settings-link{border:0;background:none;font-size:10px;color:#9ebec5;text-decoration:underline;text-underline-offset:3px;padding:6px 4px;min-height:32px;cursor:pointer}
+.planner-cap-settings-link:hover{color:#e6f8f2}
+.planner-cap-flag-summary{
+ display:flex;flex-direction:column;gap:8px;margin:0 0 12px;padding:11px 13px;
+ border:1px solid #a97d53;border-left:4px solid #daa46e;border-radius:9px;background:#44312650;
+ color:#f5d6b0;font-size:11px
+}
+.planner-cap-flag-summary[hidden],.draft-cap-alert[hidden]{display:none!important}
+.planner-cap-flag-summary>strong{font-size:12px;color:#ffe3c0}
+.planner-cap-flag-summary small{font-size:10px;line-height:1.5;color:#d9bea3}
+.planner-cap-offenders{display:flex;flex-wrap:wrap;gap:7px}
+.planner-cap-offenders button{
+ border:1px solid #b48b61;border-radius:7px;background:#49362c;color:#ffe1c0;
+ padding:7px 10px;min-height:34px;font-weight:750;font-size:11px;cursor:pointer
+}
+.planner-cap-offenders button span{font-weight:500;text-decoration:underline;text-underline-offset:3px;margin-left:6px}
+.planner-cap-offenders button:hover{background:#634735;border-color:#e1b888}
+.draft-idea.is-over-idea-cap{border-color:#bd9165;box-shadow:inset 3px 0 0 #dfa56b,0 0 0 1px #b98a5a36}
+.draft-idea.is-over-idea-cap.is-active{border-color:#b9a578;box-shadow:inset 3px 0 0 #79d5b6,0 0 0 1px #b98a5a8c}
+.draft-cap-alert{
+ display:flex;align-items:center;gap:5px 12px;flex-wrap:wrap;
+ padding:8px 10px;margin:10px 0 4px;border:1px solid #a98258;border-radius:8px;background:#392b267d
+}
+.draft-cap-alert strong{font-size:11px;color:#ffddb2;letter-spacing:.01em;white-space:normal}
+.draft-cap-alert span{font-size:10px;line-height:1.4;color:#dbc6b0;flex:1 1 210px}
+.draft-cap-alert button{
+ border:1px solid #9e7c57;border-radius:7px;background:#44352a;color:#f5d2aa;
+ padding:6px 8px;font-size:10px;min-height:30px;cursor:pointer
+}
+.draft-cap-alert button:hover{background:#654a32}
+.draft-idea.is-over-idea-cap .draft-metric:nth-child(3){border-color:#a97f54;background:#2f302d}
+.draft-idea.is-over-idea-cap .draft-metric:nth-child(3)>strong{color:#ffdaad}
+@media(max-width:690px){
+ .planner-cap-policy{align-items:stretch;gap:8px}
+ .planner-cap-policy label{width:100%;justify-content:space-between}
+ .planner-cap-policy select{flex:1 1 auto}
+ .planner-cap-policy-help{flex-basis:100%}
+ .planner-cap-offenders button{min-height:39px}
+}
