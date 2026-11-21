@@ -1047,9 +1047,6 @@ $('plannerCapMode')?.addEventListener('change',e=>{
  if(mode==='fixed'&&!(Number(a.ideaCapCad)>0)){
   e.target.value=previous;showToast('Set a positive per-idea cap in Rules & data before using Fixed mode.');return;
  }
- if(mode==='pool'&&activeIdeaCapCad(a)!==null&&!confirm(`Switch ${a.name} to flexible rolling-pool allocation? Your ${cad(a.ideaCapCad)} optional per-idea warnings (including open-position cap warnings) will be disabled. Your rolling five-session ceiling and actual risk calculations remain unchanged.`)){
-  e.target.value=previous;return;
- }
  a.ideaCapMode=mode;
  if(!save()){a.ideaCapMode=previous;e.target.value=previous;showToast('Could not save this policy change.');return;}
  render();
