@@ -95,3 +95,18 @@ test('same-login device with obsolete marker adopts complete cloud without creat
   assert.equal(cloud.state.positions[0].journalEntries.length,3);
  }finally{if(oldLocalStorage===undefined)delete globalThis.localStorage;else globalThis.localStorage=oldLocalStorage;}
 });
+
+test('newer exit annotation edits sync without altering fills or allowing stale versions to revert them',()=>{
+ const cloud=fixture(),phone=fixture();
+ phone.positions[0].exits[0].notes='Updated on mobile';
+ phone.positions[0].exits[0].underlyingAtExit=463;
+ phone.positions[0].exits[0].annotationEditedAt='2026-11-21T20:00:00Z';
+ const merged=reconcileForCloud(cloud,phone);
+ assert.equal(merged.next.positions[0].exits[0].notes,'Updated on mobile');
+ assert.equal(merged.next.positions[0].exits[0].underlyingAtExit,463);
+ assert.equal(merged.next.positions[0].fills.length,2);
+ assert.equal(merged.next.positions[0].exits.length,2);
+ const staleDesktop=reconcileForCloud(merged.next,cloud);
+ assert.equal(staleDesktop.next.positions[0].exits[0].notes,'Updated on mobile');
+ assert.equal(staleDesktop.changed,false);
+});
