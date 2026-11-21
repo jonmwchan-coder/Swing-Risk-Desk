@@ -284,18 +284,25 @@ function renderPlanner(m){
   if(!idea.feeManual){const fee=estimateOrderFee(m.account,'BUY',idea.qty).toFixed(2);if(String(idea.fee)!==fee){idea.fee=fee;changed=true;}}
  }
  if(changed)persistPlannerDrafts();
- $('quickPlanner').innerHTML=sortPlanIdeas(ideas,planSortMode).map((idea,index)=>{
+ const sortedIdeas=sortPlanIdeas(ideas,planSortMode);
+ const basket=calculatePlanBasket(sortedIdeas,m.account,m.availableCad);
+ const byId=new Map(basket.rows.map(x=>[x.id,x]));
+ const fixedIdeaCap=activeIdeaCapCad(m.account);
+ $('quickPlanner').innerHTML=sortedIdeas.map((idea,index)=>{
   const editing=expandedPlanId===idea.id,active=editing||selectedPreviewId===idea.id;
+  const riskRow=byId.get(idea.id),overCap=Boolean(riskRow?.overIdeaCap);
+  const capOverCad=overCap?riskRow.reserveCad-fixedIdeaCap:0;
   const symbol=normalizeTicker(idea.ticker)||'NEW TICKER',name=idea.name||'Untitled idea',contract=draftContract(idea);
   const contractText=contract?`${fmtDate(contract.expiry)} · ${contract.strike}${contract.optionType==='Put'?'P':'C'}`:'Select contract';
   const moneyOrDash=v=>String(v??'').trim()&&Number.isFinite(Number(v))&&Number(v)>0?money(Number(v)):'—';
   const premium=moneyOrDash(idea.price),mid=moneyOrDash(idea.marketMid),p=idea.preview||{};
   const quote=idea.quoteStatus==='loading'?'Fetching quote…':idea.priceManual?`Manual premium${mid!=='—'?' · Mid '+mid:''}`:idea.quoteStatus==='indicative'?`Indicative mid ${mid}`:idea.quoteStatus==='unavailable'?'Quote unavailable':idea.quoteStatus==='saved'?'Saved indicative quote · refresh':'Quote not loaded';
   const quoteTone=idea.quoteStatus==='unavailable'?'warning':idea.priceManual?'manual':idea.quoteStatus==='indicative'?'indicative':idea.quoteStatus==='saved'?'warning':'empty';
-  return `<article class="draft-idea ${active?'is-active':''} ${editing?'is-expanded':'is-collapsed'}" data-draft-id="${esc(idea.id)}">
+  return `<article class="draft-idea ${active?'is-active':''} ${editing?'is-expanded':'is-collapsed'} ${overCap?'is-over-idea-cap':''}" data-draft-id="${esc(idea.id)}">
     <div class="draft-head"><div class="draft-identity"><strong class="draft-ticker" data-idea-ticker>${esc(symbol)}</strong><span class="draft-idea-name" data-idea-name>${esc(name)}</span><span class="draft-contract-pill" data-idea-contract>${esc(contractText)}</span></div>
       <div class="draft-actions"><button type="button" class="draft-edit-btn" data-action="toggle-plan-details" data-plan-id="${esc(idea.id)}" aria-expanded="${editing}">${editing?'Done':'Edit'}</button><button type="button" class="draft-preview-btn" data-action="analyze-idea" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id}">${selectedPreviewId===idea.id?'Hide %':'Analyze %'}</button><button type="button" class="draft-record" data-action="plan-to-position" data-plan-id="${esc(idea.id)}">Record</button><button type="button" class="draft-remove" data-action="remove-plan-idea" data-plan-id="${esc(idea.id)}" aria-label="Remove ${esc(symbol)} ${esc(name)}">×</button></div></div>
     <div class="draft-compact-line"><span class="draft-mini-field">Qty <strong data-idea-qty>${esc(idea.qty||'—')}</strong></span><span class="draft-mini-field">Premium <strong data-idea-premium>${esc(premium)}</strong><small>/share</small></span><span class="draft-mini-quote" data-tone="${quoteTone}" data-idea-quote>${esc(quote)}</span></div>
+    ${overCap?`<div class="draft-cap-alert" role="status"><strong>ABOVE FIXED IDEA CAP · +${cad(capOverCad)}</strong><span>This idea uses ${cad(riskRow.reserveCad)} vs your ${cad(fixedIdeaCap)} guide. Rolling pool is separate.</span><button type="button" data-action="focus-cap-policy" title="Review your fixed versus flexible risk allocation">Review policy</button></div>`:''}
     ${editing?`<div class="draft-editor"><div class="draft-editor-heading"><strong>Contract setup</strong><span>Independent contract and assumptions per idea</span></div>
       <label class="draft-name-field"><span>IDEA NAME</span><input type="text" name="name" maxlength="80" value="${esc(idea.name||'')}" placeholder="Breakout continuation"></label>
       <div class="draft-contract-fields"><label><span>TICKER</span><input type="text" name="ticker" maxlength="12" value="${esc(idea.ticker||'')}" placeholder="IREN" autocomplete="off" spellcheck="false"></label><label><span>EXPIRATION</span><input type="date" name="expiry" value="${esc(idea.expiry||'')}"></label><label><span>STRIKE (USD)</span><input type="number" name="strike" min="0.001" step="0.001" value="${esc(idea.strike||'')}"></label><label><span>TYPE</span><select name="optionType"><option value="Call" ${idea.optionType!=='Put'?'selected':''}>Call</option><option value="Put" ${idea.optionType==='Put'?'selected':''}>Put</option></select></label></div>
