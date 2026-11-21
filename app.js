@@ -915,6 +915,15 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'plan-to-position':beginPlannedPosition(el.dataset.planId);break;
  case 'add-plan-idea':{const ideas=plannerIdeas();if(ideas.length>=MAX_PLAN_IDEAS){showToast(`Maximum ${MAX_PLAN_IDEAS} draft ideas.`);break;}const idea=defaultPlanIdea(uid(),account().stressPct,false);ideas.push(idea);expandedPlanId=idea.id;selectedPreviewId=null;quoteRefreshToken++;persistPlannerDrafts();renderPlanner(analytics());[...document.querySelectorAll('.draft-idea')].find(x=>x.dataset.draftId===idea.id)?.querySelector('[name="ticker"]')?.focus();break;}
  case 'remove-plan-idea':dropPlannerIdea(el.dataset.planId);break;
+ case 'focus-cap-policy':{const select=$('plannerCapMode');select?.scrollIntoView?.({block:'center',behavior:'smooth'});select?.focus?.();break;}
+ case 'open-cap-settings':{switchTab('settings');$('settingsForm')?.elements?.namedItem?.('ideaCapCad')?.focus?.();break;}
+ case 'jump-to-cap-idea':{
+  expandedPlanId=el.dataset.planId;
+  if(selectedPreviewId&&selectedPreviewId!==expandedPlanId){selectedPreviewId=null;quoteRefreshToken++;}
+  renderPlanner(analytics());
+  [...document.querySelectorAll('.draft-idea')].find(x=>x.dataset.draftId===expandedPlanId)?.scrollIntoView?.({block:'center',behavior:'smooth'});
+  break;
+ }
  case 'toggle-planner-copy':{const panel=$('plannerCopyPanel');if(!panel)break;if(panel.hidden)renderPlannerCopyChoices();else panel.hidden=true;break;}
  case 'cancel-planner-copy':{const panel=$('plannerCopyPanel');if(panel)panel.hidden=true;break;}
  case 'confirm-planner-copy':confirmPlannerCopy();break;
@@ -1030,6 +1039,22 @@ $('quickPlanner').addEventListener('change',e=>{
  else {persistPlannerDrafts();if(currentPreviewIdea()?.id===idea.id)renderOptionPreview();}
 });
 $('plannerCopyTarget')?.addEventListener('change',updatePlannerCopyHint);
+$('plannerCapMode')?.addEventListener('change',e=>{
+ const a=account();
+ const previous=activeIdeaCapCad(a)===null?'pool':'fixed';
+ const mode=e.target.value==='pool'?'pool':'fixed';
+ if(mode===previous)return;
+ if(mode==='fixed'&&!(Number(a.ideaCapCad)>0)){
+  e.target.value=previous;showToast('Set a positive per-idea cap in Rules & data before using Fixed mode.');return;
+ }
+ if(mode==='pool'&&activeIdeaCapCad(a)!==null&&!confirm(`Switch ${a.name} to flexible rolling-pool allocation? Your ${cad(a.ideaCapCad)} optional per-idea warnings (including open-position cap warnings) will be disabled. Your rolling five-session ceiling and actual risk calculations remain unchanged.`)){
+  e.target.value=previous;return;
+ }
+ a.ideaCapMode=mode;
+ if(!save()){a.ideaCapMode=previous;e.target.value=previous;showToast('Could not save this policy change.');return;}
+ render();
+ showToast(mode==='pool'?'Flexible rolling pool enabled. Fixed cap saved for later.':'Fixed per-idea guide restored. Rolling ceiling unchanged.');
+});
 $('planSortSelect')?.addEventListener('change',e=>{
  planSortMode=PLAN_SORT_MODES.includes(e.target.value)?e.target.value:'created';
  try{localStorage.setItem(PLAN_SORT_KEY,planSortMode);}catch{}
