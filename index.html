@@ -75,6 +75,12 @@
         <section class="panel scenario-panel">
           <div class="section-head section-head-compact"><div><div class="overline">BEFORE YOU CLICK BUY</div><h2>Quick size check</h2></div><span class="subtle-badge">Not a trade signal</span></div>
           <div id="plannerSummaryStrip" class="planner-summary-strip" aria-live="polite" aria-label="Planned portfolio impact at a glance"></div>
+          <div class="planner-cap-policy">
+            <label for="plannerCapMode">Risk allocation <select id="plannerCapMode" aria-label="Select per-idea risk allocation policy"><option value="fixed">Fixed per-idea guide</option><option value="pool">Flexible rolling pool</option></select></label>
+            <span id="plannerCapPolicyHelp" class="planner-cap-policy-help" aria-live="polite">The five-session rolling risk ceiling always applies.</span>
+            <button type="button" class="planner-cap-settings-link" data-action="open-cap-settings" title="Edit the optional CAD per-idea guide in portfolio settings">Edit cap</button>
+          </div>
+          <div id="plannerCapFlagSummary" class="planner-cap-flag-summary" aria-live="polite" hidden></div>
           <div class="draft-toolbar">
             <div class="draft-sort-bar"><label for="planSortSelect">SORT IDEAS</label><select id="planSortSelect" aria-label="Sort saved ideas"><option value="created">Original order</option><option value="ticker">Ticker A-Z</option><option value="name">Idea name A-Z</option><option value="expiry">Expiration earliest first</option></select></div>
             <div class="draft-add-bar"><button type="button" class="btn btn-outline draft-add-btn" data-action="add-plan-idea">+ Add idea</button><button type="button" class="draft-collapse-all" data-action="collapse-plan-ideas">Collapse all</button><span id="planIdeaCount" class="draft-count"></span><button type="button" class="draft-copy-btn" data-action="toggle-planner-copy" title="Copy these hypothetical sizing ideas to another existing portfolio; does not record a trade">Copy to portfolio…</button><button type="button" class="draft-clear-btn" data-action="clear-plan-ideas" title="Remove only this portfolio's saved hypothetical sizing ideas">Clear ideas</button></div>
@@ -135,8 +141,10 @@
               <label><span>EST. BUY COMMISSION / CONTRACT (USD)</span><input name="buyFeePerContractUsd" type="number" min="0" max="1000" step="0.01" required></label>
               <label><span>EST. SELL COMMISSION / CONTRACT (USD)</span><input name="sellFeePerContractUsd" type="number" min="0" max="1000" step="0.01" required></label>
               <label><span>USD / CAD CONVERSION</span><input name="fx" type="number" min="0.01" max="100" step="0.0001" required></label>
-              <label class="span-2"><span>PLANNED LOSS CAP PER IDEA (CAD) / OPTIONAL</span><input name="ideaCapCad" type="number" min="0" step="1" placeholder="e.g. 200"></label>
+              <label><span>IDEA RISK POLICY</span><select name="ideaCapMode"><option value="fixed">Fixed per-idea guide</option><option value="pool">Flexible rolling pool</option></select></label>
+              <label><span>OPTIONAL FIXED CAP PER IDEA (CAD)</span><input name="ideaCapCad" type="number" min="0" step="1" placeholder="e.g. 200"></label>
             </div>
+            <p class="help-line"><strong>Idea risk policy:</strong> Fixed mode flags planned or open ideas above the CAD per-idea guide; it is advisory, not a trade-entry block. Flexible mode removes that optional guide and lets one or several ideas use the available rolling risk pool. <strong>Neither setting changes the portfolio's five-session risk ceiling, the actual risk reserves, or existing trade records.</strong></p>
             <p class="help-line"><strong>Commission estimates, not broker facts:</strong> New entries, exits, and size-planner drafts use these per-contract USD defaults to prefill each order's <em>total</em> fees. Change the amount on any trade. IBKR CSV imports supply actual execution commissions and replace matched estimated fees; they never use these defaults as actual broker records. Buy default is illustrative; the sell estimate is provisional and actual broker fees vary by execution.</p>
             <p class="help-line equity-settings-info" id="equitySettingsInfo">The 3% limit uses tracked realized equity. Change this amount only to reconcile realized equity (excluding unrealized option P/L) or account transfers; past results stay logged.</p>
             <div class="fx-row"><div><strong id="fxDescriptor">1 USD = 1.4000 CAD</strong><p id="fxSource">Illustrative starting rate; replace with broker rate.</p></div><button class="btn btn-subtle" type="button" data-action="refresh-fx">Get Bank of Canada rate</button></div>
@@ -175,7 +183,7 @@
       <div class="bottom-danger"><button type="button" class="text-link text-delete" data-action="reset-data">Reset all locally saved data</button><small>Does not change anything in Google Sheets or IBKR.</small></div>
     </section>
   </main>
-  <footer><span>SWING RISK DESK / v3.0 draft preview</span><span>Process over P&amp;L. All figures in CAD unless marked USD.</span></footer>
+  <footer><span>SWING RISK DESK / v3.1 preview</span><span>Process over P&amp;L. All figures in CAD unless marked USD.</span></footer>
 </div>
 <dialog id="editorDialog" class="editor-dialog"><div class="dialog-content"><div class="dialog-header"><div><div class="overline" id="dialogEyebrow">POSITION</div><h2 id="dialogTitle">New position</h2></div><button type="button" class="icon-button" data-action="close-dialog" aria-label="Close dialog">&#10005;</button></div><div id="dialogBody"></div></div></dialog>
 <input id="importFile" type="file" accept=".json,.csv,application/json,text/csv" hidden>

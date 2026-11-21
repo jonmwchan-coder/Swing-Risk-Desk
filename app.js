@@ -3,7 +3,7 @@ import {isSession,torontoToday,onOrBeforeSession,parseDay,dayOffset} from './lib
 import {SCHEMA,normalizeLedger,importIbkrTrades,mergeFullBackup,makeJournalEntry,recordPlanEdit,backupSnapshot} from './lib/ledger.mjs';
 import {isIbkrCsv,parseIbkrTrades} from './lib/ibkr.mjs';
 import {createCloudController} from './lib/cloud.mjs';
-import {calculatePlanBasket,defaultPlanIdea,parsePlannedContract,MAX_PLAN_IDEAS} from './lib/planner.mjs';
+import {calculatePlanBasket,defaultPlanIdea,parsePlannedContract,MAX_PLAN_IDEAS,activeIdeaCapCad} from './lib/planner.mjs';
 import {PLANNER_LOCAL_KEY,loadPlannerDrafts,savePlannerDrafts,clearPlannerDraftStorage} from './lib/planner-storage.mjs';
 import {DEFAULT_BUY_FEE_USD,DEFAULT_SELL_FEE_USD,estimateOrderFee,ratePerContract} from './lib/fees.mjs';
 import {buildSingleTradeHandoff,singleTradeExportFilename,TRADE_HANDOFF_SCHEMA} from './lib/trade-export.mjs';
@@ -33,7 +33,7 @@ const optional=(v)=>v===''||v===null||v===undefined?null:Number(v);
 const today=()=>torontoToday();
 function seed(){return {
   schema:SCHEMA,
-  accounts:[{id:'bdi',name:'Sample Swing Account',equityCad:20000,equityCheckpoints:[{id:'equity-initial-bdi',date:onOrBeforeSession(today()),createdAt:new Date().toISOString(),equityCad:20000,realizedPnlCad:0,source:'Initial account equity'}],riskPct:3,window:5,stressPct:70,roundStep:25,mode:'stress',fx:1.4,fxSource:'Illustrative assumption, not a live quote',fxDate:'',ideaCapCad:200,brokerAccountId:'',buyFeePerContractUsd:DEFAULT_BUY_FEE_USD,sellFeePerContractUsd:DEFAULT_SELL_FEE_USD}],
+  accounts:[{id:'bdi',name:'Sample Swing Account',equityCad:20000,equityCheckpoints:[{id:'equity-initial-bdi',date:onOrBeforeSession(today()),createdAt:new Date().toISOString(),equityCad:20000,realizedPnlCad:0,source:'Initial account equity'}],riskPct:3,window:5,stressPct:70,roundStep:25,mode:'stress',fx:1.4,fxSource:'Illustrative assumption, not a live quote',fxDate:'',ideaCapCad:200,ideaCapMode:'fixed',brokerAccountId:'',buyFeePerContractUsd:DEFAULT_BUY_FEE_USD,sellFeePerContractUsd:DEFAULT_SELL_FEE_USD}],
   positions:[],adjustments:[],customClosed:[],brokerInbox:[],importLog:[],conflicts:[],archive:[],revision:0,lastBackupRevision:0,lastBackupAt:''
 };}
 
@@ -201,12 +201,13 @@ function renderOverview(m){
   if(missing.length)alerts.push({kind:'warning',title:`${missing.length} open position${missing.length===1?' is':'s are'} missing an underlying invalidation.`,desc:`${missing.map(x=>x.position.ticker).join(', ')}: the stress reserve is a planning estimate, not a protective stop. Set the structure/time invalidation.`});
   const pastExp=m.positions.filter(x=>x.metrics.qty>0&&x.position.expiry&&x.position.expiry<m.asOf);
   if(pastExp.length)alerts.push({kind:'danger',title:`${pastExp.map(x=>x.position.ticker).join(', ')} shows an expired contract with no recorded close.`,desc:'Reconcile the broker fills. The app will not invent an expiry loss or quietly zero out your reserve.'});
-  const openWithStop=m.positions.filter(x=>x.metrics.qty>0&&x.metrics.planLoss!==null&&m.account.ideaCapCad>0&&x.metrics.planLoss>m.account.ideaCapCad+.01);
-  if(openWithStop.length)alerts.push({kind:'warning',title:'Estimated stop loss exceeds your planned idea cap.',desc:`${openWithStop.map(x=>x.position.ticker).join(', ')}: review planned risk vs the ${cad(m.account.ideaCapCad)} idea cap.`});
+  const ideaCap=activeIdeaCapCad(m.account);
+  const openWithStop=m.positions.filter(x=>x.metrics.qty>0&&x.metrics.planLoss!==null&&ideaCap!==null&&x.metrics.planLoss>ideaCap+.01);
+  if(openWithStop.length)alerts.push({kind:'warning',title:'Estimated stop loss exceeds your planned idea cap.',desc:`${openWithStop.map(x=>x.position.ticker).join(', ')}: review planned risk vs the ${cad(ideaCap)} optional per-idea guide.`});
   const themeGroups={};for(const item of m.positions.filter(x=>x.metrics.qty>0)){const theme=item.position.sector?.trim().toLowerCase();if(theme)(themeGroups[theme]??=[]).push(item);}
   for(const [theme,items] of Object.entries(themeGroups)){if(new Set(items.map(x=>x.position.ticker)).size>1){const total=items.reduce((sum,x)=>sum+x.metrics.reserveCad,0);alerts.push({kind:'warning',title:`Correlated exposure: ${items.map(x=>x.position.ticker).join(' + ')}.`,desc:`These share the ${theme} theme and together reserve ${cad(total)}. Different tickers do not make independent bets.`});}}
   const ideaGroups={};for(const item of m.positions.filter(x=>x.metrics.qty>0)){const idea=item.position.ideaId?.trim();if(idea)(ideaGroups[idea]??=[]).push(item);}
-  for(const [idea,items] of Object.entries(ideaGroups)){if(items.length>1&&m.account.ideaCapCad>0){const sum=items.reduce((n,x)=>n+(x.metrics.planLoss||0),0);if(sum>m.account.ideaCapCad){alerts.push({kind:'warning',title:`Combined idea stop exposure exceeds ${cad(m.account.ideaCapCad)}.`,desc:`${idea}: ${cad(sum)} across ${items.length} positions, before any exit slippage.`});}}}
+  for(const [idea,items] of Object.entries(ideaGroups)){if(items.length>1&&ideaCap!==null){const sum=items.reduce((n,x)=>n+(x.metrics.planLoss||0),0);if(sum>ideaCap){alerts.push({kind:'warning',title:`Combined idea stop exposure exceeds ${cad(ideaCap)}.`,desc:`${idea}: ${cad(sum)} across ${items.length} positions, before any exit slippage.`});}}}
   if(m.account.fxSource?.toLowerCase().includes('illustrative'))alerts.push({kind:'warning',title:`USD/CAD ${Number(m.account.fx).toFixed(4)} is an illustrative starting rate.`,desc:'Refresh from Bank of Canada or enter IBKR FX in Rules & data for more precise CAD figures.'});
   $('alerts').innerHTML=alerts.map(a=>`<div class="alert ${a.kind==='danger'?'danger':''}"><div class="alert-icon">${a.kind==='danger'?'!':'i'}</div><div><strong>${esc(a.title)}</strong><p>${esc(a.desc)}</p></div></div>`).join('');
   const open=m.positions.filter(x=>x.metrics.qty>0).sort((x,y)=>y.metrics.reserveCad-x.metrics.reserveCad);
@@ -265,7 +266,7 @@ function renderHistory(m){
   return `<tr><td data-label="DATE"><time datetime="${esc(r.date)}" title="${esc(fmtDate(r.date,true))}">${esc(historyDate(r.date))}</time><div class="history-subnote">${esc(r.time||'')}</div></td><td data-label="OPTION / SIDE"><strong>${name}</strong><div class="history-side">${esc(r.action)} ${r.hasOverride?'· broker P/L':''}</div></td><td data-label="QTY">${esc(r.qty)}</td><td data-label="PREMIUM USD">${r.priceUsd===null?'--':money(r.priceUsd,2)}</td><td data-label="TP" class="history-level-cell"><div class="history-cell-scroll" tabindex="0" title="${esc(p?.targetLevels||'')}">${p?mark(p.targetLevels):'--'}</div></td><td data-label="INVALIDATION" class="history-level-cell"><div class="history-cell-scroll" tabindex="0" title="${esc(p?.underlyingInvalidation||'')}">${p?mark(p.underlyingInvalidation):'--'}</div></td><td data-label="THESIS / CATALYST" class="history-thesis-cell"><div class="history-cell-scroll" tabindex="0" title="${esc(memo)}">${p?mark(memo,'Add thesis using Edit plan'):'--'}</div></td><td data-label="EXIT / REASON"><div class="history-cell-scroll" tabindex="0">${exitInfo}</div></td><td data-label="REALIZED CAD" class="${r.pnlCad===null?'':r.pnlCad>0?'pnl-pos':r.pnlCad<0?'pnl-neg':'pnl-zero'}">${r.pnlCad===null?'----':money(r.pnlCad)}</td><td data-label="RETURN %" title="Net realized P/L divided by allocated purchase cost of the contracts sold (fees included)" class="${r.returnPct===null||r.returnPct===undefined?'':r.returnPct>0?'pnl-pos':r.returnPct<0?'pnl-neg':'pnl-zero'}">${formattedReturn(r.returnPct)}</td><td data-label="REVIEW">${p?`<div class="history-actions"><button class="tiny-btn" type="button" data-action="edit-position" data-id="${esc(p.id)}">Edit plan</button><button class="tiny-btn" type="button" data-action="view-position" data-id="${esc(p.id)}">Details</button><button class="tiny-btn" type="button" data-action="export-trade" data-id="${esc(p.id)}" title="Download this one trade as JSON for GPT review">Export</button><button class="tiny-btn" type="button" data-action="add-note" data-id="${esc(p.id)}">+ Note</button>${r.action==='SELL'?`<button class="tiny-btn" type="button" data-action="edit-exit" data-id="${esc(p.id)}" data-tx="${esc(r.id)}">Exit details</button>`:''}</div>`:`<button class="tiny-btn" type="button" data-action="delete-adjustment" data-id="${esc(r.id)}">Archive</button>`}</td></tr>`;
  }).join('')}</tbody></table>`:'<div class="empty-inline">No executions yet. Import IBKR trades, add a position, or enter a historical result.</div>';
 }
-function renderSettings(a){const f=$('settingsForm');const tracked=calculateAccount(state,a.id,today());const fields={name:a.name,brokerAccountId:a.brokerAccountId||'',equityCad:tracked.currentEquityCad,riskPct:a.riskPct,window:a.window,stressPct:a.stressPct,roundStep:a.roundStep,mode:a.mode,fx:a.fx,ideaCapCad:a.ideaCapCad??'',buyFeePerContractUsd:ratePerContract(a,'BUY'),sellFeePerContractUsd:ratePerContract(a,'SELL')};
+function renderSettings(a){const f=$('settingsForm');const tracked=calculateAccount(state,a.id,today());const fields={name:a.name,brokerAccountId:a.brokerAccountId||'',equityCad:tracked.currentEquityCad,riskPct:a.riskPct,window:a.window,stressPct:a.stressPct,roundStep:a.roundStep,mode:a.mode,fx:a.fx,ideaCapCad:a.ideaCapCad??'',ideaCapMode:a.ideaCapMode==='pool'?'pool':'fixed',buyFeePerContractUsd:ratePerContract(a,'BUY'),sellFeePerContractUsd:ratePerContract(a,'SELL')};
  for(const [k,v] of Object.entries(fields)){const field=f.elements.namedItem(k);if(field)field.value=v;}
  $('equitySettingsInfo').textContent=`Calculated: ${cad(tracked.equityCheckpointCad)} checkpoint ${tracked.equityChangeCad>=0?'+':''}${money(tracked.equityChangeCad)} net realized P/L = ${cad(tracked.currentEquityCad)} now. Editing this figure creates a new dated checkpoint without resetting rolling losses. Exclude unrealized P/L from open positions when reconciling, or you may count it again when they close.`;
  $('fxDescriptor').textContent=`1 USD = ${Number(a.fx).toFixed(4)} CAD`;
@@ -283,18 +284,25 @@ function renderPlanner(m){
   if(!idea.feeManual){const fee=estimateOrderFee(m.account,'BUY',idea.qty).toFixed(2);if(String(idea.fee)!==fee){idea.fee=fee;changed=true;}}
  }
  if(changed)persistPlannerDrafts();
- $('quickPlanner').innerHTML=sortPlanIdeas(ideas,planSortMode).map((idea,index)=>{
+ const sortedIdeas=sortPlanIdeas(ideas,planSortMode);
+ const basket=calculatePlanBasket(sortedIdeas,m.account,m.availableCad);
+ const byId=new Map(basket.rows.map(x=>[x.id,x]));
+ const fixedIdeaCap=activeIdeaCapCad(m.account);
+ $('quickPlanner').innerHTML=sortedIdeas.map((idea,index)=>{
   const editing=expandedPlanId===idea.id,active=editing||selectedPreviewId===idea.id;
+  const riskRow=byId.get(idea.id),overCap=Boolean(riskRow?.overIdeaCap);
+  const capOverCad=overCap?riskRow.reserveCad-fixedIdeaCap:0;
   const symbol=normalizeTicker(idea.ticker)||'NEW TICKER',name=idea.name||'Untitled idea',contract=draftContract(idea);
   const contractText=contract?`${fmtDate(contract.expiry)} · ${contract.strike}${contract.optionType==='Put'?'P':'C'}`:'Select contract';
   const moneyOrDash=v=>String(v??'').trim()&&Number.isFinite(Number(v))&&Number(v)>0?money(Number(v)):'—';
   const premium=moneyOrDash(idea.price),mid=moneyOrDash(idea.marketMid),p=idea.preview||{};
   const quote=idea.quoteStatus==='loading'?'Fetching quote…':idea.priceManual?`Manual premium${mid!=='—'?' · Mid '+mid:''}`:idea.quoteStatus==='indicative'?`Indicative mid ${mid}`:idea.quoteStatus==='unavailable'?'Quote unavailable':idea.quoteStatus==='saved'?'Saved indicative quote · refresh':'Quote not loaded';
   const quoteTone=idea.quoteStatus==='unavailable'?'warning':idea.priceManual?'manual':idea.quoteStatus==='indicative'?'indicative':idea.quoteStatus==='saved'?'warning':'empty';
-  return `<article class="draft-idea ${active?'is-active':''} ${editing?'is-expanded':'is-collapsed'}" data-draft-id="${esc(idea.id)}">
+  return `<article class="draft-idea ${active?'is-active':''} ${editing?'is-expanded':'is-collapsed'} ${overCap?'is-over-idea-cap':''}" data-draft-id="${esc(idea.id)}">
     <div class="draft-head"><div class="draft-identity"><strong class="draft-ticker" data-idea-ticker>${esc(symbol)}</strong><span class="draft-idea-name" data-idea-name>${esc(name)}</span><span class="draft-contract-pill" data-idea-contract>${esc(contractText)}</span></div>
       <div class="draft-actions"><button type="button" class="draft-edit-btn" data-action="toggle-plan-details" data-plan-id="${esc(idea.id)}" aria-expanded="${editing}">${editing?'Done':'Edit'}</button><button type="button" class="draft-preview-btn" data-action="analyze-idea" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id}">${selectedPreviewId===idea.id?'Hide %':'Analyze %'}</button><button type="button" class="draft-record" data-action="plan-to-position" data-plan-id="${esc(idea.id)}">Record</button><button type="button" class="draft-remove" data-action="remove-plan-idea" data-plan-id="${esc(idea.id)}" aria-label="Remove ${esc(symbol)} ${esc(name)}">×</button></div></div>
     <div class="draft-compact-line"><span class="draft-mini-field">Qty <strong data-idea-qty>${esc(idea.qty||'—')}</strong></span><span class="draft-mini-field">Premium <strong data-idea-premium>${esc(premium)}</strong><small>/share</small></span><span class="draft-mini-quote" data-tone="${quoteTone}" data-idea-quote>${esc(quote)}</span></div>
+    <div class="draft-cap-alert" data-cap-warning="${esc(idea.id)}" role="status" ${overCap?'':'hidden'}>${overCap?`<strong>ABOVE FIXED IDEA CAP · +${cad(capOverCad)}</strong><span>This idea uses ${cad(riskRow.reserveCad)} vs your ${cad(fixedIdeaCap)} guide. Rolling pool is separate.</span><button type="button" data-action="focus-cap-policy" title="Review your fixed versus flexible risk allocation">Review policy</button>`:''}</div>
     ${editing?`<div class="draft-editor"><div class="draft-editor-heading"><strong>Contract setup</strong><span>Independent contract and assumptions per idea</span></div>
       <label class="draft-name-field"><span>IDEA NAME</span><input type="text" name="name" maxlength="80" value="${esc(idea.name||'')}" placeholder="Breakout continuation"></label>
       <div class="draft-contract-fields"><label><span>TICKER</span><input type="text" name="ticker" maxlength="12" value="${esc(idea.ticker||'')}" placeholder="IREN" autocomplete="off" spellcheck="false"></label><label><span>EXPIRATION</span><input type="date" name="expiry" value="${esc(idea.expiry||'')}"></label><label><span>STRIKE (USD)</span><input type="number" name="strike" min="0.001" step="0.001" value="${esc(idea.strike||'')}"></label><label><span>TYPE</span><select name="optionType"><option value="Call" ${idea.optionType!=='Put'?'selected':''}>Call</option><option value="Put" ${idea.optionType==='Put'?'selected':''}>Put</option></select></label></div>
@@ -311,9 +319,17 @@ function renderPlanner(m){
 }
 function updatePlannerMetrics(m){
  const ideas=sortPlanIdeas(plannerIdeas(m.account.id),planSortMode);const result=calculatePlanBasket(ideas,m.account,m.availableCad);
+ const activeCap=activeIdeaCapCad(m.account);
  for(const r of result.rows){const el=[...document.querySelectorAll('[data-plan-status]')].find(x=>x.dataset.planStatus===r.id);if(!el)continue;
+  const warnEl=[...document.querySelectorAll('[data-cap-warning]')].find(x=>x.dataset.capWarning===r.id);
+  if(warnEl){
+   warnEl.hidden=!r.valid||!r.overIdeaCap;
+   const overCad=r.valid&&r.overIdeaCap?r.reserveCad-activeCap:0;
+   if(!warnEl.hidden)warnEl.innerHTML=`<strong>ABOVE FIXED IDEA CAP · +${cad(overCad)}</strong><span>This idea uses ${cad(r.reserveCad)} vs your ${cad(activeCap)} guide. Rolling pool is separate.</span><button type="button" data-action="focus-cap-policy">Review policy</button>`;
+   warnEl.closest?.('.draft-idea')?.classList?.toggle('is-over-idea-cap',!warnEl.hidden);
+  }
   if(!r.valid){el.className='draft-metrics draft-incomplete';el.textContent=r.reason;continue;}
-  const warning=r.overIdeaCap?`<small class="draft-cap-warning">Above ${cad(m.account.ideaCapCad)} per-idea risk cap</small>`:'';
+  const warning=r.overIdeaCap?`<small class="draft-cap-warning">Fixed guide exceeded by ${cad(r.reserveCad-activeCap)} (limit ${cad(activeCap)})</small>`:'';
   el.className=`draft-metrics ${r.overBudget?'draft-breach':''}`;
   el.innerHTML=`<div class="draft-metric draft-premium-total"><span>Option premiums (USD)</span><strong>${usd(r.premiumTotalUsd)}</strong><small>${r.qty} contracts × ${usd(r.price)} per share × 100</small></div>
     <div class="draft-metric"><span>Est. total cash to buy (USD)</span><strong>${usd(r.debitUsd)}</strong><small>Includes ${usd(r.fee)} estimated buy fees</small></div>
@@ -321,6 +337,18 @@ function updatePlannerMetrics(m){
     <div class="draft-metric"><span>Risk budget left (CAD)</span><strong>${cad(r.remainingCad)}</strong><small>After this and preceding draft ideas</small></div>`;
  }
 
+ const capMode=$('plannerCapMode'),capHelp=$('plannerCapPolicyHelp');
+ if(capMode)capMode.value=activeCap===null?'pool':'fixed';
+ if(capHelp)capHelp.textContent=activeCap===null
+  ?`Flexible: share ${cad(Math.max(0,result.availableCad))} currently available across one or several ideas. No individual cap warning; the combined rolling budget still applies. ${m.account.mode==='strict'?'Strict mode reserves the full option debit.':'Stress-loss reserves are estimates, not worst-case losses; an option can lose its full debit.'}`
+  :`Fixed: each idea is compared with ${cad(activeCap)}. A warning is advisory; the combined rolling risk ceiling still applies.`;
+ const flags=$('plannerCapFlagSummary'),offenders=result.rows.filter(r=>r.valid&&r.overIdeaCap);
+ if(flags){
+  flags.hidden=!offenders.length;
+  flags.innerHTML=offenders.length?`<strong>${offenders.length} idea${offenders.length===1?'':'s'} above your ${cad(activeCap)} fixed guide:</strong>
+    <div class="planner-cap-offenders">${offenders.map(r=>{const idea=ideas.find(i=>i.id===r.id);const name=[normalizeTicker(idea?.ticker)||'UNTITLED',idea?.name].filter(Boolean).join(' · ');return `<button type="button" data-action="jump-to-cap-idea" data-plan-id="${esc(r.id)}">${esc(name)} · +${cad(r.reserveCad-activeCap)} over <span>Review idea</span></button>`;}).join('')}</div>
+    <small>Use the risk policy selector to switch to Flexible rolling pool if you're intentionally concentrating risk. This does not increase the rolling ceiling.</small>`:''; 
+ }
  const strip=$('plannerSummaryStrip');
  if(strip){
   const status=result.overBudget?'OVER BUDGET':!result.complete?'INCOMPLETE':result.overIdeaCap?'CAP REVIEW':'FITS';
@@ -698,7 +726,7 @@ function manualPnl(){const now=analytics().asOf;const body=`<p class="modal-intr
  dialog('Record prior realized P/L','HISTORICAL ADJUSTMENT',body,(d)=>{const date=requireDate(getText(d,'date'),'trade date');validateSession(date);validateAsOf(date);const pnlCad=requireRange(getText(d,'pnlCad'),-1e9,1e9,'P/L'),note=getText(d,'note');if(!note)throw new Error('Label required.');state.adjustments.push({id:uid(),accountId:account().id,date,pnlCad,note});showToast(`Saved ${money(pnlCad)} in realized CAD P/L.`);return true;});
 }
 function addAccount(){const body=`<p class="modal-intro">Each portfolio gets its own rolling loss and open-risk allocation. Do not treat correlated accounts as diversification.</p><form><div class="modal-grid">${field('PORTFOLIO NAME','name','text','New swing account',{required:'required',maxlength:56})}${field('CURRENT EQUITY CAD','equity','number',20000,{required:'required',min:0,step:.01})}${field('RISK % / WINDOW','risk','number',3,{required:'required',min:0,max:100,step:.1})}${field('STRESS %','stress','number',70,{required:'required',min:0,max:100,step:1})}</div>${formEnd('Add account')}</form>`;
- dialog('New portfolio','INDEPENDENT ACCOUNT',body,(d)=>{const a=account(),name=getText(d,'name'),equity=requireRange(getText(d,'equity'),0,1e9,'Equity'),riskPct=requireRange(getText(d,'risk'),0,100,'Risk'),stressPct=requireRange(getText(d,'stress'),0,100,'Stress');if(!name)throw new Error('Name is required.');const id=uid();state.accounts.push({id,name,equityCad:equity,equityCheckpoints:[{id:uid(),date:onOrBeforeSession(today(),state.customClosed),createdAt:new Date().toISOString(),equityCad:equity,realizedPnlCad:0,source:'New portfolio opening equity'}],riskPct,stressPct,window:5,roundStep:25,mode:'stress',fx:a.fx,fxSource:a.fxSource,fxDate:a.fxDate,ideaCapCad:200,brokerAccountId:'',buyFeePerContractUsd:ratePerContract(a,'BUY'),sellFeePerContractUsd:ratePerContract(a,'SELL')});activeAccountId=id;rememberAccount();showToast(`${name} created.`);return true;});
+ dialog('New portfolio','INDEPENDENT ACCOUNT',body,(d)=>{const a=account(),name=getText(d,'name'),equity=requireRange(getText(d,'equity'),0,1e9,'Equity'),riskPct=requireRange(getText(d,'risk'),0,100,'Risk'),stressPct=requireRange(getText(d,'stress'),0,100,'Stress');if(!name)throw new Error('Name is required.');const id=uid();state.accounts.push({id,name,equityCad:equity,equityCheckpoints:[{id:uid(),date:onOrBeforeSession(today(),state.customClosed),createdAt:new Date().toISOString(),equityCad:equity,realizedPnlCad:0,source:'New portfolio opening equity'}],riskPct,stressPct,window:5,roundStep:25,mode:'stress',fx:a.fx,fxSource:a.fxSource,fxDate:a.fxDate,ideaCapCad:200,ideaCapMode:'fixed',brokerAccountId:'',buyFeePerContractUsd:ratePerContract(a,'BUY'),sellFeePerContractUsd:ratePerContract(a,'SELL')});activeAccountId=id;rememberAccount();showToast(`${name} created.`);return true;});
 }
 function saveSettings(e){e.preventDefault();const f=e.currentTarget,d=new FormData(f),a=account();try{
  const equityCad=requireRange(getText(d,'equityCad'),0,1e9,'Equity'),riskPct=requireRange(getText(d,'riskPct'),0,100,'Risk percentage'),window=Math.floor(requireRange(getText(d,'window'),1,30,'Window')),stressPct=requireRange(getText(d,'stressPct'),0,100,'Stress percentage'),fx=requireRange(getText(d,'fx'),.01,100,'FX');const step=requireRange(getText(d,'roundStep'),0,100,'Rounding');
@@ -712,7 +740,10 @@ function saveSettings(e){e.preventDefault();const f=e.currentTarget,d=new FormDa
    a.equityCad=equityCad;
    a.equityPnlAtCheckpointCad=before.realizedAllTime;
  }
- Object.assign(a,{name,brokerAccountId,riskPct,window,stressPct,fx,roundStep:step,mode:getText(d,'mode')==='strict'?'strict':'stress',ideaCapCad:optional(getText(d,'ideaCapCad')),buyFeePerContractUsd,sellFeePerContractUsd});
+ const capValue=optional(getText(d,'ideaCapCad')),ideaCapMode=getText(d,'ideaCapMode')==='pool'?'pool':'fixed';
+ if(capValue!==null&&(!Number.isFinite(capValue)||capValue<0||capValue>1e9))throw new Error('Set a valid optional per-idea cap in CAD.');
+ if(ideaCapMode==='fixed'&&!(capValue>0))throw new Error('Enter a positive per-idea cap, or choose Flexible rolling pool.');
+ Object.assign(a,{name,brokerAccountId,riskPct,window,stressPct,fx,roundStep:step,mode:getText(d,'mode')==='strict'?'strict':'stress',ideaCapCad:capValue,ideaCapMode,buyFeePerContractUsd,sellFeePerContractUsd});
  if(fx!==oldFx){a.fxSource='Manually entered (broker rate if supplied)';a.fxDate='';}
  save();render();showToast(equityRebased?'Equity checkpoint saved. New realized P/L will now update account equity automatically.':'Portfolio rules recalculated; tracked equity preserved.');
  }catch(err){showToast(err.message);}
@@ -884,6 +915,15 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'plan-to-position':beginPlannedPosition(el.dataset.planId);break;
  case 'add-plan-idea':{const ideas=plannerIdeas();if(ideas.length>=MAX_PLAN_IDEAS){showToast(`Maximum ${MAX_PLAN_IDEAS} draft ideas.`);break;}const idea=defaultPlanIdea(uid(),account().stressPct,false);ideas.push(idea);expandedPlanId=idea.id;selectedPreviewId=null;quoteRefreshToken++;persistPlannerDrafts();renderPlanner(analytics());[...document.querySelectorAll('.draft-idea')].find(x=>x.dataset.draftId===idea.id)?.querySelector('[name="ticker"]')?.focus();break;}
  case 'remove-plan-idea':dropPlannerIdea(el.dataset.planId);break;
+ case 'focus-cap-policy':{const select=$('plannerCapMode');select?.scrollIntoView?.({block:'center',behavior:'smooth'});select?.focus?.();break;}
+ case 'open-cap-settings':{switchTab('settings');$('settingsForm')?.elements?.namedItem?.('ideaCapCad')?.focus?.();break;}
+ case 'jump-to-cap-idea':{
+  expandedPlanId=el.dataset.planId;
+  if(selectedPreviewId&&selectedPreviewId!==expandedPlanId){selectedPreviewId=null;quoteRefreshToken++;}
+  renderPlanner(analytics());
+  [...document.querySelectorAll('.draft-idea')].find(x=>x.dataset.draftId===expandedPlanId)?.scrollIntoView?.({block:'center',behavior:'smooth'});
+  break;
+ }
  case 'toggle-planner-copy':{const panel=$('plannerCopyPanel');if(!panel)break;if(panel.hidden)renderPlannerCopyChoices();else panel.hidden=true;break;}
  case 'cancel-planner-copy':{const panel=$('plannerCopyPanel');if(panel)panel.hidden=true;break;}
  case 'confirm-planner-copy':confirmPlannerCopy();break;
@@ -999,6 +1039,19 @@ $('quickPlanner').addEventListener('change',e=>{
  else {persistPlannerDrafts();if(currentPreviewIdea()?.id===idea.id)renderOptionPreview();}
 });
 $('plannerCopyTarget')?.addEventListener('change',updatePlannerCopyHint);
+$('plannerCapMode')?.addEventListener('change',e=>{
+ const a=account();
+ const previous=activeIdeaCapCad(a)===null?'pool':'fixed';
+ const mode=e.target.value==='pool'?'pool':'fixed';
+ if(mode===previous)return;
+ if(mode==='fixed'&&!(Number(a.ideaCapCad)>0)){
+  e.target.value=previous;showToast('Set a positive per-idea cap in Rules & data before using Fixed mode.');return;
+ }
+ a.ideaCapMode=mode;
+ if(!save()){a.ideaCapMode=previous;e.target.value=previous;showToast('Could not save this policy change.');return;}
+ render();
+ showToast(mode==='pool'?'Flexible rolling pool enabled. Fixed cap saved for later.':'Fixed per-idea guide restored. Rolling ceiling unchanged.');
+});
 $('planSortSelect')?.addEventListener('change',e=>{
  planSortMode=PLAN_SORT_MODES.includes(e.target.value)?e.target.value:'created';
  try{localStorage.setItem(PLAN_SORT_KEY,planSortMode);}catch{}
