@@ -525,7 +525,7 @@ function updateOptionPreviewResults(){
 async function refreshDraftPremium(idea){
  const key=draftContractKey(idea),symbol=buildOCCSymbol(draftContract(idea)),id=idea?.id;
  if(!key||!symbol)return;
- idea.quoteStatus='loading';idea.quoteMessage='Fetching exact option quote…';
+ idea.quoteStatus='loading';idea.quoteMessage='Fetching exact option quote…';showInlineQuoteLoading(idea);
  try{
   const verify=await fetch(`/api/option-contract?symbol=${encodeURIComponent(symbol)}`,{cache:'no-store'}).then(async r=>({status:r.status,ok:r.ok,data:await r.json().catch(()=>({}))})).catch(()=>({status:502,ok:false,data:{}}));
   if(verify.status===404||verify.status===422)throw Error(verify.data.error||'Contract unavailable in Alpaca listing.');
@@ -552,7 +552,7 @@ async function refreshDraftPremium(idea){
 async function refreshOptionQuote(){
  const idea=currentPreviewIdea(),symbol=buildOCCSymbol(draftContract(idea)),contractKey=draftContractKey(idea);
  if(!idea||!symbol){quoteRefreshMessage='Enter a valid ticker, expiration, strike and call/put.';renderOptionPreview();return;}
- const token=++quoteRefreshToken;quoteRefreshBusy=true;quoteRefreshMessage='';quoteConnectionState='loading';renderOptionPreview();
+ const token=++quoteRefreshToken;quoteRefreshBusy=true;quoteRefreshMessage='';quoteConnectionState='loading';idea.quoteStatus='loading';showInlineQuoteLoading(idea);void ensureListedExpirations(idea);renderOptionPreview();
  try{
   let verification='Contract listing unverified';
   const check=await fetch(`/api/option-contract?symbol=${encodeURIComponent(symbol)}`,{cache:'no-store'}).then(async response=>({ok:response.ok,status:response.status,data:await response.json().catch(()=>({}))})).catch(()=>({ok:false,status:502,data:{code:'VALIDATION_UNAVAILABLE'}}));
@@ -959,8 +959,10 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'toggle-planner-copy':{const panel=$('plannerCopyPanel');if(!panel)break;if(panel.hidden)renderPlannerCopyChoices();else panel.hidden=true;break;}
  case 'cancel-planner-copy':{const panel=$('plannerCopyPanel');if(panel)panel.hidden=true;break;}
  case 'confirm-planner-copy':confirmPlannerCopy();break;
-  case 'toggle-plan-details':{expandedPlanId=expandedPlanId===el.dataset.planId?null:el.dataset.planId;if(expandedPlanId&&selectedPreviewId&&expandedPlanId!==selectedPreviewId){selectedPreviewId=null;quoteRefreshToken++;}renderPlanner(analytics());break;}
+  case 'toggle-plan-details':{expandedPlanId=expandedPlanId===el.dataset.planId?null:el.dataset.planId;if(expandedPlanId&&selectedPreviewId&&expandedPlanId!==selectedPreviewId){selectedPreviewId=null;quoteRefreshToken++;}renderPlanner(analytics());if(expandedPlanId){const idea=plannerIdeas().find(i=>i.id===expandedPlanId);if(idea)queueListedExpirations(idea,true);}break;}
   case 'collapse-plan-ideas':expandedPlanId=null;renderPlanner(analytics());break;
+ case 'refresh-listed-expirations':{const idea=plannerIdeas().find(x=>x.id===el.dataset.planId);if(idea)void ensureListedExpirations(idea,true);break;}
+ case 'choose-listed-expiry':applyListedExpiry(el.dataset.planId,el.dataset.expiry);break;
  case 'clear-plan-ideas':{if(!confirm('Clear all saved Quick size check ideas for this portfolio? Recorded positions will not be affected.'))break;expandedPlanId=null;selectedPreviewId=null;quoteRefreshToken++;plannerDrafts[account().id]=[defaultPlanIdea(uid(),account().stressPct,false)];persistPlannerDrafts();renderPlanner(analytics());showToast('Saved size-check ideas cleared for this portfolio.');break;}
  case 'analyze-idea':{const opening=selectedPreviewId!==el.dataset.planId;selectedPreviewId=opening?el.dataset.planId:null;if(opening)adoptTickerLevels(currentPreviewIdea());expandedPlanId=null;quoteRefreshToken++;quoteRefreshMessage='';quoteConnectionState='unknown';renderPlanner(analytics());if(opening)$('optionPreview')?.scrollIntoView({block:'start',behavior:'smooth'});if(opening)void refreshOptionQuote();break;}
  case 'close-option-preview':selectedPreviewId=null;quoteRefreshToken++;renderPlanner(analytics());break;
@@ -1052,11 +1054,15 @@ $('quickPlanner').addEventListener('input',e=>{
  if(name==='qty'&&!idea.feeManual){idea.fee=estimateOrderFee(account(),'BUY',idea.qty).toFixed(2);const fee=el.querySelector('[name="fee"]');if(fee)fee.value=idea.fee;}
  persistPlannerDrafts();updatePlannerMetrics(analytics());
  const header=el.querySelector('[data-idea-ticker]');if(header){const sym=normalizeTicker(idea.ticker)||'NEW TICKER';header.textContent=sym;el.querySelector('[data-idea-name]').textContent=idea.name||'Untitled idea';const c=draftContract(idea);el.querySelector('[data-idea-contract]').textContent=c?`${fmtDate(c.expiry)} · ${c.strike}${c.optionType==='Put'?'P':'C'}`:'Select contract';el.querySelector('[data-idea-qty]').textContent=idea.qty||'—';el.querySelector('[data-idea-premium]').textContent=Number(idea.price)>0?money(Number(idea.price)):'—';}
+ if(['ticker','strike','optionType','expiry'].includes(name))updateListingCard(idea);
+ if(['ticker','strike','optionType'].includes(name))queueListedExpirations(idea);
  if(changed&&currentPreviewIdea()?.id===idea.id)renderOptionPreview();
 });
 $('quickPlanner').addEventListener('change',e=>{
  const node=e.target.closest('[data-draft-id]');
- if(!node||!['ticker','expiry','strike','optionType'].includes(e.target.name))return;
+ if(!node)return;
+ if(e.target.name==='listedExpiry'){if(e.target.value)applyListedExpiry(node.dataset.draftId,e.target.value);return;}
+ if(!['ticker','expiry','strike','optionType'].includes(e.target.name))return;
  const idea=plannerIdeas().find(x=>x.id===node.dataset.draftId);
  if(!idea)return;
  const oldGroup=tickerInputOrigins.get(idea.id);
@@ -1067,6 +1073,7 @@ $('quickPlanner').addEventListener('change',e=>{
   p.targets=fresh.targets;p.dates=fresh.dates;p.tickerLinked=true;p.tickerLinkEstablished=false;p.tickerPlanEditedAt='';
  }
  adoptTickerLevels(idea);
+ queueListedExpirations(idea,true);
  if(draftContract(idea)){if(selectedPreviewId===idea.id)void refreshOptionQuote();else void refreshDraftPremium(idea);}
  else {persistPlannerDrafts();if(currentPreviewIdea()?.id===idea.id)renderOptionPreview();}
 });
