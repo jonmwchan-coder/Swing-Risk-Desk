@@ -155,6 +155,8 @@ test('both mobile and desktop show verified-only dropdown by default, never an a
  assert.ok(app.includes("if(e.target.value==='__manual__')"));
  assert.ok(app.includes("manualExpiryIds.add(node.dataset.draftId)"));
  assert.ok(app.includes("manualExpiryIds.delete(el.dataset.planId)"));
+ assert.ok(app.includes("if(['ticker','strike','optionType'].includes(name))manualExpiryIds.delete(idea.id);"),
+  'new ticker/strike/direction should go back to verified-only dropdown');
  assert.ok(app.includes('data-expiration-field'));
  assert.match(css,/\.draft-expiration-field select:disabled/);
  assert.match(css,/@media\(max-width:690px\)/);
