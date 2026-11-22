@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {blackScholes,buildOCCSymbol,emptyPreview,normalizePreview,projectOptionReturns,standardPreviewDates,easternCloseMs} from '../lib/option-preview.mjs';
+import {blackScholes,buildOCCSymbol,emptyPreview,normalizePreview,projectOptionReturns,standardPreviewDates,easternCloseMs,expectedUnderlyingRange} from '../lib/option-preview.mjs';
 const contract={ticker:'INTC',strike:70,expiry:'2027-01-15',optionType:'Call'};
 const current=new Date('2026-11-19T15:00:00Z');
 const withPreview=(overrides={},option=contract)=>projectOptionReturns({contract:option,preview:{...emptyPreview('2026-11-19'),spot:'70',ivPct:'50',bid:'5.0',ask:'5.2',targets:[{id:'stop',name:'Stop',price:'65'},{id:'tp1',name:'TP1',price:'80'}],dates:['2026-11-20','2026-11-23'],...overrides},qty:2,entryPremium:5.2,entryFeeUsd:1.54,sellFeePerContractUsd:1,asOf:current});
@@ -69,3 +69,29 @@ test('manual IV provenance persists across local draft serialization and missing
 });
 
 test('without bid or ask, user proposed entry is an unverified anchor rather than an invented real quote',()=>{const out=withPreview({bid:'',ask:''});assert.equal(out.valid,true);assert.equal(out.quoted,false);assert.match(out.anchorLabel,/UNVERIFIED/);assert.equal(out.anchorMid,5.2);});
+
+test('1 sigma underlying range uses selected contract IV and calendar time to ET expiry',()=>{
+ const quoteAt=new Date('2026-11-19T15:00:00Z');
+ const range=expectedUnderlyingRange({spot:'70',ivPct:'50',expiry:'2027-01-15',asOf:quoteAt});
+ assert.ok(range);
+ const years=(easternCloseMs('2027-01-15')-quoteAt.getTime())/(365.2425*86400000);
+ const move=70*0.5*Math.sqrt(years);
+ assert.ok(Math.abs(range.move-move)<1e-10);
+ assert.ok(Math.abs(range.lower-(70-move))<1e-10);
+ assert.ok(Math.abs(range.upper-(70+move))<1e-10);
+ assert.ok(Math.abs(range.movePct-move/70*100)<1e-10);
+ assert.equal(range.spot,70);assert.equal(range.ivPct,50);
+});
+test('range is strike-independent at the same supplied IV, handles DST and avoids invented values',()=>{
+ const start=new Date('2027-03-12T20:30:00Z');
+ const range=expectedUnderlyingRange({spot:100,ivPct:30,expiry:'2027-03-15',asOf:start});
+ assert.ok(range&&range.days>2&&range.days<4);
+ assert.equal(easternCloseMs('2027-03-15'),Date.parse('2027-03-15T20:00:00Z'));
+ assert.equal(expectedUnderlyingRange({spot:'',ivPct:30,expiry:'2027-03-15',asOf:start}),null);
+ assert.equal(expectedUnderlyingRange({spot:100,ivPct:'',expiry:'2027-03-15',asOf:start}),null);
+ assert.equal(expectedUnderlyingRange({spot:100,ivPct:1001,expiry:'2027-03-15',asOf:start}),null);
+ assert.equal(expectedUnderlyingRange({spot:100,ivPct:30,expiry:'invalid',asOf:start}),null);
+ assert.equal(expectedUnderlyingRange({spot:100,ivPct:30,expiry:'2027-03-12',asOf:new Date('2027-03-12T21:01:00Z')}),null);
+ const extreme=expectedUnderlyingRange({spot:100,ivPct:300,expiry:'2028-03-15',asOf:start});
+ assert.ok(extreme);assert.equal(extreme.lower,0);
+});

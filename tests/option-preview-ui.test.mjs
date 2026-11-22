@@ -25,7 +25,7 @@ test('quote refresh starts when Analyze % is selected or Refresh is explicitly c
  assert.match(app,/fetch\(`\/api\/option-quote\?symbol=/);
  assert.match(app,/unless you manually override it/);
  assert.match(app,/if\(valid&&!idea\.priceManual\)idea\.price=idea\.marketMid/);
- assert.match(sw,/swing-risk-desk-shell-v3\.12-contract-identity/);
+ assert.match(sw,/swing-risk-desk-shell-v3\.13-expected-range/);
  assert.match(sw,/\/lib\/option-preview\.mjs/);
 });
 test('cost and model output always describe currencies and limitations',()=>{
@@ -56,4 +56,17 @@ test('Scenario Studio header prioritizes readable contract and account identity'
  assert.match(css,/\.studio-contract-strike\{/);
  assert.match(css,/\.studio-account-identity strong\{/);
  assert.doesNotMatch(app,/esc\(\[idea\.ticker,idea\.name,idea\.expiry,idea\.strike,idea\.optionType\]/,'old microscopic summary removed');
+});
+
+test('compact expected underlying range stays alongside strike and updates when manual spot or IV changes',()=>{
+ assert.match(app,/expectedUnderlyingRange,buildOCCSymbol/);
+ assert.match(app,/function expectedRangeDisplay\(idea\)/);
+ assert.match(app,/class="studio-expected-range" data-expected-range/);
+ assert.match(app,/if\(name==='spot'\|\|name==='ivPct'\)updateExpectedRangeHeader\(idea\)/);
+ assert.match(app,/Underlying 1σ: /);
+ assert.match(app,/Underlying 1σ range: add spot \+ IV/);
+ assert.match(app,/this selected strike\/expiry/);
+ assert.match(css,/\.studio-expected-range\{/);
+ assert.match(css,/@media\(max-width:690px\)\{\.studio-expected-range/);
+ assert.ok(!app.includes('ATM expected move guaranteed'));
 });
