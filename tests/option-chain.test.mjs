@@ -341,3 +341,32 @@ test('all-strikes control is subtle, reversible and does not resurrect removed h
  assert.match(app,/scope:parts\[3\]/);
  assert.match(app,/optionPanelMode='chain';if\(opening\)optionChainRange='nearby'/);
 });
+
+test('expiry-first option chain works with blank strike and centers nearby rows on underlying spot',async()=>{
+ const contracts=Array.from({length:65},(_,i)=>makeContract(i+10,'put',20+i));
+ const visited=[];
+ await withCredentials(async url=>{
+  const u=new URL(url);visited.push(u);
+  if(u.pathname==='/v2/options/contracts')return {ok:true,json:async()=>({option_contracts:contracts,next_page_token:null})};
+  if(u.pathname.endsWith('/stocks/BBW/snapshot'))return {ok:true,json:async()=>({latestTrade:{p:52}})};
+  if(u.pathname.endsWith('/options/snapshots'))return {ok:true,json:async()=>({snapshots:{},next_page_token:null})};
+  if(u.pathname.endsWith('/options/bars'))return {ok:true,json:async()=>({bars:{},next_page_token:null})};
+  throw Error('Unexpected provider URL '+url);
+ },async()=>{
+  const nearby=response();await handler(request({strike:''}),nearby);
+  assert.equal(nearby.statusCode,200);assert.equal(nearby.body.status,'ok');
+  assert.equal(nearby.body.centerStrike,52);
+  assert.equal(nearby.body.centerSource,'latest IEX underlying price');
+  assert.equal(nearby.body.displayedStrikeCount,31);
+  assert.equal(nearby.body.rows.find(x=>x.strike===52).put.openInterest,62);
+  const whole=response();await handler(request({strike:'',scope:'all'}),whole);
+  assert.equal(whole.statusCode,200);
+  assert.equal(whole.body.displayedStrikeCount,65);
+  assert.equal(whole.body.scope,'all');
+ });
+ assert.equal(visited.filter(u=>u.pathname.endsWith('/stocks/BBW/snapshot')).length,1);
+ const app=readFileSync(new URL('../app.js',import.meta.url),'utf8');
+ assert.ok(app.includes("(rawStrike?strike:'')"));
+ assert.ok(app.includes("if(parts[2])qs.set('strike',parts[2]);"));
+ assert.ok(app.includes("case 'pick-chain-contract':pickChainContract(el);break;"));
+});
