@@ -78,6 +78,7 @@ test('server composes both sides from contract OI, indicative snapshots, and mos
   assert.equal(r.body.rows.find(x=>x.strike===35).put.delta,-0.45);
   assert.equal(r.body.volumeDate,'2026-11-20');
   assert.equal(r.body.quoteStatus,'indicative');
+  assert.equal(r.body.quoteAsOf,'2026-11-20T19:58:00Z');
   assert.equal(r.body.oiDates[0],'2026-11-20');
   assert.equal(r.body.rows.at(-1).put.oiHeat,3);
   assert.ok(!JSON.stringify(r.body).includes('TEST_ONLY_OPTION_CHAIN_SECRET'));
