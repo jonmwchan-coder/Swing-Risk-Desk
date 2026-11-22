@@ -148,7 +148,7 @@ test('UI adds chain access without replacing Analyze, editing journal records or
  assert.ok(app.includes("idea.price='';idea.priceManual=false;"));
  assert.ok(app.includes('const changed=Number(idea.strike)!==strike||idea.optionType!==side;'));
  assert.ok(app.includes('Never carry a stale manually entered premium across a strike/side change'));
- assert.ok(app.includes('if(!idea.priceManual)idea.price='));
+ assert.ok(app.includes("if(valid&&!idea.priceManual)idea.price=idea.marketMid"));
  assert.ok(css.includes('.chain-mobile'));
  assert.ok(css.includes('.chain-desktop'));
  assert.ok(sw.includes('/lib/chain-view.mjs'));
