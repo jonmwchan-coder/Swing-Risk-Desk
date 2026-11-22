@@ -7,7 +7,7 @@ import {expirationLookupKey,normalizeListedDates,expirationListingStatus,nearest
 
 const today=()=>new Date().toISOString().slice(0,10);
 const after=days=>new Date(Date.now()+days*86400000).toISOString().slice(0,10);
-const req=(query={ticker:'BBW',strike:'30',type:'put'},method='GET')=>({query,method,headers:{origin:'https://swing-risk-desk-vercel-v11.vercel.app'}});
+const req=(query={ticker:'BBW',type:'put'},method='GET')=>({query,method,headers:{origin:'https://swing-risk-desk-vercel-v11.vercel.app'}});
 const res=()=>({statusCode:200,headers:{},setHeader(k,v){this.headers[k]=v;return this;},status(n){this.statusCode=n;return this;},json(v){this.body=v;return this;}});
 const contract=(expiry,type='Put',ticker='BBW',strike=30)=>({
  symbol:buildOCCSymbol({ticker,expiry,strike,optionType:type}),
@@ -24,12 +24,14 @@ function withCredentials(fetchMock,fn){
  });
 }
 
-test('read-only option expiration API validates input without Alpaca credentials',async()=>{
+test('read-only ticker/type expiration API validates input without credentials or strike',async()=>{
  const old=process.env.ALPACA_DATA_KEY_ID;delete process.env.ALPACA_DATA_KEY_ID;
  try{
   let out=res();await handler(req(),out);
   assert.equal(out.statusCode,503);assert.equal(out.body.code,'NOT_CONFIGURED');
-  out=res();await handler(req({ticker:'BBW',strike:'bad',type:'put'}),out);
+  out=res();await handler(req({ticker:'../bad',type:'put'}),out);
+  assert.equal(out.statusCode,400);
+  out=res();await handler(req({ticker:'BBW',type:'invalid'}),out);
   assert.equal(out.statusCode,400);
   out=res();await handler(req(undefined,'POST'),out);
   assert.equal(out.statusCode,405);
@@ -37,49 +39,52 @@ test('read-only option expiration API validates input without Alpaca credentials
  }finally{if(old!==undefined)process.env.ALPACA_DATA_KEY_ID=old;}
 });
 
-test('listing API enumerates every active standard expiration for exact BBW strike/type across pages, including unusual dates',async()=>{
+test('All mode discovers active standard expirations across strikes/pages without requiring strike',async()=>{
  const first=after(30),second=after(43),seen=[];
  await withCredentials(async url=>{
   const u=new URL(url);seen.push(u);
   if(!u.searchParams.get('page_token'))return {ok:true,json:async()=>({
    option_contracts:[contract(first),{...contract(first),symbol:'ADJUSTED'+contract(first).symbol},
-    contract(after(31),'Call'),contract(after(32),'Put','BBW',35)],next_page_token:'next-page'
+    contract(after(31),'Call'),contract(after(32),'Put','ABC',35)],next_page_token:'next-page'
   })};
-  return {ok:true,json:async()=>({option_contracts:[contract(second)],next_page_token:null})};
+  return {ok:true,json:async()=>({option_contracts:[contract(second,'Put','BBW',35)],next_page_token:null})};
  },async()=>{
-  const out=res();await handler(req(),out);
+  const out=res();await handler(req({ticker:'BBW',type:'put',scope:'all'}),out);
   assert.equal(out.statusCode,200);
   assert.equal(out.body.status,'verified');
   assert.deepEqual(out.body.expirations,[first,second]);
-  assert.equal(out.body.strike,30);assert.equal(out.body.type,'put');
+  assert.equal(out.body.type,'put');
+  assert.equal(out.body.strike,undefined);
   assert.equal(seen.length,2);
   const q=seen[0].searchParams;
   assert.equal(q.get('underlying_symbols'),'BBW');
-  assert.equal(q.get('strike_price_gte'),'30');
-  assert.equal(q.get('strike_price_lte'),'30');
+  assert.equal(q.has('strike_price_gte'),false);
+  assert.equal(q.has('strike_price_lte'),false);
   assert.equal(q.get('type'),'put');
   assert.equal(q.get('status'),'active');
   assert.equal(q.get('expiration_date_gte'),today());
-  assert.ok(q.has('expiration_date_lte'),'Alpaca defaults to next weekend if lte omitted');
+  assert.ok(q.has('expiration_date_lte'));
  });
 });
 
-test('empty active listing is verified empty but provider failure never claims nonexistent',async()=>{
+test('empty active listing is verified empty, provider failure is not reported as zero dates',async()=>{
  await withCredentials(async()=>({ok:true,json:async()=>({option_contracts:[],next_page_token:null})}),async()=>{
-  const out=res();await handler(req(),out);
+  const out=res();await handler(req({ticker:'BBW',type:'put',scope:'all'}),out);
   assert.equal(out.statusCode,200);assert.deepEqual(out.body.expirations,[]);
  });
  await withCredentials(async()=>({ok:false,status:503}),async()=>{
-  const out=res();await handler(req(),out);
-  assert.equal(out.statusCode,502);assert.equal(out.body.code,'PROVIDER_UNAVAILABLE');
+  const out=res();await handler(req({ticker:'BBW',type:'put',scope:'all'}),out);
+  assert.equal(out.statusCode,502);assert.equal(out.body.code,'RESULT_INCOMPLETE');
  });
 });
 
-test('only exact ticker, positive strike and side produce listing keys',()=>{
- assert.equal(expirationLookupKey({ticker:'bbw',strike:'30',optionType:'Put'}),'BBW|30.000|Put');
- assert.equal(expirationLookupKey({ticker:'BBW',strike:'',optionType:'Put'}),'');
- assert.equal(expirationLookupKey({ticker:'BBW',strike:'30.0001',optionType:'Put'}),'');
- assert.equal(expirationLookupKey({ticker:'BBW',strike:'30',optionType:'Option'}),'');
+test('expiration lookup key depends on ticker/type, never strike',()=>{
+ assert.equal(expirationLookupKey({ticker:'bbw',strike:'30',optionType:'Put'}),'BBW|Put');
+ assert.equal(expirationLookupKey({ticker:'BBW',strike:'',optionType:'Put'}),'BBW|Put');
+ assert.equal(expirationLookupKey({ticker:'BBW',strike:'30.0001',optionType:'Put'}),'BBW|Put');
+ assert.equal(expirationLookupKey({ticker:'BBW',strike:'',optionType:'Call'}),'BBW|Call');
+ assert.equal(expirationLookupKey({ticker:'',optionType:'Put'}),'');
+ assert.equal(expirationLookupKey({ticker:'BBW',optionType:'Option'}),'');
 });
 
 test('dates are sorted and status distinguishes not-listed from provider failure',()=>{
@@ -98,7 +103,7 @@ test('UI discloses loading, listed, not-listed, unavailable, and direct alternat
  const app=readFileSync(new URL('../app.js',import.meta.url),'utf8');
  const css=readFileSync(new URL('../styles.css',import.meta.url),'utf8');
  const sw=readFileSync(new URL('../sw.js',import.meta.url),'utf8');
- for(const snippet of ['Checking dates','Not listed','Lookup unavailable','✓ Listed','Choose listed expiration',
+ for(const snippet of ['Checking dates','Not listed','Lookup unavailable','✓ Expiry listed','Choose listed expiration',
   'name="listedExpiry"','__manual__','data-expiration-field','data-listing-badge',
   'data-action="refresh-listed-expirations"','ensureListedExpirations','showInlineQuoteLoading','mini-spin'])
   assert.ok(app.includes(snippet),'Missing '+snippet);
@@ -114,16 +119,16 @@ test('UI discloses loading, listed, not-listed, unavailable, and direct alternat
 });
 
 
-test('contract row has exactly one contextual expiration control after ticker/strike/type',()=>{
+test('Quick size check contract row is ticker -> type -> expiration -> strike',()=>{
  const app=readFileSync(new URL('../app.js',import.meta.url),'utf8');
  const start=app.indexOf('<div class="draft-contract-fields">');
  assert.ok(start>0);
- const row=app.slice(start,start+900);
- const indices=['name="ticker"','name="strike"','name="optionType"','expirationField(idea)'].map(x=>row.indexOf(x));
+ const row=app.slice(start,start+1100);
+ const indices=['name="ticker"','name="optionType"','expirationField(idea)','name="strike"'].map(x=>row.indexOf(x));
  assert.ok(indices.every(i=>i>=0));
  assert.deepEqual([...indices].sort((a,b)=>a-b),indices);
- assert.ok(!row.includes('<input type="date" name="expiry"'),'no separate always-visible calendar');
- assert.ok(!row.includes('listingPanel(idea)'),'no duplicate listed-expiration panel');
+ assert.ok(row.includes('placeholder="Choose in chain"'));
+ assert.ok(!row.includes('<input type="date" name="expiry"'),'no extra calendar');
 });
 
 test('both mobile and desktop show verified-only dropdown by default, never an arbitrary native calendar',()=>{
@@ -141,7 +146,7 @@ test('both mobile and desktop show verified-only dropdown by default, never an a
  assert.ok(field.includes('select name="listedExpiry"'));
  assert.ok(field.includes('const disabled=!verified||!dates.length'));
  assert.ok(field.includes('<option value="" disabled selected>'));
- assert.ok(field.includes('Enter ticker &amp; strike first'));
+ assert.ok(field.includes('Enter ticker first'));
  assert.ok(field.includes('Checking listed dates…'));
  assert.ok(field.includes('Unable to verify · Retry'));
  assert.ok(field.includes('No listed dates for this contract'));
@@ -155,7 +160,7 @@ test('both mobile and desktop show verified-only dropdown by default, never an a
  assert.ok(app.includes("if(e.target.value==='__manual__')"));
  assert.ok(app.includes("manualExpiryIds.add(node.dataset.draftId)"));
  assert.ok(app.includes("manualExpiryIds.delete(el.dataset.planId)"));
- assert.ok(app.includes("if(['ticker','strike','optionType'].includes(name))manualExpiryIds.delete(idea.id);"),
+ assert.ok(app.includes("if(['ticker','optionType'].includes(name))manualExpiryIds.delete(idea.id);"),
   'new ticker/strike/direction should go back to verified-only dropdown');
  assert.ok(app.includes('data-expiration-field'));
  assert.match(css,/\.draft-expiration-field select:disabled/);
@@ -196,26 +201,29 @@ test('calendar labels weekly, holiday-shifted weekly, monthly and quarter-end re
  assert.equal(expirationListingStatus('2027-12-17',filtered),'outside-range');
 });
 
-test('fast regular scope returns verified standard weeklies/quarters only, and All restores special dates',async()=>{
- const dates=['2026-12-17','2026-12-18','2026-12-31'],requests=[];
+test('Regular discovers verified dates by ticker/type only; All restores special dates',async()=>{
+ const dates=['2026-12-17','2026-12-18','2026-12-31'],seen=[];
  await withCredentials(async url=>{
-  requests.push(new URL(url));
-  return {ok:true,json:async()=>({option_contracts:dates.map(d=>contract(d)),next_page_token:null})};
+  const u=new URL(url);seen.push(u);
+  const day=u.searchParams.get('expiration_date');
+  const listed=day?dates.filter(d=>d===day):dates;
+  return {ok:true,json:async()=>({option_contracts:listed.map(d=>contract(d)),next_page_token:null})};
  },async()=>{
-  const regular=res();await handler(req({ticker:'BBW',strike:'30',type:'put',scope:'regular'}),regular);
+  const regular=res();await handler(req({ticker:'BBW',type:'put',scope:'regular'}),regular);
   assert.equal(regular.statusCode,200);
   assert.equal(regular.body.scope,'regular');
   assert.deepEqual(regular.body.expirations,['2026-12-18','2026-12-31']);
   assert.ok(Date.parse(regular.body.checkedThrough)-Date.parse(regular.body.checkedFrom)<370*86400000);
-  const every=res();await handler(req({ticker:'BBW',strike:'30',type:'put',scope:'all'}),every);
-  assert.equal(every.statusCode,200);
-  assert.equal(every.body.scope,'all');
+  const every=res();await handler(req({ticker:'BBW',type:'put',scope:'all'}),every);
+  assert.equal(every.statusCode,200);assert.equal(every.body.scope,'all');
   assert.deepEqual(every.body.expirations,dates);
   assert.ok(Date.parse(every.body.checkedThrough)-Date.parse(every.body.checkedFrom)>1000*86400000);
-  assert.equal(requests.length,2);
-  assert.ok(requests.every(u=>u.searchParams.get('limit')==='10000'));
+  assert.ok(seen.length>10,'regular probes check individual dates without downloading every strike');
+  assert.ok(seen.every(u=>!u.searchParams.has('strike_price_gte')&&!u.searchParams.has('strike_price_lte')));
+  assert.ok(seen.some(u=>u.searchParams.get('expiration_date')==='2026-12-18'));
+  assert.ok(seen.some(u=>u.searchParams.get('limit')==='10000'));
  });
- const invalid=res();await handler(req({ticker:'BBW',strike:'30',type:'put',scope:'wrong'}),invalid);
+ const invalid=res();await handler(req({ticker:'BBW',type:'put',scope:'wrong'}),invalid);
  assert.equal(invalid.statusCode,400);assert.equal(invalid.body.code,'BAD_SCOPE');
 });
 
@@ -238,6 +246,30 @@ test('regular-only checkbox defaults on, labels regular dates, and has separate 
  assert.match(app,/renderPlanner\(analytics\(\)\)/);
  assert.match(app,/scope\}\);/);
  assert.match(css,/\.expiry-regular-toggle/);
- assert.match(sw,/swing-risk-desk-shell-v3\.10-regular-expiries/);
- assert.match(html,/SWING RISK DESK \/ v3\.10 regular expiration filter/);
+ assert.match(sw,/swing-risk-desk-shell-v3\.11-expiry-first/);
+ assert.match(html,/SWING RISK DESK \/ v3\.11 expiry-first strike selection/);
+});
+
+test('refresh can restart a stalled expiration request; strike edits never refetch dates',()=>{
+ const app=readFileSync(new URL('../app.js',import.meta.url),'utf8');
+ const css=readFileSync(new URL('../styles.css',import.meta.url),'utf8');
+ assert.ok(app.includes('pendingListingRequests.get(key)?.controller.abort()'));
+ assert.ok(app.includes("setTimeout(()=>controller.abort(),12500)"));
+ assert.ok(app.includes('data-action="refresh-listed-expirations"'));
+ assert.ok(app.includes('expiry-refresh-icon'));
+ assert.ok(app.includes("const [ticker,type,scope]=key.split('|')"));
+ assert.ok(!app.includes('strike:String(Number(strike)),type:type.toLowerCase(),scope'));
+ assert.ok(app.includes("if(['ticker','optionType'].includes(name))queueListedExpirations(idea);"));
+ assert.ok(app.includes("if(['ticker','optionType'].includes(e.target.name))queueListedExpirations(idea,true);"));
+ assert.ok(!app.includes("if(['ticker','strike','optionType'].includes(name))queueListedExpirations(idea);"));
+ assert.ok(css.includes('.expiry-select-row'));
+ assert.ok(css.includes('.expiry-refresh-icon'));
+});
+
+test('quick size check shows buy fees alone and clearer remaining risk label without altering calculations',()=>{
+ const app=readFileSync(new URL('../app.js',import.meta.url),'utf8');
+ assert.ok(app.includes('<span>Estimated buy fees (USD)</span><strong>${usd(r.fee)}</strong>'));
+ assert.ok(app.includes('<span>Remaining Risk Budget (CAD)</span><strong>${cad(r.remainingCad)}</strong>'));
+ assert.ok(!app.includes('<span>Est. total cash to buy (USD)</span>'));
+ assert.ok(app.includes('Total cash to buy all ideas · premiums + fees (USD)'),'detailed portfolio breakdown retains complete debit');
 });

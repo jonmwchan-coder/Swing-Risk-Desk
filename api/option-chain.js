@@ -23,6 +23,15 @@ async function readJson(url,headers,timeout=8500){
  if(!r.ok){const e=Error('Provider responded HTTP '+r.status);e.status=r.status;throw e;}
  return await r.json();
 }
+async function getUnderlyingSpot(ticker,headers){
+ try{
+  const snapshot=await readJson('https://data.alpaca.markets/v2/stocks/'+encodeURIComponent(ticker)+'/snapshot?feed=iex',headers,2800);
+  const last=Number(snapshot?.latestTrade?.p),bid=Number(snapshot?.latestQuote?.bp),ask=Number(snapshot?.latestQuote?.ap);
+  if(Number.isFinite(last)&&last>0)return last;
+  if(Number.isFinite(bid)&&bid>0&&Number.isFinite(ask)&&ask>=bid)return (bid+ask)/2;
+ }catch{} // A missing equity snapshot must not prevent option-chain browsing.
+ return null;
+}
 async function getContracts(ticker,expiry,headers){
  const all=[],seen=new Set(),deadline=Date.now()+10500;
  let token='';
@@ -159,9 +168,10 @@ export default async function handler(req,res){
  const scope=String(req.query?.scope||'nearby');
  if(!['nearby','all'].includes(scope))return respond(res,400,'BAD_SCOPE','Choose Nearby or All strikes.');
  const expiry=String(req.query?.expiry||'').trim();
- const strikeText=String(req.query?.strike||'').trim(),centerStrike=Number(strikeText);
- if(!SYMBOL.test(ticker)||!isoDate(expiry)||!strikeText||!Number.isFinite(centerStrike)||centerStrike<=0||
-  centerStrike>99999.999)return respond(res,400,'BAD_CONTRACT','Enter a ticker, future expiration, and preferred strike.');
+ const strikeText=String(req.query?.strike??'').trim(),requestedStrike=Number(strikeText);
+ // A preferred strike centers nearby mode; no strike is required to explore the chain.
+ if(!SYMBOL.test(ticker)||!isoDate(expiry)||(strikeText&&(!Number.isFinite(requestedStrike)||requestedStrike<=0||requestedStrike>99999.999)))
+  return respond(res,400,'BAD_CONTRACT','Enter a ticker and future expiration; strike is optional.');
  if(expiry<new Date().toISOString().slice(0,10))return respond(res,400,'EXPIRED','Select a current or future option expiration.');
  const id=process.env.ALPACA_DATA_KEY_ID,secret=process.env.ALPACA_DATA_SECRET_KEY;
  if(!id||!secret)return respond(res,503,'NOT_CONFIGURED','Alpaca option data is not configured in this environment.');
@@ -170,9 +180,13 @@ export default async function handler(req,res){
  try{contracts=await getContracts(ticker,expiry,headers);}
  catch(error){return respond(res,error.status===429?429:502,'CONTRACTS_UNAVAILABLE',
   'Could not verify the entire option chain. No incomplete list was ranked.');}
- if(!contracts.length)return res.status(200).json({status:'empty',ticker,expiry,centerStrike,scope,rows:[],
+ if(!contracts.length)return res.status(200).json({status:'empty',ticker,expiry,centerStrike:strikeText?requestedStrike:null,scope,rows:[],
    message:'No active standard 100-share options found for this expiry in Alpaca.'});
- const strikes=scope==='all'?[...new Set(contracts.map(c=>c.strike))].sort((a,b)=>a-b):aroundStrike(contracts.map(c=>c.strike),centerStrike);
+ const availableStrikes=[...new Set(contracts.map(c=>c.strike))].sort((a,b)=>a-b);
+ const spot=!strikeText&&scope!=='all'?await getUnderlyingSpot(ticker,headers):null;
+ const centerStrike=strikeText?requestedStrike:spot||availableStrikes[Math.floor((availableStrikes.length-1)/2)];
+ const centerSource=strikeText?'chosen strike':spot?'latest IEX underlying price':'median listed strike (underlying quote unavailable)';
+ const strikes=scope==='all'?availableStrikes:aroundStrike(availableStrikes,centerStrike);
  const selected=contracts.filter(c=>strikes.includes(c.strike));
  const symbols=selected.map(x=>x.symbol);
  const [quotes,volumes]=await Promise.all([getSnapshots(symbols,headers),getVolume(symbols,headers)]);
@@ -185,7 +199,7 @@ export default async function handler(req,res){
    delta:quote?.delta??null,quoteAt:quote?.quoteAt??null};
  }
  return res.status(200).json({
-  status:'ok',ticker,expiry,centerStrike,scope,checkedAt:new Date().toISOString(),
+  status:'ok',ticker,expiry,centerStrike,centerSource,scope,checkedAt:new Date().toISOString(),
   rows:heatLevels([...byStrike.values()]),strikeCount:contracts.length,totalStrikeCount:new Set(contracts.map(c=>c.strike)).size,
   displayedStrikeCount:strikes.length,highlightScope:'Displayed strikes only',
   oiDates:[...new Set(selected.map(x=>x.oiDate).filter(Boolean))].sort(),
