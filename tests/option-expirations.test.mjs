@@ -107,3 +107,14 @@ test('UI discloses loading, listed, not-listed, unavailable, and direct alternat
  assert.match(css,/\.mini-spin/);
  assert.ok(sw.includes('/lib/expiry-listings.mjs'));
 });
+
+
+test('contract form reads left to right: ticker, strike, call/put, then verified expiration',()=>{
+ const app=readFileSync(new URL('../app.js',import.meta.url),'utf8');
+ const start=app.indexOf('<div class="draft-contract-fields">');
+ assert.ok(start>0);
+ const fields=app.slice(start,start+1200);
+ const indices=['name="ticker"','name="strike"','name="optionType"','name="expiry"'].map(name=>fields.indexOf(name));
+ assert.ok(indices.every(i=>i>=0));
+ assert.deepEqual([...indices].sort((a,b)=>a-b),indices);
+});
