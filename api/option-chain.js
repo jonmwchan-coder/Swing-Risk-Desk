@@ -3,7 +3,7 @@
    Bid/ask and Greeks: free indicative option snapshots, not executable OPRA.
    No brokerage action, no keys exposed, no claims about missing values. */
 import {buildOCCSymbol} from '../lib/option-preview.mjs';
-import {aroundStrike,heatLevels,numericOrNull} from '../lib/chain-liquidity.mjs';
+import {aroundStrike,heatLevels,numericOrNull,symbolBatches} from '../lib/chain-liquidity.mjs';
 
 const HOME='https://swing-risk-desk-vercel-v11.vercel.app';
 const respond=(res,status,code,error)=>res.status(status).json({code,error});
@@ -50,7 +50,7 @@ async function getContracts(ticker,expiry,headers){
  }
  throw Error('Option chain too large to verify completely');
 }
-async function getSnapshots(symbols,headers){
+async function getSnapshotsBatch(symbols,headers){
  if(!symbols.length)return {ok:true,bySymbol:{}};
  try{
   const q=new URLSearchParams({symbols:symbols.join(','),feed:'indicative'});
@@ -71,7 +71,7 @@ async function getSnapshots(symbols,headers){
   return {ok:true,bySymbol};
  }catch(error){return {ok:false,bySymbol:{},message:'Indicative quotes unavailable; check your broker chain.'};}
 }
-async function getVolume(symbols,headers){
+async function getVolumeBatch(symbols,headers){
  if(!symbols.length)return {ok:true,bySymbol:{},volumeDate:null};
  try{
   // Free historical option data excludes roughly the most recent 15 minutes.
@@ -107,6 +107,48 @@ async function getVolume(symbols,headers){
  }catch(error){return {ok:false,bySymbol:{},volumeDate:null,
   message:'Volume unavailable on current data entitlement; open interest may still be shown.'};}
 }
+// All-strikes mode can contain hundreds of OCC symbols. Fetch in bounded
+// groups, and don't publish misleading partial VOL/quote comparisons.
+const CHAIN_BATCH_SIZE=75;
+const MAX_CHAIN_SYMBOLS=900;
+async function runBatches(batches,worker,concurrency=3){
+ const out=new Array(batches.length);
+ let index=0;
+ await Promise.all(Array.from({length:Math.min(concurrency,batches.length)},async()=>{
+  while(index<batches.length){
+   const current=index++;
+   out[current]=await worker(batches[current]);
+  }
+ }));
+ return out;
+}
+async function getSnapshots(symbols,headers){
+ if(!symbols.length)return {ok:true,bySymbol:{}};
+ if(symbols.length>MAX_CHAIN_SYMBOLS)
+  return {ok:false,bySymbol:{},message:'Chain too large to retrieve complete snapshots in one request.'};
+ const groups=await runBatches(symbolBatches(symbols,CHAIN_BATCH_SIZE),group=>getSnapshotsBatch(group,headers));
+ if(groups.some(group=>!group.ok))
+  return {ok:false,bySymbol:{},message:'Some quote groups were unavailable; no partial bid/ask is shown.'};
+ return {ok:true,bySymbol:Object.assign({},...groups.map(group=>group.bySymbol))};
+}
+async function getVolume(symbols,headers){
+ if(!symbols.length)return {ok:true,bySymbol:{},volumeDate:null};
+ if(symbols.length>MAX_CHAIN_SYMBOLS)
+  return {ok:false,bySymbol:{},volumeDate:null,message:'Chain too large to retrieve complete volume in one request.'};
+ const groups=await runBatches(symbolBatches(symbols,CHAIN_BATCH_SIZE),group=>getVolumeBatch(group,headers));
+ if(groups.some(group=>!group.ok))
+  return {ok:false,bySymbol:{},volumeDate:null,message:'Some volume groups were unavailable; no partial volume is ranked.'};
+ const volumeDate=groups.map(group=>group.volumeDate).filter(Boolean).sort().at(-1)||null;
+ // Compare only the SAME session across batches. Never mix a stale Friday
+ // volume reading into a Monday ladder just because one contract is illiquid.
+ const bySymbol={};
+ const batches=symbolBatches(symbols,CHAIN_BATCH_SIZE);
+ for(let i=0;i<batches.length;i++)for(const symbol of batches[i]){
+  bySymbol[symbol]=groups[i].volumeDate===volumeDate?groups[i].bySymbol[symbol]??null:null;
+ }
+ return {ok:true,bySymbol,volumeDate};
+}
+
 export default async function handler(req,res){
  res.setHeader('Cache-Control','no-store, max-age=0');
  if(req.method!=='GET')return respond(res,405,'METHOD_NOT_ALLOWED','Read-only GET requests only.');
@@ -114,6 +156,8 @@ export default async function handler(req,res){
  if(origin&&origin!==HOME&&!/^https:\/\/swing-risk-desk-vercel-v11-[a-z0-9-]+\.vercel\.app$/i.test(origin)&&!/^http:\/\/localhost:\d+$/.test(origin))
   return respond(res,403,'ORIGIN_DENIED','Origin not allowed.');
  const ticker=String(req.query?.ticker||'').trim().toUpperCase();
+ const scope=String(req.query?.scope||'nearby');
+ if(!['nearby','all'].includes(scope))return respond(res,400,'BAD_SCOPE','Choose Nearby or All strikes.');
  const expiry=String(req.query?.expiry||'').trim();
  const strikeText=String(req.query?.strike||'').trim(),centerStrike=Number(strikeText);
  if(!SYMBOL.test(ticker)||!isoDate(expiry)||!strikeText||!Number.isFinite(centerStrike)||centerStrike<=0||
@@ -126,9 +170,9 @@ export default async function handler(req,res){
  try{contracts=await getContracts(ticker,expiry,headers);}
  catch(error){return respond(res,error.status===429?429:502,'CONTRACTS_UNAVAILABLE',
   'Could not verify the entire option chain. No incomplete list was ranked.');}
- if(!contracts.length)return res.status(200).json({status:'empty',ticker,expiry,centerStrike,rows:[],
+ if(!contracts.length)return res.status(200).json({status:'empty',ticker,expiry,centerStrike,scope,rows:[],
    message:'No active standard 100-share options found for this expiry in Alpaca.'});
- const strikes=aroundStrike(contracts.map(c=>c.strike),centerStrike);
+ const strikes=scope==='all'?[...new Set(contracts.map(c=>c.strike))].sort((a,b)=>a-b):aroundStrike(contracts.map(c=>c.strike),centerStrike);
  const selected=contracts.filter(c=>strikes.includes(c.strike));
  const symbols=selected.map(x=>x.symbol);
  const [quotes,volumes]=await Promise.all([getSnapshots(symbols,headers),getVolume(symbols,headers)]);
@@ -141,13 +185,13 @@ export default async function handler(req,res){
    delta:quote?.delta??null,quoteAt:quote?.quoteAt??null};
  }
  return res.status(200).json({
-  status:'ok',ticker,expiry,centerStrike,checkedAt:new Date().toISOString(),
-  rows:heatLevels([...byStrike.values()]),strikeCount:contracts.length,
-  displayedStrikeCount:strikes.length,highlightScope:'Displayed strikes only, ranked separately for calls/puts',
+  status:'ok',ticker,expiry,centerStrike,scope,checkedAt:new Date().toISOString(),
+  rows:heatLevels([...byStrike.values()]),strikeCount:contracts.length,totalStrikeCount:new Set(contracts.map(c=>c.strike)).size,
+  displayedStrikeCount:strikes.length,highlightScope:'Displayed strikes only',
   oiDates:[...new Set(selected.map(x=>x.oiDate).filter(Boolean))].sort(),
   volumeDate:volumes.volumeDate,volumeStatus:volumes.ok?'available':'unavailable',
   quoteStatus:quotes.ok?'indicative':'unavailable',
   quoteAsOf:Object.values(quotes.bySymbol).map(q=>q.quoteAt).filter(Boolean).sort().at(-1)||null,
-  note:'OI from dated contract metadata; VOL from latest shared historical session (free data delayed at least 15 minutes); bid/ask indicative and not executable. Heatmap is relative, not a guarantee of liquidity.'
+  note:'OI from dated contract metadata; VOL from latest shared historical session (free data delayed at least 15 minutes); bid/ask indicative and not executable. A missing provider batch suppresses partial metric data.'
  });
 }

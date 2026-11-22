@@ -60,6 +60,7 @@ let plannerPrefill=null;
 let selectedPreviewId=null;
 let optionPanelMode='analyze';
 let chainSide='Put';
+let optionChainRange='nearby';
 let chainFetchToken=0;
 const chainCache=new Map();
 let expandedPlanId=null;
@@ -319,29 +320,44 @@ function expiryIndicator(idea){
  return '<span class="expiry-inline-status neutral">'+data.expirations.length+' dates</span>';
 }
 function expirationField(idea){
- const key=expirationLookupKey(idea),listing=expirationListings.get(key);
- const dates=listing?.status==='verified'?(listing.expirations||[]):[];
- const verified=listing?.status==='verified',selectable=verified&&dates.length>0;
- const manual=manualExpiryIds.has(idea.id)||!selectable;
+ const key=expirationLookupKey(idea),listing=key?expirationListings.get(key):null;
+ const verified=listing?.status==='verified';
+ const dates=verified?listing.expirations||[]:[];
+ const manual=manualExpiryIds.has(idea.id);
  const selected=dates.includes(idea.expiry);
  const status=expirationListingStatus(idea.expiry,listing);
- const link=selectable&&manual?'<button class="expiry-secondary-action" type="button" data-action="use-listed-expirations" data-plan-id="'+esc(idea.id)+'">Listed dates</button>':
-  listing?.status==='error'?'<button class="expiry-secondary-action" type="button" data-action="refresh-listed-expirations" data-plan-id="'+esc(idea.id)+'">Retry</button>':'';
- const label='<span class="expiry-field-heading">EXPIRATION <span data-expiry-status>'+expiryIndicator(idea)+'</span>'+link+'</span>';
- const title='Alpaca active standard contracts for the selected ticker, strike and Call/Put. Verify with your broker before trading.';
+ // Native mobile calendars cannot selectively gray out arbitrary listed dates.
+ // Always show the SAME verified-date dropdown on phone and desktop. A calendar
+ // is only exposed when a user explicitly requests an unverified manual override.
+ const retry=key&&listing?.status==='error'
+  ?'<button class="expiry-secondary-action" type="button" data-action="refresh-listed-expirations" data-plan-id="'+esc(idea.id)+'">Retry</button>':'';
+ const manualLink=!manual&&(!verified||!dates.length)
+  ?'<button class="expiry-secondary-action" type="button" data-action="enter-manual-expiry" data-plan-id="'+esc(idea.id)+'" title="Choose an unverified date manually">Manual</button>':'';
+ const returnLink=manual
+  ?'<button class="expiry-secondary-action" type="button" data-action="use-listed-expirations" data-plan-id="'+esc(idea.id)+'">Listed dates</button>':'';
+ const label='<span class="expiry-field-heading">EXPIRATION <span data-expiry-status>'+expiryIndicator(idea)+'</span>'+retry+manualLink+returnLink+'</span>';
+ const title='Exact active option expirations for this ticker, strike, and Call/Put. Other dates are not offered in the dropdown.';
  let control='';
- if(!manual){
-  const invalid=parseDay(idea.expiry)&&!selected;
-  const placeholder=invalid?'<option value="__unlisted__" disabled selected>'+esc(fmtDate(idea.expiry,true))+(status==='outside-range'?' · Unverified':' · Not listed')+'</option>':
-    !selected?'<option value="" selected disabled>Choose expiration…</option>':'';
-  const options=dates.map(d=>'<option value="'+esc(d)+'"'+(selected&&d===idea.expiry?' selected':'')+'>'+esc(fmtDate(d,true))+'</option>').join('');
-  control='<select name="listedExpiry" aria-label="Verified expiration date" title="'+title+'"'+(invalid?' class="expiry-unlisted"':'')+'>'+
-   placeholder+options+'<option value="__manual__">Enter date manually…</option></select>'+
-   '<input type="hidden" name="expiry" value="'+esc(idea.expiry||'')+'">';
+ if(manual){
+  control='<input type="date" name="expiry" aria-label="Manual expiration (unverified)" value="'+esc(idea.expiry||'')+'" title="Manual override: not a verified listed expiration">';
  }else{
-  control='<input type="date" name="expiry" aria-label="Expiration date (unverified if no listing)" value="'+esc(idea.expiry||'')+'" title="'+title+'">';
+  let placeholder='';
+  if(!key)placeholder='Enter ticker &amp; strike first';
+  else if(!listing||listing.status==='loading')placeholder='Checking listed dates…';
+  else if(!verified)placeholder='Unable to verify · Retry';
+  else if(!dates.length)placeholder='No listed dates for this contract';
+  else if(parseDay(idea.expiry)&&!selected)placeholder=fmtDate(idea.expiry,true)+(status==='outside-range'?' · Unverified':' · Not listed');
+  else if(!selected)placeholder='Choose listed expiration…';
+  const disabled=!verified||!dates.length;
+  const needsPlaceholder=disabled||!selected;
+  const options=dates.map(d=>'<option value="'+esc(d)+'"'+(selected&&d===idea.expiry?' selected':'')+'>'+esc(fmtDate(d,true))+'</option>').join('');
+  control='<select name="listedExpiry" aria-label="Available listed expiration dates" title="'+title+'"'+
+   (disabled?' disabled':'')+(verified&&!selected&&parseDay(idea.expiry)?' class="expiry-unlisted"':'')+'>'+
+   (needsPlaceholder?'<option value="" disabled selected>'+placeholder+'</option>':'')+
+   options+(verified&&dates.length?'<option value="__manual__">Enter date manually (unverified)…</option>':'')+
+   '</select><input type="hidden" name="expiry" value="'+esc(idea.expiry||'')+'">';
  }
- return '<label class="draft-expiration-field" data-expiration-field>'+label+control+'</label>';
+ return '<div class="draft-expiration-field" data-expiration-field>'+label+control+'</div>';
 }
 function updateListingCard(idea){
  const card=[...document.querySelectorAll('[data-draft-id]')].find(x=>x.dataset.draftId===idea.id);
@@ -353,7 +369,7 @@ function updateListingCard(idea){
   if(live)live.innerHTML=expiryIndicator(idea);
   // Never destroy the actual date input or dropdown while the user is
   // interacting with it; delegated change handling updates it afterward.
-  if(!field.contains(document.activeElement))field.outerHTML=expirationField(idea);
+  if(field.dataset.dispatchingExpiry!=='true'&&!field.contains(document.activeElement))field.outerHTML=expirationField(idea);
  }
 }
 function updateListingCardsForKey(key){
@@ -410,9 +426,16 @@ function applyListedExpiry(ideaId,date){
  const field=card?.querySelector('input[name="expiry"]');
  if(!field)return;
  if(field.value===date){updateListingCard(idea);return;}
- field.value=date;
- field.dispatchEvent(new Event('input',{bubbles:true}));
- field.dispatchEvent(new Event('change',{bubbles:true}));
+ // Dispatch both events against the ORIGINAL connected input. Otherwise
+ // the input handler can rerender and detach the hidden field before 'change'
+ // reaches the delegated quote-refresh listener (especially on mobile).
+ const wrapper=field.closest('[data-expiration-field]');
+ if(wrapper)wrapper.dataset.dispatchingExpiry='true';
+ try{
+  field.value=date;
+  field.dispatchEvent(new Event('input',{bubbles:true}));
+  field.dispatchEvent(new Event('change',{bubbles:true}));
+ }finally{if(wrapper)delete wrapper.dataset.dispatchingExpiry;}
  card.querySelector('select[name="listedExpiry"]')?.blur();
  updateListingCard(idea);
 }
@@ -575,7 +598,7 @@ function chainKey(idea){
  const expiry=String(idea?.expiry||'');
  const strike=Number(idea?.strike);
  if(!ticker||!parseDay(expiry)||!Number.isFinite(strike)||strike<=0)return '';
- return ticker+'|'+expiry+'|'+strike;
+ return ticker+'|'+expiry+'|'+strike+'|'+optionChainRange;
 }
 function renderChainPreview(idea=currentPreviewIdea()){
  const el=$('optionPreview');
@@ -584,7 +607,7 @@ function renderChainPreview(idea=currentPreviewIdea()){
  el.hidden=false;
  el.innerHTML=renderChainPanel({idea,data:entry?.status==='ready'?entry.data:null,
   loading:entry?.status==='loading',error:entry?.status==='error'?entry.message:'',
-  side:chainSide});
+  side:chainSide,scope:optionChainRange});
 }
 async function refreshOptionChain(force=false){
  const idea=currentPreviewIdea();
@@ -601,11 +624,11 @@ async function refreshOptionChain(force=false){
  renderChainPreview(idea);
  try{
   const parts=key.split('|');
-  const qs=new URLSearchParams({ticker:parts[0],expiry:parts[1],strike:parts[2]});
+  const qs=new URLSearchParams({ticker:parts[0],expiry:parts[1],strike:parts[2],scope:parts[3]});
   const response=await fetch('/api/option-chain?'+qs,{cache:'no-store'});
   const payload=await response.json().catch(()=>({}));
   if(!response.ok)throw Error(payload.error||'Could not load the full option chain.');
-  if(!['ok','empty'].includes(payload.status)||payload.ticker!==parts[0]||payload.expiry!==parts[1]||
+  if(!['ok','empty'].includes(payload.status)||payload.ticker!==parts[0]||payload.expiry!==parts[1]||payload.scope!==parts[3]||
    (payload.status==='ok'&&!Array.isArray(payload.rows)))throw Error('Option chain response was incomplete.');
   chainCache.set(key,{status:'ready',data:payload,fetchedAt:Date.now()});
  }catch(error){
@@ -1150,13 +1173,14 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
   case 'toggle-plan-details':{expandedPlanId=expandedPlanId===el.dataset.planId?null:el.dataset.planId;if(expandedPlanId&&selectedPreviewId&&expandedPlanId!==selectedPreviewId){selectedPreviewId=null;quoteRefreshToken++;}renderPlanner(analytics());if(expandedPlanId){const idea=plannerIdeas().find(i=>i.id===expandedPlanId);if(idea)queueListedExpirations(idea,true);}break;}
   case 'collapse-plan-ideas':expandedPlanId=null;renderPlanner(analytics());break;
  case 'refresh-listed-expirations':{const idea=plannerIdeas().find(x=>x.id===el.dataset.planId);if(idea)void ensureListedExpirations(idea,true);break;}
+ case 'enter-manual-expiry':{manualExpiryIds.add(el.dataset.planId);el.blur();const idea=plannerIdeas().find(x=>x.id===el.dataset.planId);if(idea){updateListingCard(idea);const card=[...document.querySelectorAll('[data-draft-id]')].find(x=>x.dataset.draftId===el.dataset.planId);card?.querySelector('input[type="date"][name="expiry"]')?.focus();}break;}
  case 'use-listed-expirations':{manualExpiryIds.delete(el.dataset.planId);el.blur();const idea=plannerIdeas().find(x=>x.id===el.dataset.planId);if(idea){updateListingCard(idea);const card=[...document.querySelectorAll('[data-draft-id]')].find(x=>x.dataset.draftId===el.dataset.planId);card?.querySelector('[name="listedExpiry"]')?.focus();}break;}
  case 'clear-plan-ideas':{if(!confirm('Clear all saved Quick size check ideas for this portfolio? Recorded positions will not be affected.'))break;expandedPlanId=null;selectedPreviewId=null;quoteRefreshToken++;plannerDrafts[account().id]=[defaultPlanIdea(uid(),account().stressPct,false)];persistPlannerDrafts();renderPlanner(analytics());showToast('Saved size-check ideas cleared for this portfolio.');break;}
  case 'analyze-idea':{const opening=selectedPreviewId!==el.dataset.planId||optionPanelMode!=='analyze';optionPanelMode='analyze';chainFetchToken++;selectedPreviewId=opening?el.dataset.planId:null;if(opening)adoptTickerLevels(currentPreviewIdea());expandedPlanId=null;quoteRefreshToken++;quoteRefreshMessage='';quoteConnectionState='unknown';renderPlanner(analytics());if(opening)$('optionPreview')?.scrollIntoView({block:'start',behavior:'smooth'});if(opening)void refreshOptionQuote();break;}
  case 'view-option-chain':{
   const opening=selectedPreviewId!==el.dataset.planId||optionPanelMode!=='chain';
   selectedPreviewId=opening?el.dataset.planId:null;
-  optionPanelMode='chain';expandedPlanId=null;quoteRefreshToken++;
+  optionPanelMode='chain';if(opening)optionChainRange='nearby';expandedPlanId=null;quoteRefreshToken++;
   const idea=currentPreviewIdea();if(idea)chainSide=idea.optionType==='Call'?'Call':'Put';
   renderPlanner(analytics());
   if(opening){$('optionPreview')?.scrollIntoView({block:'start',behavior:'smooth'});void refreshOptionChain();}
@@ -1168,6 +1192,10 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
   renderPlanner(analytics());void refreshOptionQuote();break;
  }
  case 'refresh-option-chain':void refreshOptionChain(true);break;
+ case 'toggle-chain-range':{
+  optionChainRange=optionChainRange==='all'?'nearby':'all';
+  renderChainPreview();void refreshOptionChain();break;
+ }
  case 'chain-show-side':chainSide=el.dataset.side==='Call'?'Call':'Put';renderChainPreview();break;
  case 'pick-chain-contract':pickChainContract(el);break;
  case 'close-option-preview':selectedPreviewId=null;chainFetchToken++;quoteRefreshToken++;renderPlanner(analytics());break;
@@ -1245,6 +1273,9 @@ $('quickPlanner').addEventListener('input',e=>{
  const before=draftContractKey(idea);
  if(['ticker','optionType'].includes(name)&&!tickerInputOrigins.has(idea.id))tickerInputOrigins.set(idea.id,tickerScenarioKey(idea));
  idea[name]=name==='ticker'?normalizeTicker(e.target.value):e.target.value;
+ // Manual date choice applies only to this contract; changing ticker, strike
+ // or direction returns the new contract to the verified-only dropdown.
+ if(['ticker','strike','optionType'].includes(name))manualExpiryIds.delete(idea.id);
  const changed=['ticker','expiry','strike','optionType'].includes(name)&&before!==draftContractKey(idea);
  if(changed){
   quoteRefreshToken++;quoteRefreshBusy=false;

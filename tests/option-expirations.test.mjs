@@ -98,7 +98,7 @@ test('UI discloses loading, listed, not-listed, unavailable, and direct alternat
  const app=readFileSync(new URL('../app.js',import.meta.url),'utf8');
  const css=readFileSync(new URL('../styles.css',import.meta.url),'utf8');
  const sw=readFileSync(new URL('../sw.js',import.meta.url),'utf8');
- for(const snippet of ['Checking dates','Not listed','Lookup unavailable','✓ Listed','Choose expiration',
+ for(const snippet of ['Checking dates','Not listed','Lookup unavailable','✓ Listed','Choose listed expiration',
   'name="listedExpiry"','__manual__','data-expiration-field','data-listing-badge',
   'data-action="refresh-listed-expirations"','ensureListedExpirations','showInlineQuoteLoading','mini-spin'])
   assert.ok(app.includes(snippet),'Missing '+snippet);
@@ -126,22 +126,57 @@ test('contract row has exactly one contextual expiration control after ticker/st
  assert.ok(!row.includes('listingPanel(idea)'),'no duplicate listed-expiration panel');
 });
 
-test('verified dates replace manual picker; fallback is explicit and non-destructive',()=>{
+test('both mobile and desktop show verified-only dropdown by default, never an arbitrary native calendar',()=>{
  const app=readFileSync(new URL('../app.js',import.meta.url),'utf8');
+ const css=readFileSync(new URL('../styles.css',import.meta.url),'utf8');
  const start=app.indexOf('function expirationField(idea){');
  const end=app.indexOf('function updateListingCard(idea)',start);
+ assert.ok(start>=0&&end>start);
  const field=app.slice(start,end);
- assert.ok(field.includes('if(!manual)'));
+ assert.ok(field.includes('const manual=manualExpiryIds.has(idea.id);'));
+ assert.ok(!field.includes('const manual=manualExpiryIds.has(idea.id)||!selectable;'));
+ assert.ok(field.includes('if(manual){'),'native date input exists ONLY in opt-in manual branch');
+ assert.ok(field.indexOf('input type="date"')>field.indexOf('if(manual){'));
+ assert.ok(field.indexOf('input type="date"')<field.indexOf('}else{'));
  assert.ok(field.includes('select name="listedExpiry"'));
- assert.ok(field.includes('input type="date" name="expiry"'));
- assert.ok(field.includes('<input type="hidden" name="expiry"'));
- assert.ok(field.includes('manualExpiryIds.has(idea.id)'));
- assert.ok(field.includes('disabled selected'));
- assert.ok(field.includes('Enter date manually…'));
- assert.ok(field.includes('expirationListingStatus'));
+ assert.ok(field.includes('const disabled=!verified||!dates.length'));
+ assert.ok(field.includes('<option value="" disabled selected>'));
+ assert.ok(field.includes('Enter ticker &amp; strike first'));
+ assert.ok(field.includes('Checking listed dates…'));
+ assert.ok(field.includes('Unable to verify · Retry'));
+ assert.ok(field.includes('No listed dates for this contract'));
+ assert.ok(field.includes('Choose listed expiration…'));
+ assert.ok(field.includes('· Not listed'));
+ assert.ok(field.includes('Enter date manually (unverified)…'));
+ assert.ok(field.includes('data-action="enter-manual-expiry"'));
+ assert.ok(field.includes('data-action="use-listed-expirations"'));
+ assert.ok(field.includes('data-action="refresh-listed-expirations"'));
+ assert.ok(app.includes("case 'enter-manual-expiry'"));
  assert.ok(app.includes("if(e.target.value==='__manual__')"));
  assert.ok(app.includes("manualExpiryIds.add(node.dataset.draftId)"));
  assert.ok(app.includes("manualExpiryIds.delete(el.dataset.planId)"));
- assert.ok(app.includes("field.dispatchEvent(new Event('input',{bubbles:true}))"));
- assert.ok(app.includes("field.dispatchEvent(new Event('change',{bubbles:true}))"));
+ assert.ok(app.includes("if(['ticker','strike','optionType'].includes(name))manualExpiryIds.delete(idea.id);"),
+  'new ticker/strike/direction should go back to verified-only dropdown');
+ assert.ok(app.includes('data-expiration-field'));
+ assert.match(css,/\.draft-expiration-field select:disabled/);
+ assert.match(css,/@media\(max-width:690px\)/);
+});
+
+test('verified selection updates quote and risk from a still-connected hidden expiry field',()=>{
+ const app=readFileSync(new URL('../app.js',import.meta.url),'utf8');
+ const start=app.indexOf('function applyListedExpiry(ideaId,date){');
+ const end=app.indexOf('function renderPlanner(m){',start);
+ const code=app.slice(start,end);
+ assert.ok(code.includes('listing.expirations.includes(date)'), 'only verified dates may be selected');
+ assert.ok(code.includes("wrapper.dataset.dispatchingExpiry='true'"));
+ assert.ok(code.includes("field.dispatchEvent(new Event('input',{bubbles:true}))"));
+ assert.ok(code.includes("field.dispatchEvent(new Event('change',{bubbles:true}))"));
+ assert.ok(code.indexOf("field.dispatchEvent(new Event('input',{bubbles:true}))")<
+  code.indexOf("field.dispatchEvent(new Event('change',{bubbles:true}))"));
+ assert.ok(code.includes('delete wrapper.dataset.dispatchingExpiry'));
+ assert.ok(app.includes("field.dataset.dispatchingExpiry!=='true'"));
+ const handler=app.slice(app.indexOf("$('quickPlanner').addEventListener('change'"));
+ assert.ok(handler.includes("if(draftContract(idea))"));
+ assert.ok(handler.includes("void refreshDraftPremium(idea)"));
+ assert.ok(handler.includes("void refreshOptionQuote()"));
 });
