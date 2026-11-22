@@ -434,7 +434,7 @@ html,body{max-width:100%}
 @media(max-width:690px){.dashboard-panel-stack{margin-top:16px;gap:12px}}
 
 /* v2.8 structured swing option inputs */
-.draft-contract-fields{display:grid;grid-template-columns:1fr 1.55fr 1fr .9fr;gap:8px;margin-top:10px}
+.draft-contract-fields{display:grid;grid-template-columns:1fr .9fr .9fr 1.55fr;gap:8px;margin-top:10px}
 .draft-contract-fields label{min-width:0}
 .draft-contract-fields label>span{display:block;min-height:17px;font-size:9px;letter-spacing:.06em;font-weight:750;color:#9ac0c8}
 .draft-contract-fields input,.draft-contract-fields select{width:100%;min-width:0;min-height:38px;padding:6px 8px;border-radius:8px;border:1px solid #41616e;background:#091a24;color:#e3f2f0;font-size:13px}
