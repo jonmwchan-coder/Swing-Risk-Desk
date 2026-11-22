@@ -147,6 +147,7 @@ export default async function handler(req,res){
   oiDates:[...new Set(selected.map(x=>x.oiDate).filter(Boolean))].sort(),
   volumeDate:volumes.volumeDate,volumeStatus:volumes.ok?'available':'unavailable',
   quoteStatus:quotes.ok?'indicative':'unavailable',
+  quoteAsOf:Object.values(quotes.bySymbol).map(q=>q.quoteAt).filter(Boolean).sort().at(-1)||null,
   note:'OI from dated contract metadata; VOL from latest shared historical session (free data delayed at least 15 minutes); bid/ask indicative and not executable. Heatmap is relative, not a guarantee of liquidity.'
  });
 }
