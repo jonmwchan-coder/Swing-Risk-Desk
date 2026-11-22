@@ -621,6 +621,11 @@ function pickChainContract(el){
  if(!idea||entry?.status!=='ready'||!['Call','Put'].includes(side)||!Number.isFinite(strike))return;
  const row=entry.data.rows?.find(x=>x.strike===strike);
  if(!row||!row[side.toLowerCase()])return;
+ const changed=Number(idea.strike)!==strike||idea.optionType!==side;
+ if(!changed){
+  selectedPreviewId=null;optionPanelMode='analyze';expandedPlanId=idea.id;
+  renderPlanner(analytics());return;
+ }
  if(side!==idea.optionType){
   const p=ensurePreview(idea),fresh=emptyPreview(today(),state.customClosed||[]);
   p.targets=fresh.targets;p.dates=fresh.dates;p.tickerLinked=true;
@@ -631,8 +636,9 @@ function pickChainContract(el){
  p.spot='';p.ivPct='';p.ivManual=false;p.bid='';p.ask='';
  p.quoteAt='';p.quoteSource='New contract requires new quote';
  idea.contractSymbol='';idea.marketMid='';idea.quoteStatus='';
- idea.quoteMessage='Strike selected from option chain. Refreshing indicative quote…';
- if(!idea.priceManual)idea.price='';
+ idea.quoteMessage='Contract changed. Old premium cleared; refreshing the new exact contract.';
+ // Never carry a stale manually entered premium across a strike/side change.
+ idea.price='';idea.priceManual=false;
  adoptTickerLevels(idea);
  persistPlannerDrafts();
  chainFetchToken++;
