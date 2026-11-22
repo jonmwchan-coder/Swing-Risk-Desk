@@ -154,3 +154,62 @@ test('UI adds chain access without replacing Analyze, editing journal records or
  assert.ok(sw.includes('/lib/chain-view.mjs'));
  assert.ok(!app.includes('cloudController.saveChain'));
 });
+
+
+test('sparse liquidity marks only first, second and third highest positive cells in each independent column',()=>{
+ const rows=Array.from({length:31},(_,i)=>({
+  strike:10+i,call:{openInterest:100+i*10,volume:1000-i*11},
+  put:{openInterest:3200-i*12,volume:50+i*13}
+ }));
+ const marked=heatLevels(rows);
+ for(const side of ['call','put']){
+  for(const key of ['oiHeat','volumeHeat']){
+   const active=marked.filter(row=>Number(row[side]?.[key])>0);
+   assert.equal(active.length,3,side+'/'+key+' must highlight only three of 31 rows');
+   assert.deepEqual(active.map(row=>row[side][key]).sort((a,b)=>b-a),[3,2,1]);
+   assert.equal(marked.filter(row=>!row[side]?.[key]).length,28);
+  }
+ }
+ assert.equal(marked[30].call.oiHeat,3);
+ assert.equal(marked[29].call.oiHeat,2);
+ assert.equal(marked[28].call.oiHeat,1);
+ assert.equal(marked[0].call.oiHeat,undefined,'fourth and lower stays unhighlighted');
+});
+
+test('equal ranks have equal heat; zeros and missing OI/VOL never get highlights',()=>{
+ const rows=[
+  {strike:10,call:{openInterest:900,volume:0},put:{openInterest:null,volume:0}},
+  {strike:11,call:{openInterest:600,volume:null},put:{openInterest:0,volume:null}},
+  {strike:12,call:{openInterest:600,volume:12},put:{openInterest:null,volume:0}},
+  {strike:13,call:{openInterest:400,volume:11},put:{openInterest:4,volume:0}},
+  {strike:14,call:{openInterest:200,volume:10},put:{openInterest:0,volume:0}},
+ ];
+ const marked=heatLevels(rows);
+ assert.equal(marked[0].call.oiHeat,3);
+ assert.equal(marked[1].call.oiHeat,2);
+ assert.equal(marked[2].call.oiHeat,2,'tied second place does not imply an artificial third place');
+ assert.equal(marked[3].call.oiHeat,undefined);
+ assert.equal(marked[0].call.volumeHeat,undefined);
+ assert.equal(marked[2].call.volumeHeat,3);
+ assert.equal(marked[3].call.volumeHeat,2);
+ assert.equal(marked[4].call.volumeHeat,1);
+ assert.equal(marked[3].put.oiHeat,3);
+ assert.equal(marked[0].put.volumeHeat,undefined);
+ assert.ok(marked.every(row=>row.put.volumeHeat===undefined));
+});
+
+test('chain uses an uncluttered table without highest secondary tertiary legend',()=>{
+ const idea={id:'i',ticker:'IREN',expiry:date(),strike:'14',optionType:'Call'};
+ const rows=heatLevels(Array.from({length:15},(_,i)=>({
+  strike:10+i,call:{volume:100+i,openInterest:200+i},
+  put:{volume:350-i,openInterest:450-i}
+ })));
+ const html=renderChainPanel({idea,data:{status:'ok',rows,quoteStatus:'indicative',
+  volumeDate:'2026-11-20',oiDates:['2026-11-19'],displayedStrikeCount:15}});
+ assert.doesNotMatch(html,/chain-legend|chain-swatch|Highest|Secondary|Tertiary|Heat is relative within displayed strikes/i);
+ for(const side of ['call','put']){
+  for(const key of ['oiHeat','volumeHeat']){
+   assert.equal(rows.filter(row=>Boolean(row[side]?.[key])).length,3);
+  }
+ }
+});
