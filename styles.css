@@ -737,3 +737,57 @@ html,body{max-width:100%}
 }
 .draft-expiration-field .expiry-secondary-action:hover{color:#e1f1ef}
 @media(max-width:690px){.draft-contract-fields .draft-expiration-field select{min-height:38px}}
+
+
+/* v3.6: on-demand options liquidity ladder; read-only until a strike is selected. */
+.draft-chain-btn{border:1px solid #3b7080;background:#122f3e;color:#bde5e4;padding:6px 9px;border-radius:8px;font-size:11px;font-weight:750}
+.draft-chain-btn:hover,.draft-chain-btn[aria-pressed="true"]{background:#24515c;border-color:#64c3b7;color:#e7fff4}
+.chain-analyze{font-size:11px;min-height:32px}
+.chain-loading,.chain-error,.chain-prompt{display:flex;align-items:center;gap:9px;line-height:1.6;padding:22px 12px;font-size:12px;color:#bcd4da;flex-wrap:wrap}
+.chain-error{color:#e9bca6}
+.chain-error button{background:#29414f;color:#d5e7ef;border:1px solid #648692;padding:5px 10px;border-radius:7px;cursor:pointer}
+.chain-legend{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:9px 0 11px;font-size:10px;color:#b8d0d7}
+.chain-legend small{flex-basis:100%;font-size:9px;color:#84a3b0}
+.chain-swatch{display:inline-block;width:14px;height:12px;border-radius:3px;margin-left:6px}
+.chain-swatch.heat-3,.chain-table .chain-heat-3{background:#276c84;color:#e8faff;font-weight:900}
+.chain-swatch.heat-2,.chain-table .chain-heat-2{background:#234c63;color:#d6f1fc;font-weight:800}
+.chain-swatch.heat-1,.chain-table .chain-heat-1{background:#1c3549;color:#c5e2ee;font-weight:750}
+.chain-scroll{max-width:100%;overflow:auto;max-height:540px;border:1px solid #2e4c59;border-radius:10px;overscroll-behavior:contain}
+.chain-table{border-collapse:separate;border-spacing:0;width:100%;min-width:930px;font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right;font-size:10px;line-height:1.2}
+.chain-table th,.chain-table td{padding:9px 5px;border-bottom:1px solid #233b47}
+.chain-table thead th{background:#152a35;color:#a8c2ca;font-size:9px;letter-spacing:.05em;position:sticky;top:0;z-index:2;font-weight:780;text-align:right}
+.chain-table thead .chain-side-labels th{font-size:12px;padding:10px 7px;text-align:center;z-index:3}
+.chain-side-labels th:first-child{color:#8bd9c3}
+.chain-side-labels th:last-child{color:#f3a2bd}
+.chain-table tbody tr:nth-child(even){background:#0c1b25}
+.chain-table tbody tr:hover{background:#1a3942}
+.chain-table tbody .chain-strike,.chain-table thead .chain-center-head{position:sticky;left:50%;transform:translateX(-50%);z-index:2;text-align:center;background:#1d2e3c;color:#e9f7f4;font-size:11px;font-weight:880;border-inline:1px solid #35516a}
+.chain-table thead .chain-center-head{z-index:4}
+.chain-table tbody .chain-strike{min-width:56px}
+.chain-table .chain-selected-row .chain-strike{background:#214a53;color:#b7f4da}
+.chain-table .chain-num{min-width:40px;color:#c6d7e0}
+.chain-table .chain-use-cell{text-align:center;padding:4px 3px}
+.chain-use-contract{font-size:9px;padding:5px 7px;min-height:26px;border-radius:6px;background:#1b3e4b;border:1px solid #3b7881;color:#c5eee3;cursor:pointer;white-space:nowrap}
+.chain-use-contract:hover,.chain-use-contract:focus-visible{background:#2c655b;border-color:#7bd6ba;outline-offset:2px}
+.chain-use-contract.selected{border-color:#69c99f;background:#214e40;color:#d0ffe5}
+.chain-meta{display:flex;align-items:center;flex-wrap:wrap;gap:7px 15px;padding:12px 0 6px;color:#9dc0c9;font-size:10px}
+.chain-meta span{border-left:2px solid #3e6875;padding-left:7px}
+.chain-refresh{min-height:29px;padding:5px 9px;margin-left:auto;font-size:10px}
+.chain-caution{font-size:10px;color:#86a6b2;line-height:1.6;margin:7px 0 1px}
+.chain-caution strong{color:#bcdce3}
+.chain-mobile{display:none}
+@media(max-width:760px){
+ .chain-desktop{display:none}
+ .chain-mobile{display:block}
+ .chain-mobile .chain-table{min-width:560px}
+ .chain-mobile .chain-table tbody .chain-strike,.chain-mobile .chain-table thead .chain-strike{left:0;transform:none;text-align:center}
+ .chain-mobile .chain-table thead th:first-child{left:0;z-index:4;text-align:center}
+ .chain-mobile .chain-table .chain-num{min-width:51px}
+ .chain-use-contract{min-height:34px;font-size:10px}
+ .chain-side-pills{display:flex;gap:6px;margin:0 0 10px}
+ .chain-side-pills button{border:1px solid #406272;background:#142f3d;color:#9fc4d1;border-radius:7px;min-height:34px;padding:6px 12px;cursor:pointer;font-weight:700}
+ .chain-side-pills button.on{background:#245c57;color:#dcffed;border-color:#61bda8}
+ .chain-legend{font-size:9px}
+ .chain-refresh{margin-left:0}
+ .chain-table th,.chain-table td{padding:9px 6px}
+}
