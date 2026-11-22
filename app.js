@@ -301,7 +301,7 @@ function listingBadge(idea){
  if(state.status!=='verified')return '<span class="listing-badge listing-neutral">Lookup unavailable</span>';
  const status=expirationListingStatus(idea.expiry,state);
  if(!state.expirations.length)return '<span class="listing-badge listing-warning">No listed contracts</span>';
- if(status==='listed')return '<span class="listing-badge listing-listed">✓ Expiry listed</span>';
+ if(status==='listed')return ''; // Selected expiration is already verified; keep warnings.
  if(status==='filtered')return '<span class="listing-badge listing-neutral">Hidden by regular filter</span>';
  if(status==='not-listed')return '<span class="listing-badge listing-warning">Not listed</span>';
  if(status==='outside-range')return '<span class="listing-badge listing-neutral">Outside checked range</span>';
@@ -319,7 +319,7 @@ function expiryIndicator(idea){
  if(data.status!=='verified')return '<span class="expiry-inline-status neutral">Unavailable</span>';
  if(!data.expirations.length)return '<span class="expiry-inline-status warning">None found</span>';
  const status=expirationListingStatus(idea.expiry,data);
- if(status==='listed')return '<span class="expiry-inline-status good">✓ Expiry listed</span>';
+ if(status==='listed')return ''; // Keep warnings, not duplicate success text.
  if(status==='filtered')return '<span class="expiry-inline-status neutral">Hidden by filter</span>';
  if(status==='not-listed')return '<span class="expiry-inline-status warning">Not listed</span>';
  if(status==='outside-range')return '<span class="expiry-inline-status neutral">Unverified date</span>';
@@ -460,6 +460,24 @@ function applyListedExpiry(ideaId,date){
  card.querySelector('select[name="listedExpiry"]')?.blur();
  updateListingCard(idea);
 }
+function contractDisplayParts(idea){
+ const expiryValid=Boolean(parseDay(idea?.expiry));
+ const rawStrike=String(idea?.strike??'').trim(),strike=Number(rawStrike);
+ const strikeValid=Boolean(rawStrike)&&Number.isFinite(strike)&&strike>0&&strike<=99999.999;
+ const side=idea?.optionType==='Put'?'PUT':'CALL';
+ return {
+  hasExpiry:expiryValid,
+  expiry:expiryValid?fmtDate(idea.expiry,true):'Select expiry',
+  hasStrike:strikeValid,
+  strike:strikeValid?'$'+strike.toLocaleString('en-US',{maximumFractionDigits:3})+' '+side:'Select strike'
+ };
+}
+function compactContractMarkup(idea){
+ const c=contractDisplayParts(idea);
+ return '<span class="draft-contract-piece draft-contract-expiry'+(c.hasExpiry?'':' is-missing')+'">'+esc(c.expiry)+'</span>'+
+  '<span class="draft-contract-separator" aria-hidden="true">·</span>'+
+  '<strong class="draft-contract-piece draft-contract-strike'+(c.hasStrike?'':' is-missing')+'">'+esc(c.strike)+'</strong>';
+}
 function renderPlanner(m){
  const ideas=plannerIdeas(m.account.id);
  if($('planSortSelect'))$('planSortSelect').value=planSortMode;
@@ -477,14 +495,14 @@ function renderPlanner(m){
   const editing=expandedPlanId===idea.id,active=editing||selectedPreviewId===idea.id;
   const riskRow=byId.get(idea.id),overCap=Boolean(riskRow?.overIdeaCap);
   const capOverCad=overCap?riskRow.reserveCad-fixedIdeaCap:0;
-  const symbol=normalizeTicker(idea.ticker)||'NEW TICKER',name=idea.name||'Untitled idea',contract=draftContract(idea);
-  const contractText=contract?`${fmtDate(contract.expiry)} · ${contract.strike}${contract.optionType==='Put'?'P':'C'}`:'Select contract';
+  const symbol=normalizeTicker(idea.ticker)||'NEW TICKER',name=idea.name||'Untitled idea';
+
   const moneyOrDash=v=>String(v??'').trim()&&Number.isFinite(Number(v))&&Number(v)>0?money(Number(v)):'—';
   const premium=moneyOrDash(idea.price),mid=moneyOrDash(idea.marketMid),p=idea.preview||{};
   const quote=idea.quoteStatus==='loading'?'Fetching quote…':idea.priceManual?`Manual premium${mid!=='—'?' · Mid '+mid:''}`:idea.quoteStatus==='indicative'?`Indicative mid ${mid}`:idea.quoteStatus==='unavailable'?'Quote unavailable':idea.quoteStatus==='saved'?'Saved indicative quote · refresh':'Quote not loaded';
   const quoteTone=idea.quoteStatus==='unavailable'?'warning':idea.priceManual?'manual':idea.quoteStatus==='indicative'?'indicative':idea.quoteStatus==='saved'?'warning':'empty';
   return `<article class="draft-idea ${active?'is-active':''} ${editing?'is-expanded':'is-collapsed'} ${overCap?'is-over-idea-cap':''}" data-draft-id="${esc(idea.id)}">
-    <div class="draft-head"><div class="draft-identity"><strong class="draft-ticker" data-idea-ticker>${esc(symbol)}</strong><span class="draft-idea-name" data-idea-name>${esc(name)}</span><span class="draft-contract-pill" data-idea-contract>${esc(contractText)}</span><span data-listing-badge class="draft-listing-indicator">${listingBadge(idea)}</span></div>
+    <div class="draft-head"><div class="draft-identity"><strong class="draft-ticker" data-idea-ticker>${esc(symbol)}</strong><span class="draft-idea-name" data-idea-name>${esc(name)}</span><span class="draft-contract-hero" data-idea-contract aria-label="Selected expiration and strike">${compactContractMarkup(idea)}</span><span data-listing-badge class="draft-listing-indicator">${listingBadge(idea)}</span></div>
       <div class="draft-actions"><button type="button" class="draft-edit-btn" data-action="toggle-plan-details" data-plan-id="${esc(idea.id)}" aria-expanded="${editing}">${editing?'Done':'Edit'}</button><button type="button" class="draft-preview-btn" data-action="analyze-idea" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id&&optionPanelMode==='analyze'}">${selectedPreviewId===idea.id&&optionPanelMode==='analyze'?'Hide %':'Analyze %'}</button><button type="button" class="draft-chain-btn" data-action="view-option-chain" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id&&optionPanelMode==='chain'}" title="Compare call and put volume, open interest and indicative quotes for this expiration">${selectedPreviewId===idea.id&&optionPanelMode==='chain'?'Hide chain':'View chain'}</button><button type="button" class="draft-record" data-action="plan-to-position" data-plan-id="${esc(idea.id)}">Record</button><button type="button" class="draft-remove" data-action="remove-plan-idea" data-plan-id="${esc(idea.id)}" aria-label="Remove ${esc(symbol)} ${esc(name)}">×</button></div></div>
     <div class="draft-compact-line"><span class="draft-mini-field">Qty <strong data-idea-qty>${esc(idea.qty||'—')}</strong></span><span class="draft-mini-field">Premium <strong data-idea-premium>${esc(premium)}</strong><small>/share</small></span><span class="draft-mini-quote" data-tone="${quoteTone}" data-idea-quote>${idea.quoteStatus==='loading'?'<span class="mini-spin" aria-hidden="true"></span> ':''}${esc(quote)}</span></div>
     <div class="draft-cap-alert" data-cap-warning="${esc(idea.id)}" role="status" ${overCap?'':'hidden'}>${overCap?`<strong>ABOVE FIXED IDEA CAP · +${cad(capOverCad)}</strong><span>This idea uses ${cad(riskRow.reserveCad)} vs your ${cad(fixedIdeaCap)} guide. Rolling pool is separate.</span><button type="button" data-action="focus-cap-policy" title="Review your fixed versus flexible risk allocation">Review policy</button>`:''}</div>
@@ -719,7 +737,14 @@ function renderOptionPreview(){
  const ivUnavailable=quoteConnectionState==='connected'&&!(Number(p.ivPct)>0);
  const ivHelp=ivUnavailable?`<div class="preview-iv-help" role="status"><div><strong>IV not supplied by Alpaca for this contract</strong><p>The free snapshot can include a bid/ask without a usable implied volatility. Enter the IV displayed in your broker's option chain for this exact strike and expiration to calculate returns. The model won't guess an IV.</p></div><button type="button" class="preview-enter-iv" data-action="enter-manual-iv">Enter broker IV</button></div>`:'';
  const connectionHelp=quoteConnectionState==='not-configured'?`<div class="preview-connect" role="status"><strong>One-time free data connection needed</strong><p>Automatic spot, IV and indicative bid/ask require free Alpaca Paper Only API keys. The feed is <strong>not connected</strong> yet. You can set it up without funding an Alpaca brokerage account.</p><ol><li><a href="https://app.alpaca.markets/signup" target="_blank" rel="noopener noreferrer">Create a free Alpaca paper-only account</a> and generate paper API credentials.</li><li>In your existing Vercel project's <strong>Settings → Environment Variables</strong>, add <code>ALPACA_DATA_KEY_ID</code> and <code>ALPACA_DATA_SECRET_KEY</code> for Production, then redeploy.</li><li>Return and press <strong>Refresh quote</strong>. Quotes will then fill automatically when you click Analyze %.</li></ol><small>Never enter API secrets into this form or chat. They belong in the server's environment settings.</small></div>`:'';
- el.innerHTML=`<div class="option-preview-heading"><div class="preview-title-stack"><div class="overline">SCENARIO STUDIO · WHAT-IF MODEL</div><h3>Projected option return by date</h3><small>${esc([idea.ticker,idea.name,idea.expiry,idea.strike,idea.optionType].filter(Boolean).join(' · ')||'Enter a contract')} · ${esc(account().name)}</small></div><div class="preview-heading-actions"><span class="preview-mode-tag">HYPOTHETICAL RETURNS</span><button type="button" class="preview-close" data-action="close-option-preview" aria-label="Close option return preview">×</button></div></div>
+ const displayContract=contractDisplayParts(idea);
+ const previewIdentity='<div class="studio-contract-identity" aria-label="Selected option contract">'+
+  '<span class="studio-contract-ticker">'+esc(normalizeTicker(idea.ticker)||'Ticker')+'</span>'+
+  '<span class="studio-contract-expiry'+(displayContract.hasExpiry?'':' is-missing')+'">'+esc(displayContract.expiry)+'</span>'+
+  '<strong class="studio-contract-strike'+(displayContract.hasStrike?'':' is-missing')+'">'+esc(displayContract.strike)+'</strong></div>'+
+  '<div class="studio-account-identity"><span>ACCOUNT</span><strong>'+esc(account().name)+'</strong></div>'+
+  (idea.name&&idea.name!=='Untitled idea'?'<small class="studio-idea-name">Idea: '+esc(idea.name)+'</small>':'');
+ el.innerHTML=`<div class="option-preview-heading"><div class="preview-title-stack"><div class="overline">SCENARIO STUDIO · WHAT-IF MODEL</div><h3>Projected option return by date</h3>${previewIdentity}</div><div class="preview-heading-actions"><span class="preview-mode-tag">HYPOTHETICAL RETURNS</span><button type="button" class="preview-close" data-action="close-option-preview" aria-label="Close option return preview">×</button></div></div>
   <p class="preview-explainer">Today’s underlying price and quoted IV are requested automatically when you select <strong>Analyze %</strong> (or press Refresh). Future dates are repriced at that <strong>unchanged IV</strong>, showing estimated time decay. Nothing is fetched in the background.</p>
   <div class="preview-quote-card">
    <div class="preview-workspace-step"><span>01</span><strong>Market reference</strong><small>Indicative snapshot or your manual inputs</small></div>
@@ -1313,7 +1338,7 @@ $('quickPlanner').addEventListener('input',e=>{
  if(name==='fee')idea.feeManual=true;
  if(name==='qty'&&!idea.feeManual){idea.fee=estimateOrderFee(account(),'BUY',idea.qty).toFixed(2);const fee=el.querySelector('[name="fee"]');if(fee)fee.value=idea.fee;}
  persistPlannerDrafts();updatePlannerMetrics(analytics());
- const header=el.querySelector('[data-idea-ticker]');if(header){const sym=normalizeTicker(idea.ticker)||'NEW TICKER';header.textContent=sym;el.querySelector('[data-idea-name]').textContent=idea.name||'Untitled idea';const c=draftContract(idea);el.querySelector('[data-idea-contract]').textContent=c?`${fmtDate(c.expiry)} · ${c.strike}${c.optionType==='Put'?'P':'C'}`:'Select contract';el.querySelector('[data-idea-qty]').textContent=idea.qty||'—';el.querySelector('[data-idea-premium]').textContent=Number(idea.price)>0?money(Number(idea.price)):'—';}
+ const header=el.querySelector('[data-idea-ticker]');if(header){const sym=normalizeTicker(idea.ticker)||'NEW TICKER';header.textContent=sym;el.querySelector('[data-idea-name]').textContent=idea.name||'Untitled idea';el.querySelector('[data-idea-contract]').innerHTML=compactContractMarkup(idea);el.querySelector('[data-idea-qty]').textContent=idea.qty||'—';el.querySelector('[data-idea-premium]').textContent=Number(idea.price)>0?money(Number(idea.price)):'—';}
  if(['ticker','strike','optionType','expiry'].includes(name)){
   // Only update the label when the selected date input is actively being edited.
   updateListingCard(idea);

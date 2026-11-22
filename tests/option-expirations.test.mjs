@@ -103,10 +103,11 @@ test('UI discloses loading, listed, not-listed, unavailable, and direct alternat
  const app=readFileSync(new URL('../app.js',import.meta.url),'utf8');
  const css=readFileSync(new URL('../styles.css',import.meta.url),'utf8');
  const sw=readFileSync(new URL('../sw.js',import.meta.url),'utf8');
- for(const snippet of ['Checking dates','Not listed','Lookup unavailable','✓ Expiry listed','Choose listed expiration',
+ for(const snippet of ['Checking dates','Not listed','Lookup unavailable','Choose listed expiration',
   'name="listedExpiry"','__manual__','data-expiration-field','data-listing-badge',
   'data-action="refresh-listed-expirations"','ensureListedExpirations','showInlineQuoteLoading','mini-spin'])
   assert.ok(app.includes(snippet),'Missing '+snippet);
+ assert.ok(!app.includes('✓ Expiry listed'),'successful lookup should not clutter the contract header');
  assert.ok(app.includes("field.dispatchEvent(new Event('change',{bubbles:true}))"));
  assert.ok(app.includes('function expirationField(idea)'));
  assert.ok(app.includes('data-action="use-listed-expirations"'));
@@ -246,8 +247,8 @@ test('regular-only checkbox defaults on, labels regular dates, and has separate 
  assert.match(app,/renderPlanner\(analytics\(\)\)/);
  assert.match(app,/scope\}\);/);
  assert.match(css,/\.expiry-regular-toggle/);
- assert.match(sw,/swing-risk-desk-shell-v3\.11-expiry-first/);
- assert.match(html,/SWING RISK DESK \/ v3\.11 expiry-first strike selection/);
+ assert.match(sw,/swing-risk-desk-shell-v3\.12-contract-identity/);
+ assert.match(html,/SWING RISK DESK \/ v3\.12 clear contract identity/);
 });
 
 test('refresh can restart a stalled expiration request; strike edits never refetch dates',()=>{
