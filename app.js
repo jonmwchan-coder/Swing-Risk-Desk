@@ -319,29 +319,44 @@ function expiryIndicator(idea){
  return '<span class="expiry-inline-status neutral">'+data.expirations.length+' dates</span>';
 }
 function expirationField(idea){
- const key=expirationLookupKey(idea),listing=expirationListings.get(key);
- const dates=listing?.status==='verified'?(listing.expirations||[]):[];
- const verified=listing?.status==='verified',selectable=verified&&dates.length>0;
- const manual=manualExpiryIds.has(idea.id)||!selectable;
+ const key=expirationLookupKey(idea),listing=key?expirationListings.get(key):null;
+ const verified=listing?.status==='verified';
+ const dates=verified?listing.expirations||[]:[];
+ const manual=manualExpiryIds.has(idea.id);
  const selected=dates.includes(idea.expiry);
  const status=expirationListingStatus(idea.expiry,listing);
- const link=selectable&&manual?'<button class="expiry-secondary-action" type="button" data-action="use-listed-expirations" data-plan-id="'+esc(idea.id)+'">Listed dates</button>':
-  listing?.status==='error'?'<button class="expiry-secondary-action" type="button" data-action="refresh-listed-expirations" data-plan-id="'+esc(idea.id)+'">Retry</button>':'';
- const label='<span class="expiry-field-heading">EXPIRATION <span data-expiry-status>'+expiryIndicator(idea)+'</span>'+link+'</span>';
- const title='Alpaca active standard contracts for the selected ticker, strike and Call/Put. Verify with your broker before trading.';
+ // Native mobile calendars cannot selectively gray out arbitrary listed dates.
+ // Always show the SAME verified-date dropdown on phone and desktop. A calendar
+ // is only exposed when a user explicitly requests an unverified manual override.
+ const retry=key&&listing?.status==='error'
+  ?'<button class="expiry-secondary-action" type="button" data-action="refresh-listed-expirations" data-plan-id="'+esc(idea.id)+'">Retry</button>':'';
+ const manualLink=!manual&&(!verified||!dates.length)
+  ?'<button class="expiry-secondary-action" type="button" data-action="enter-manual-expiry" data-plan-id="'+esc(idea.id)+'" title="Choose an unverified date manually">Manual</button>':'';
+ const returnLink=manual
+  ?'<button class="expiry-secondary-action" type="button" data-action="use-listed-expirations" data-plan-id="'+esc(idea.id)+'">Listed dates</button>':'';
+ const label='<span class="expiry-field-heading">EXPIRATION <span data-expiry-status>'+expiryIndicator(idea)+'</span>'+retry+manualLink+returnLink+'</span>';
+ const title='Exact active option expirations for this ticker, strike, and Call/Put. Other dates are not offered in the dropdown.';
  let control='';
- if(!manual){
-  const invalid=parseDay(idea.expiry)&&!selected;
-  const placeholder=invalid?'<option value="__unlisted__" disabled selected>'+esc(fmtDate(idea.expiry,true))+(status==='outside-range'?' · Unverified':' · Not listed')+'</option>':
-    !selected?'<option value="" selected disabled>Choose expiration…</option>':'';
-  const options=dates.map(d=>'<option value="'+esc(d)+'"'+(selected&&d===idea.expiry?' selected':'')+'>'+esc(fmtDate(d,true))+'</option>').join('');
-  control='<select name="listedExpiry" aria-label="Verified expiration date" title="'+title+'"'+(invalid?' class="expiry-unlisted"':'')+'>'+
-   placeholder+options+'<option value="__manual__">Enter date manually…</option></select>'+
-   '<input type="hidden" name="expiry" value="'+esc(idea.expiry||'')+'">';
+ if(manual){
+  control='<input type="date" name="expiry" aria-label="Manual expiration (unverified)" value="'+esc(idea.expiry||'')+'" title="Manual override: not a verified listed expiration">';
  }else{
-  control='<input type="date" name="expiry" aria-label="Expiration date (unverified if no listing)" value="'+esc(idea.expiry||'')+'" title="'+title+'">';
+  let placeholder='';
+  if(!key)placeholder='Enter ticker &amp; strike first';
+  else if(!listing||listing.status==='loading')placeholder='Checking listed dates…';
+  else if(!verified)placeholder='Unable to verify · Retry';
+  else if(!dates.length)placeholder='No listed dates for this contract';
+  else if(parseDay(idea.expiry)&&!selected)placeholder=fmtDate(idea.expiry,true)+(status==='outside-range'?' · Unverified':' · Not listed');
+  else if(!selected)placeholder='Choose listed expiration…';
+  const disabled=!verified||!dates.length;
+  const needsPlaceholder=disabled||!selected;
+  const options=dates.map(d=>'<option value="'+esc(d)+'"'+(selected&&d===idea.expiry?' selected':'')+'>'+esc(fmtDate(d,true))+'</option>').join('');
+  control='<select name="listedExpiry" aria-label="Available listed expiration dates" title="'+title+'"'+
+   (disabled?' disabled':'')+(verified&&!selected&&parseDay(idea.expiry)?' class="expiry-unlisted"':'')+'>'+
+   (needsPlaceholder?'<option value="" disabled selected>'+placeholder+'</option>':'')+
+   options+(verified&&dates.length?'<option value="__manual__">Enter date manually (unverified)…</option>':'')+
+   '</select><input type="hidden" name="expiry" value="'+esc(idea.expiry||'')+'">';
  }
- return '<label class="draft-expiration-field" data-expiration-field>'+label+control+'</label>';
+ return '<div class="draft-expiration-field" data-expiration-field>'+label+control+'</div>';
 }
 function updateListingCard(idea){
  const card=[...document.querySelectorAll('[data-draft-id]')].find(x=>x.dataset.draftId===idea.id);
