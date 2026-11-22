@@ -22,6 +22,6 @@ test('Analyze % brings the selected standalone preview into view, retaining quot
  assert.match(app,/\$\('optionPreview'\)\?\.scrollIntoView\(\{block:'start',behavior:'smooth'\}\)/);
  assert.match(app,/if\(opening\)\$\('optionPreview'\)\?\.scrollIntoView/);
  assert.match(app,/void refreshOptionQuote\(\)/);
- assert.match(sw,/swing-risk-desk-shell-v3\.7-sparse-chain/);
- assert.match(html,/SWING RISK DESK \/ v3\.7 focused liquidity ladder/);
+ assert.match(sw,/swing-risk-desk-shell-v3\.8-listed-date-dropdown/);
+ assert.match(html,/SWING RISK DESK \/ v3\.8 verified dates \+ focused ladder/);
 });
