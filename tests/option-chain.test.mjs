@@ -179,7 +179,7 @@ test('sparse liquidity marks only first, second and third highest positive cells
 test('equal ranks have equal heat; zeros and missing OI/VOL never get highlights',()=>{
  const rows=[
   {strike:10,call:{openInterest:900,volume:0},put:{openInterest:null,volume:0}},
-  {strike:11,call:{openInterest:600,volume:null},put:{openInterest:0,volume:null}},
+  {strike:11,call:{openInterest:600,volume:3},put:{openInterest:0,volume:null}},
   {strike:12,call:{openInterest:600,volume:12},put:{openInterest:null,volume:0}},
   {strike:13,call:{openInterest:400,volume:11},put:{openInterest:4,volume:0}},
   {strike:14,call:{openInterest:200,volume:10},put:{openInterest:0,volume:0}},
@@ -193,7 +193,8 @@ test('equal ranks have equal heat; zeros and missing OI/VOL never get highlights
  assert.equal(marked[2].call.volumeHeat,3);
  assert.equal(marked[3].call.volumeHeat,2);
  assert.equal(marked[4].call.volumeHeat,1);
- assert.equal(marked[3].put.oiHeat,3);
+ assert.equal(marked[1].call.volumeHeat,undefined,'fourth place stays uncolored');
+ assert.equal(marked[3].put.oiHeat,undefined,'one reported OI value is insufficient to rank a side');
  assert.equal(marked[0].put.volumeHeat,undefined);
  assert.ok(marked.every(row=>row.put.volumeHeat===undefined));
 });
