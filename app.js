@@ -1268,6 +1268,9 @@ $('quickPlanner').addEventListener('input',e=>{
  const before=draftContractKey(idea);
  if(['ticker','optionType'].includes(name)&&!tickerInputOrigins.has(idea.id))tickerInputOrigins.set(idea.id,tickerScenarioKey(idea));
  idea[name]=name==='ticker'?normalizeTicker(e.target.value):e.target.value;
+ // Manual date choice applies only to this contract; changing ticker, strike
+ // or direction returns the new contract to the verified-only dropdown.
+ if(['ticker','strike','optionType'].includes(name))manualExpiryIds.delete(idea.id);
  const changed=['ticker','expiry','strike','optionType'].includes(name)&&before!==draftContractKey(idea);
  if(changed){
   quoteRefreshToken++;quoteRefreshBusy=false;
