@@ -306,7 +306,92 @@ function listingPanel(idea){
   return '<div class="listing-notice listing-neutral">Could not verify available dates: '+esc(state.message||'Provider unavailable')+
    ' <button type="button" data-action="refresh-listed-expirations" data-plan-id="'+esc(idea.id)+'">Retry</button></div>';
  const dates=state.expirations,status=expirationListingStatus(idea.expiry,state);
- const name=esc(ticker+' 
+ const name=esc(ticker+' $'+Number(idea.strike)+' '+idea.optionType);
+ const checked='Alpaca active contracts · '+esc(fmtDate(state.checkedFrom,true))+'–'+esc(fmtDate(state.checkedThrough,true));
+ if(!dates.length)return '<div class="listing-notice listing-warning"><strong>No active standard contracts found</strong> for '+name+
+  ' in the checked range. Check the strike, then verify with your broker. <button type="button" data-action="refresh-listed-expirations" data-plan-id="'+esc(idea.id)+'">Retry</button></div>'+
+  '<small class="listing-source">'+checked+'</small>';
+ const selected=dates.includes(idea.expiry)?idea.expiry:'';
+ const options=dates.map(d=>'<option value="'+esc(d)+'"'+(d===selected?' selected':'')+'>'+esc(fmtDate(d,true))+'</option>').join('');
+ const dropdown='<label class="listing-picker"><span>LISTED EXPIRATIONS · '+dates.length+' FOUND</span><select name="listedExpiry" aria-label="Choose verified expiration for '+name+'">'+
+  '<option value="">'+(selected?'Choose another listed date…':'Choose a verified date…')+'</option>'+options+'</select></label>';
+ let info='';
+ if(status==='listed')info='<span class="listing-feedback listing-positive">✓ Exact contract listed for '+esc(fmtDate(idea.expiry,true))+'.</span>';
+ else if(status==='not-listed'){
+  const nearest=nearestListedExpirations(dates,idea.expiry,4);
+  info='<div class="listing-feedback listing-negative"><strong>'+esc(fmtDate(idea.expiry,true))+' is not listed</strong> for '+name+'. Available nearby: '+
+   nearest.map(d=>'<button type="button" data-action="choose-listed-expiry" data-plan-id="'+esc(idea.id)+'" data-expiry="'+esc(d)+'">'+esc(fmtDate(d))+'</button>').join(' ')+'</div>';
+ }else if(status==='outside-range')info='<span class="listing-feedback listing-neutral">Date outside the checked range. Verify the exact contract with your broker.</span>';
+ else info='<span class="listing-feedback listing-neutral">Choose one of the verified dates below.</span>';
+ return '<div class="listing-verified-content">'+info+dropdown+'<small class="listing-source">'+checked+
+  ' · Listed does not guarantee a quote or execution.</small></div>';
+}
+function updateListingCard(idea){
+ const card=[...document.querySelectorAll('[data-draft-id]')].find(x=>x.dataset.draftId===idea.id);
+ if(!card)return;
+ const badge=card.querySelector('[data-listing-badge]'),panel=card.querySelector('[data-listing-panel]');
+ if(badge)badge.innerHTML=listingBadge(idea);
+ if(panel)panel.innerHTML=listingPanel(idea);
+}
+function updateListingCardsForKey(key){
+ for(const idea of plannerIdeas())if(expirationLookupKey(idea)===key)updateListingCard(idea);
+}
+function showInlineQuoteLoading(idea){
+ const card=[...document.querySelectorAll('[data-draft-id]')].find(x=>x.dataset.draftId===idea?.id);
+ if(!card)return;
+ const quote=card.querySelector('[data-idea-quote]');
+ if(quote&&idea.quoteStatus==='loading'){
+  quote.dataset.tone='loading';
+  quote.innerHTML='<span class="mini-spin" aria-hidden="true"></span> Fetching quote…';
+ }
+}
+async function ensureListedExpirations(idea,force=false){
+ const key=expirationLookupKey(idea);
+ if(!key)return;
+ const current=expirationListings.get(key);
+ if(current?.status==='loading')return;
+ if(!force&&current?.status==='verified'&&Date.now()-current.fetchedAt<LISTING_TTL_MS){
+  updateListingCardsForKey(key);return;
+ }
+ expirationListings.set(key,{status:'loading'});
+ updateListingCardsForKey(key);
+ const [ticker,strike,type]=key.split('|');
+ try{
+  const query=new URLSearchParams({ticker,strike:String(Number(strike)),type:type.toLowerCase()});
+  const response=await fetch('/api/option-expirations?'+query,{cache:'no-store'});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw Error(data.error||'Listing service unavailable.');
+  if(data.status!=='verified'||data.ticker!==ticker||Number(data.strike)!==Number(strike)||
+   data.type!==type.toLowerCase()||!Array.isArray(data.expirations))throw Error('Option listing response could not be verified.');
+  expirationListings.set(key,{status:'verified',expirations:normalizeListedDates(data.expirations),
+   checkedFrom:data.checkedFrom,checkedThrough:data.checkedThrough,fetchedAt:Date.now()});
+ }catch(e){
+  expirationListings.set(key,{status:'error',message:String(e.message||'Lookup unavailable').slice(0,170),fetchedAt:Date.now()});
+ }finally{updateListingCardsForKey(key);}
+}
+function queueListedExpirations(idea,immediate=false){
+ if(listingDebounce)clearTimeout(listingDebounce);
+ if(!expirationLookupKey(idea)){updateListingCard(idea);return;}
+ if(immediate){void ensureListedExpirations(idea);return;}
+ const id=idea.id,key=expirationLookupKey(idea);
+ listingDebounce=setTimeout(()=>{
+  const current=plannerIdeas().find(i=>i.id===id);
+  if(current&&expirationLookupKey(current)===key)void ensureListedExpirations(current);
+ },600);
+}
+function applyListedExpiry(ideaId,date){
+ const idea=plannerIdeas().find(x=>x.id===ideaId);
+ const listing=idea&&expirationListings.get(expirationLookupKey(idea));
+ if(!idea||!parseDay(date)||listing?.status!=='verified'||!listing.expirations.includes(date))return;
+ const card=[...document.querySelectorAll('[data-draft-id]')].find(x=>x.dataset.draftId===idea.id);
+ const field=card?.querySelector('[name="expiry"]');
+ if(!field)return;
+ if(field.value===date){updateListingCard(idea);return;}
+ field.value=date;
+ field.dispatchEvent(new Event('input',{bubbles:true}));
+ field.dispatchEvent(new Event('change',{bubbles:true}));
+}
+function renderPlanner(m){
  const ideas=plannerIdeas(m.account.id);
  if($('planSortSelect'))$('planSortSelect').value=planSortMode;
  let changed=false;
