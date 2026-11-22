@@ -60,6 +60,7 @@ let plannerPrefill=null;
 let selectedPreviewId=null;
 let optionPanelMode='analyze';
 let chainSide='Put';
+let optionChainRange='nearby';
 let chainFetchToken=0;
 const chainCache=new Map();
 let expandedPlanId=null;
@@ -597,7 +598,7 @@ function chainKey(idea){
  const expiry=String(idea?.expiry||'');
  const strike=Number(idea?.strike);
  if(!ticker||!parseDay(expiry)||!Number.isFinite(strike)||strike<=0)return '';
- return ticker+'|'+expiry+'|'+strike;
+ return ticker+'|'+expiry+'|'+strike+'|'+optionChainRange;
 }
 function renderChainPreview(idea=currentPreviewIdea()){
  const el=$('optionPreview');
@@ -606,7 +607,7 @@ function renderChainPreview(idea=currentPreviewIdea()){
  el.hidden=false;
  el.innerHTML=renderChainPanel({idea,data:entry?.status==='ready'?entry.data:null,
   loading:entry?.status==='loading',error:entry?.status==='error'?entry.message:'',
-  side:chainSide});
+  side:chainSide,scope:optionChainRange});
 }
 async function refreshOptionChain(force=false){
  const idea=currentPreviewIdea();
@@ -623,11 +624,11 @@ async function refreshOptionChain(force=false){
  renderChainPreview(idea);
  try{
   const parts=key.split('|');
-  const qs=new URLSearchParams({ticker:parts[0],expiry:parts[1],strike:parts[2]});
+  const qs=new URLSearchParams({ticker:parts[0],expiry:parts[1],strike:parts[2],scope:parts[3]});
   const response=await fetch('/api/option-chain?'+qs,{cache:'no-store'});
   const payload=await response.json().catch(()=>({}));
   if(!response.ok)throw Error(payload.error||'Could not load the full option chain.');
-  if(!['ok','empty'].includes(payload.status)||payload.ticker!==parts[0]||payload.expiry!==parts[1]||
+  if(!['ok','empty'].includes(payload.status)||payload.ticker!==parts[0]||payload.expiry!==parts[1]||payload.scope!==parts[3]||
    (payload.status==='ok'&&!Array.isArray(payload.rows)))throw Error('Option chain response was incomplete.');
   chainCache.set(key,{status:'ready',data:payload,fetchedAt:Date.now()});
  }catch(error){
@@ -1179,7 +1180,7 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'view-option-chain':{
   const opening=selectedPreviewId!==el.dataset.planId||optionPanelMode!=='chain';
   selectedPreviewId=opening?el.dataset.planId:null;
-  optionPanelMode='chain';expandedPlanId=null;quoteRefreshToken++;
+  optionPanelMode='chain';if(opening)optionChainRange='nearby';expandedPlanId=null;quoteRefreshToken++;
   const idea=currentPreviewIdea();if(idea)chainSide=idea.optionType==='Call'?'Call':'Put';
   renderPlanner(analytics());
   if(opening){$('optionPreview')?.scrollIntoView({block:'start',behavior:'smooth'});void refreshOptionChain();}
@@ -1191,6 +1192,10 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
   renderPlanner(analytics());void refreshOptionQuote();break;
  }
  case 'refresh-option-chain':void refreshOptionChain(true);break;
+ case 'toggle-chain-range':{
+  optionChainRange=optionChainRange==='all'?'nearby':'all';
+  renderChainPreview();void refreshOptionChain();break;
+ }
  case 'chain-show-side':chainSide=el.dataset.side==='Call'?'Call':'Put';renderChainPreview();break;
  case 'pick-chain-contract':pickChainContract(el);break;
  case 'close-option-preview':selectedPreviewId=null;chainFetchToken++;quoteRefreshToken++;renderPlanner(analytics());break;
