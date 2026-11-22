@@ -98,7 +98,7 @@
             <summary><strong>Portfolio impact details</strong><span>Full USD costs, CAD risk calculation and assumptions</span></summary>
             <div class="planner-result" id="plannerResult" aria-live="polite"></div>
             <p class="help-line planner-risk-explainer"><strong>What is the CAD risk budget used?</strong> It is how much of your rolling 5-session loss allowance this hypothetical purchase would consume, assuming the selected loss %. It is <strong>not money paid to IBKR</strong> and not a guaranteed stop. The <strong>USD total cash to buy</strong> is premiums + estimated buy fees; an option can lose its full purchase cost.</p>
-            <p class="help-line draft-disclaimer">Option preview assumptions and target levels are saved on this device too. Free indicative quote refresh is optional and requires you to configure an Alpaca Basic account. Draft ideas are remembered on this browser, even after closing the tab, and kept separately per portfolio. They do not use real account capacity, enter the trade journal, or sync across devices or into cloud backups. Recheck saved premiums and FX before executing; an option's full debit can still be lost.</p>
+            <p class="help-line draft-disclaimer">Option preview assumptions and target levels are saved on this device too. Listed expirations are checked for your exact ticker, strike and Call/Put using Alpaca active-contract metadata. Listing does not guarantee a bid/ask or broker tradability. Free indicative quote refresh is optional and requires you to configure an Alpaca Basic account. Draft ideas are remembered on this browser, even after closing the tab, and kept separately per portfolio. They do not use real account capacity, enter the trade journal, or sync across devices or into cloud backups. Recheck saved premiums and FX before executing; an option's full debit can still be lost.</p>
           </details>
         </section>
         <section id="optionPreview" class="option-preview" hidden aria-label="Projected option return by target and date"></section>
@@ -183,7 +183,7 @@
       <div class="bottom-danger"><button type="button" class="text-link text-delete" data-action="reset-data">Reset all locally saved data</button><small>Does not change anything in Google Sheets or IBKR.</small></div>
     </section>
   </main>
-  <footer><span>SWING RISK DESK / v3.3 protected cloud synchronization</span><span>Process over P&amp;L. All figures in CAD unless marked USD.</span></footer>
+  <footer><span>SWING RISK DESK / v3.4 verified options preview</span><span>Process over P&amp;L. All figures in CAD unless marked USD.</span></footer>
 </div>
 <dialog id="editorDialog" class="editor-dialog"><div class="dialog-content"><div class="dialog-header"><div><div class="overline" id="dialogEyebrow">POSITION</div><h2 id="dialogTitle">New position</h2></div><button type="button" class="icon-button" data-action="close-dialog" aria-label="Close dialog">&#10005;</button></div><div id="dialogBody"></div></div></dialog>
 <input id="importFile" type="file" accept=".json,.csv,application/json,text/csv" hidden>
