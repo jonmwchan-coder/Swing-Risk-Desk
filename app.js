@@ -11,6 +11,7 @@ import {emptyPreview,normalizePreview,projectOptionReturns,buildOCCSymbol,MAX_PR
 import {nextSession} from './lib/calendar.mjs';
 import {draftContract,draftContractKey,normalizeTicker,sortPlanIdeas,PLAN_SORT_MODES} from './lib/planner-contract.mjs';
 import {expirationLookupKey,normalizeListedDates,expirationListingStatus,nearestListedExpirations} from './lib/expiry-listings.mjs';
+import {renderChainPanel} from './lib/chain-view.mjs';
 import {copyPlannerIdeas,isEmptyPlannerPlaceholder,isUneditedTickerScenario,tickerScenarioKey,hydrateTickerScenario,broadcastTickerScenario,visibleTickerDates} from './lib/planner-workflows.mjs';
 
 const STORAGE_KEY='swing-risk-desk:data:v1';
@@ -57,6 +58,10 @@ let asOfOverride=null;
 let toastTimer=null;
 let plannerPrefill=null;
 let selectedPreviewId=null;
+let optionPanelMode='analyze';
+let chainSide='Put';
+let chainFetchToken=0;
+const chainCache=new Map();
 let expandedPlanId=null;
 const tickerInputOrigins=new Map(); // Only reset underlying levels after a ticker/type change is finalized.
 let quoteRefreshBusy=false;
@@ -436,7 +441,7 @@ function renderPlanner(m){
   const quoteTone=idea.quoteStatus==='unavailable'?'warning':idea.priceManual?'manual':idea.quoteStatus==='indicative'?'indicative':idea.quoteStatus==='saved'?'warning':'empty';
   return `<article class="draft-idea ${active?'is-active':''} ${editing?'is-expanded':'is-collapsed'} ${overCap?'is-over-idea-cap':''}" data-draft-id="${esc(idea.id)}">
     <div class="draft-head"><div class="draft-identity"><strong class="draft-ticker" data-idea-ticker>${esc(symbol)}</strong><span class="draft-idea-name" data-idea-name>${esc(name)}</span><span class="draft-contract-pill" data-idea-contract>${esc(contractText)}</span><span data-listing-badge class="draft-listing-indicator">${listingBadge(idea)}</span></div>
-      <div class="draft-actions"><button type="button" class="draft-edit-btn" data-action="toggle-plan-details" data-plan-id="${esc(idea.id)}" aria-expanded="${editing}">${editing?'Done':'Edit'}</button><button type="button" class="draft-preview-btn" data-action="analyze-idea" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id}">${selectedPreviewId===idea.id?'Hide %':'Analyze %'}</button><button type="button" class="draft-record" data-action="plan-to-position" data-plan-id="${esc(idea.id)}">Record</button><button type="button" class="draft-remove" data-action="remove-plan-idea" data-plan-id="${esc(idea.id)}" aria-label="Remove ${esc(symbol)} ${esc(name)}">×</button></div></div>
+      <div class="draft-actions"><button type="button" class="draft-edit-btn" data-action="toggle-plan-details" data-plan-id="${esc(idea.id)}" aria-expanded="${editing}">${editing?'Done':'Edit'}</button><button type="button" class="draft-preview-btn" data-action="analyze-idea" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id&&optionPanelMode==='analyze'}">${selectedPreviewId===idea.id&&optionPanelMode==='analyze'?'Hide %':'Analyze %'}</button><button type="button" class="draft-chain-btn" data-action="view-option-chain" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id&&optionPanelMode==='chain'}" title="Compare call and put volume, open interest and indicative quotes for this expiration">${selectedPreviewId===idea.id&&optionPanelMode==='chain'?'Hide chain':'View chain'}</button><button type="button" class="draft-record" data-action="plan-to-position" data-plan-id="${esc(idea.id)}">Record</button><button type="button" class="draft-remove" data-action="remove-plan-idea" data-plan-id="${esc(idea.id)}" aria-label="Remove ${esc(symbol)} ${esc(name)}">×</button></div></div>
     <div class="draft-compact-line"><span class="draft-mini-field">Qty <strong data-idea-qty>${esc(idea.qty||'—')}</strong></span><span class="draft-mini-field">Premium <strong data-idea-premium>${esc(premium)}</strong><small>/share</small></span><span class="draft-mini-quote" data-tone="${quoteTone}" data-idea-quote>${idea.quoteStatus==='loading'?'<span class="mini-spin" aria-hidden="true"></span> ':''}${esc(quote)}</span></div>
     <div class="draft-cap-alert" data-cap-warning="${esc(idea.id)}" role="status" ${overCap?'':'hidden'}>${overCap?`<strong>ABOVE FIXED IDEA CAP · +${cad(capOverCad)}</strong><span>This idea uses ${cad(riskRow.reserveCad)} vs your ${cad(fixedIdeaCap)} guide. Rolling pool is separate.</span><button type="button" data-action="focus-cap-policy" title="Review your fixed versus flexible risk allocation">Review policy</button>`:''}</div>
     ${editing?`<div class="draft-editor"><div class="draft-editor-heading"><strong>Contract setup</strong><span>Independent contract and assumptions per idea</span></div>
@@ -564,6 +569,84 @@ function confirmPlannerCopy(){
  showToast(`Copied ${result.count} draft idea${result.count===1?'':'s'} to ${target?.name||'portfolio'}. ${result.conflicts?result.conflicts+' conflicting same-ticker plan(s) kept independent. ':''}Source unchanged; review target risk and refresh premiums.`);
 }
 
+
+function chainKey(idea){
+ const ticker=normalizeTicker(idea?.ticker);
+ const expiry=String(idea?.expiry||'');
+ const strike=Number(idea?.strike);
+ if(!ticker||!parseDay(expiry)||!Number.isFinite(strike)||strike<=0)return '';
+ return ticker+'|'+expiry+'|'+strike;
+}
+function renderChainPreview(idea=currentPreviewIdea()){
+ const el=$('optionPreview');
+ if(!el||!idea)return;
+ const entry=chainCache.get(chainKey(idea));
+ el.hidden=false;
+ el.innerHTML=renderChainPanel({idea,data:entry?.status==='ready'?entry.data:null,
+  loading:entry?.status==='loading',error:entry?.status==='error'?entry.message:'',
+  side:chainSide});
+}
+async function refreshOptionChain(force=false){
+ const idea=currentPreviewIdea();
+ if(!idea||optionPanelMode!=='chain')return;
+ const key=chainKey(idea),id=idea.id;
+ if(!key){renderChainPreview(idea);return;}
+ const cached=chainCache.get(key);
+ if(cached?.status==='loading')return;
+ if(!force&&cached?.status==='ready'&&Date.now()-cached.fetchedAt<60000){
+  renderChainPreview(idea);return;
+ }
+ const token=++chainFetchToken;
+ chainCache.set(key,{status:'loading'});
+ renderChainPreview(idea);
+ try{
+  const parts=key.split('|');
+  const qs=new URLSearchParams({ticker:parts[0],expiry:parts[1],strike:parts[2]});
+  const response=await fetch('/api/option-chain?'+qs,{cache:'no-store'});
+  const payload=await response.json().catch(()=>({}));
+  if(!response.ok)throw Error(payload.error||'Could not load the full option chain.');
+  if(!['ok','empty'].includes(payload.status)||payload.ticker!==parts[0]||payload.expiry!==parts[1]||
+   (payload.status==='ok'&&!Array.isArray(payload.rows)))throw Error('Option chain response was incomplete.');
+  chainCache.set(key,{status:'ready',data:payload,fetchedAt:Date.now()});
+ }catch(error){
+  chainCache.set(key,{status:'error',message:String(error.message||'Chain unavailable').slice(0,200)});
+ }finally{
+  if(token===chainFetchToken&&selectedPreviewId===id&&optionPanelMode==='chain'&&
+   chainKey(currentPreviewIdea())===key)renderChainPreview();
+ }
+}
+function pickChainContract(el){
+ const id=el.dataset.planId,side=el.dataset.side,strike=Number(el.dataset.strike);
+ const idea=plannerIdeas().find(x=>x.id===id),entry=idea&&chainCache.get(chainKey(idea));
+ if(!idea||entry?.status!=='ready'||!['Call','Put'].includes(side)||!Number.isFinite(strike))return;
+ const row=entry.data.rows?.find(x=>x.strike===strike);
+ if(!row||!row[side.toLowerCase()])return;
+ const changed=Number(idea.strike)!==strike||idea.optionType!==side;
+ if(!changed){
+  selectedPreviewId=null;optionPanelMode='analyze';expandedPlanId=idea.id;
+  renderPlanner(analytics());return;
+ }
+ if(side!==idea.optionType){
+  const p=ensurePreview(idea),fresh=emptyPreview(today(),state.customClosed||[]);
+  p.targets=fresh.targets;p.dates=fresh.dates;p.tickerLinked=true;
+  p.tickerLinkEstablished=false;p.tickerPlanEditedAt='';
+ }
+ idea.strike=String(strike);idea.optionType=side;
+ const p=ensurePreview(idea);
+ p.spot='';p.ivPct='';p.ivManual=false;p.bid='';p.ask='';
+ p.quoteAt='';p.quoteSource='New contract requires new quote';
+ idea.contractSymbol='';idea.marketMid='';idea.quoteStatus='';
+ idea.quoteMessage='Contract changed. Old premium cleared; refreshing the new exact contract.';
+ // Never carry a stale manually entered premium across a strike/side change.
+ idea.price='';idea.priceManual=false;
+ adoptTickerLevels(idea);
+ persistPlannerDrafts();
+ chainFetchToken++;
+ selectedPreviewId=null;optionPanelMode='analyze';expandedPlanId=idea.id;
+ renderPlanner(analytics());
+ if(draftContract(idea))void refreshDraftPremium(idea);
+}
+
 function previewViewModel(idea){
  const contract=draftContract(idea);
  const result=projectOptionReturns({contract,preview:{...idea.preview,dates:visibleTickerDates(idea).visible.map(x=>x.date),ratePct:'4',dividendPct:'0'},qty:Number(idea.qty),entryPremium:Number(idea.price),entryFeeUsd:Number(idea.fee||0),sellFeePerContractUsd:ratePerContract(account(),'SELL'),asOf:new Date()});
@@ -577,6 +660,7 @@ function percentCell(cell){
 function renderOptionPreview(){
  const el=$('optionPreview');if(!el)return;
  const idea=currentPreviewIdea();if(!idea){el.hidden=true;el.innerHTML='';return;}
+ if(optionPanelMode==='chain'){renderChainPreview(idea);return;}
  el.hidden=false;
  const p=ensurePreview(idea),parsed=draftContract(idea)||{},symbol=buildOCCSymbol(parsed);
  const {visible:shownExitDates,excluded:unavailableExitDates}=visibleTickerDates(idea);
@@ -1068,8 +1152,25 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'refresh-listed-expirations':{const idea=plannerIdeas().find(x=>x.id===el.dataset.planId);if(idea)void ensureListedExpirations(idea,true);break;}
  case 'use-listed-expirations':{manualExpiryIds.delete(el.dataset.planId);el.blur();const idea=plannerIdeas().find(x=>x.id===el.dataset.planId);if(idea){updateListingCard(idea);const card=[...document.querySelectorAll('[data-draft-id]')].find(x=>x.dataset.draftId===el.dataset.planId);card?.querySelector('[name="listedExpiry"]')?.focus();}break;}
  case 'clear-plan-ideas':{if(!confirm('Clear all saved Quick size check ideas for this portfolio? Recorded positions will not be affected.'))break;expandedPlanId=null;selectedPreviewId=null;quoteRefreshToken++;plannerDrafts[account().id]=[defaultPlanIdea(uid(),account().stressPct,false)];persistPlannerDrafts();renderPlanner(analytics());showToast('Saved size-check ideas cleared for this portfolio.');break;}
- case 'analyze-idea':{const opening=selectedPreviewId!==el.dataset.planId;selectedPreviewId=opening?el.dataset.planId:null;if(opening)adoptTickerLevels(currentPreviewIdea());expandedPlanId=null;quoteRefreshToken++;quoteRefreshMessage='';quoteConnectionState='unknown';renderPlanner(analytics());if(opening)$('optionPreview')?.scrollIntoView({block:'start',behavior:'smooth'});if(opening)void refreshOptionQuote();break;}
- case 'close-option-preview':selectedPreviewId=null;quoteRefreshToken++;renderPlanner(analytics());break;
+ case 'analyze-idea':{const opening=selectedPreviewId!==el.dataset.planId||optionPanelMode!=='analyze';optionPanelMode='analyze';chainFetchToken++;selectedPreviewId=opening?el.dataset.planId:null;if(opening)adoptTickerLevels(currentPreviewIdea());expandedPlanId=null;quoteRefreshToken++;quoteRefreshMessage='';quoteConnectionState='unknown';renderPlanner(analytics());if(opening)$('optionPreview')?.scrollIntoView({block:'start',behavior:'smooth'});if(opening)void refreshOptionQuote();break;}
+ case 'view-option-chain':{
+  const opening=selectedPreviewId!==el.dataset.planId||optionPanelMode!=='chain';
+  selectedPreviewId=opening?el.dataset.planId:null;
+  optionPanelMode='chain';expandedPlanId=null;quoteRefreshToken++;
+  const idea=currentPreviewIdea();if(idea)chainSide=idea.optionType==='Call'?'Call':'Put';
+  renderPlanner(analytics());
+  if(opening){$('optionPreview')?.scrollIntoView({block:'start',behavior:'smooth'});void refreshOptionChain();}
+  break;
+ }
+ case 'open-chain-analyze':{
+  if(!currentPreviewIdea())break;
+  chainFetchToken++;optionPanelMode='analyze';quoteRefreshMessage='';quoteConnectionState='unknown';
+  renderPlanner(analytics());void refreshOptionQuote();break;
+ }
+ case 'refresh-option-chain':void refreshOptionChain(true);break;
+ case 'chain-show-side':chainSide=el.dataset.side==='Call'?'Call':'Put';renderChainPreview();break;
+ case 'pick-chain-contract':pickChainContract(el);break;
+ case 'close-option-preview':selectedPreviewId=null;chainFetchToken++;quoteRefreshToken++;renderPlanner(analytics());break;
  case 'preview-add-target':{const idea=currentPreviewIdea();if(!idea)break;const p=ensurePreview(idea);if(p.targets.length>=MAX_PREVIEW_TARGETS)break;const n=p.targets.filter(t=>t.name.startsWith('TP')).length+1;p.targets.push({id:uid(),name:`TP${n}`,price:''});publishTickerLevels(idea);persistPlannerDrafts();renderOptionPreview();break;}
  case 'preview-remove-target':{const idea=currentPreviewIdea(),p=ensurePreview(idea);if(!p)break;p.targets=p.targets.filter(t=>t.id!==el.dataset.targetId);publishTickerLevels(idea);persistPlannerDrafts();renderOptionPreview();break;}
  case 'preview-add-date':{const idea=currentPreviewIdea(),p=ensurePreview(idea);if(!p||p.dates.length>=MAX_PREVIEW_DATES)break;const shown=visibleTickerDates(idea).visible;let d=nextSession(shown.at(-1)?.date||today(),state.customClosed||[]);if(parseDay(idea.expiry)&&d>idea.expiry){showToast('This exit date would be after the selected option expires.');break;}if(p.dates.includes(d)){showToast('This exit date is already in the shared ticker plan.');break;}p.dates.push(d);p.dates.sort();publishTickerLevels(idea);persistPlannerDrafts();renderOptionPreview();break;}
