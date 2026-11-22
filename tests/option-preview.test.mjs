@@ -91,7 +91,7 @@ test('range is strike-independent at the same supplied IV, handles DST and avoid
  assert.equal(expectedUnderlyingRange({spot:100,ivPct:'',expiry:'2027-03-15',asOf:start}),null);
  assert.equal(expectedUnderlyingRange({spot:100,ivPct:1001,expiry:'2027-03-15',asOf:start}),null);
  assert.equal(expectedUnderlyingRange({spot:100,ivPct:30,expiry:'invalid',asOf:start}),null);
- assert.equal(expectedUnderlyingRange({spot:100,ivPct:30,expiry:'2027-03-12',asOf:start}),null);
+ assert.equal(expectedUnderlyingRange({spot:100,ivPct:30,expiry:'2027-03-12',asOf:new Date('2027-03-12T21:01:00Z')}),null);
  const extreme=expectedUnderlyingRange({spot:100,ivPct:300,expiry:'2028-03-15',asOf:start});
  assert.ok(extreme);assert.equal(extreme.lower,0);
 });
