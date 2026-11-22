@@ -7,7 +7,7 @@ import {calculatePlanBasket,defaultPlanIdea,parsePlannedContract,MAX_PLAN_IDEAS,
 import {PLANNER_LOCAL_KEY,loadPlannerDrafts,savePlannerDrafts,clearPlannerDraftStorage} from './lib/planner-storage.mjs';
 import {DEFAULT_BUY_FEE_USD,DEFAULT_SELL_FEE_USD,estimateOrderFee,ratePerContract} from './lib/fees.mjs';
 import {buildSingleTradeHandoff,singleTradeExportFilename,TRADE_HANDOFF_SCHEMA} from './lib/trade-export.mjs';
-import {emptyPreview,normalizePreview,projectOptionReturns,buildOCCSymbol,MAX_PREVIEW_DATES,MAX_PREVIEW_TARGETS,easternCloseMs} from './lib/option-preview.mjs';
+import {emptyPreview,normalizePreview,projectOptionReturns,expectedUnderlyingRange,buildOCCSymbol,MAX_PREVIEW_DATES,MAX_PREVIEW_TARGETS,easternCloseMs} from './lib/option-preview.mjs';
 import {nextSession} from './lib/calendar.mjs';
 import {draftContract,draftContractKey,normalizeTicker,sortPlanIdeas,PLAN_SORT_MODES} from './lib/planner-contract.mjs';
 import {expirationLookupKey,normalizeListedDates,expirationListingStatus,nearestListedExpirations,regularExpirationKind} from './lib/expiry-listings.mjs';
@@ -722,6 +722,28 @@ function percentCell(cell){
  const value=cell.returnPct;
  return `<div class="preview-return ${value>=0?'preview-positive':'preview-negative'}">${value>0?'+':''}${value.toFixed(1)}%</div><small>USD ${money(cell.netUsd)} net</small><small>USD ${money(cell.projectedSellPremium)} model exit/sh</small>`;
 }
+function expectedRangeDisplay(idea){
+ const p=idea?.preview||{};
+ const result=expectedUnderlyingRange({spot:p.spot,ivPct:p.ivPct,expiry:idea?.expiry});
+ if(!result)return {
+  label:'Underlying 1σ range: add spot + IV',
+  title:'Requires a valid underlying price, selected-contract implied volatility and a future expiry. Refresh the quote or enter spot/IV manually.'
+ };
+ return {
+  label:'Underlying 1σ: '+money(result.lower)+'–'+money(result.upper)+
+   ' (±'+money(result.move)+', '+result.movePct.toFixed(1)+'%)',
+  title:'Approximate one-standard-deviation UNDERLYING range through 4 PM ET on expiry. Uses '+
+   money(result.spot)+' spot and '+result.ivPct.toFixed(1)+'% IV from this selected strike/expiry, with '+
+   result.days.toFixed(1)+' calendar days remaining. Not an option-price range or forecast; IV/spot may be stale.'
+ };
+}
+function updateExpectedRangeHeader(idea){
+ const node=$('optionPreview')?.querySelector('[data-expected-range]');
+ if(!node)return;
+ const range=expectedRangeDisplay(idea);
+ node.textContent=range.label;
+ node.title=range.title;
+}
 function renderOptionPreview(){
  const el=$('optionPreview');if(!el)return;
  const idea=currentPreviewIdea();if(!idea){el.hidden=true;el.innerHTML='';return;}
@@ -738,10 +760,12 @@ function renderOptionPreview(){
  const ivHelp=ivUnavailable?`<div class="preview-iv-help" role="status"><div><strong>IV not supplied by Alpaca for this contract</strong><p>The free snapshot can include a bid/ask without a usable implied volatility. Enter the IV displayed in your broker's option chain for this exact strike and expiration to calculate returns. The model won't guess an IV.</p></div><button type="button" class="preview-enter-iv" data-action="enter-manual-iv">Enter broker IV</button></div>`:'';
  const connectionHelp=quoteConnectionState==='not-configured'?`<div class="preview-connect" role="status"><strong>One-time free data connection needed</strong><p>Automatic spot, IV and indicative bid/ask require free Alpaca Paper Only API keys. The feed is <strong>not connected</strong> yet. You can set it up without funding an Alpaca brokerage account.</p><ol><li><a href="https://app.alpaca.markets/signup" target="_blank" rel="noopener noreferrer">Create a free Alpaca paper-only account</a> and generate paper API credentials.</li><li>In your existing Vercel project's <strong>Settings → Environment Variables</strong>, add <code>ALPACA_DATA_KEY_ID</code> and <code>ALPACA_DATA_SECRET_KEY</code> for Production, then redeploy.</li><li>Return and press <strong>Refresh quote</strong>. Quotes will then fill automatically when you click Analyze %.</li></ol><small>Never enter API secrets into this form or chat. They belong in the server's environment settings.</small></div>`:'';
  const displayContract=contractDisplayParts(idea);
+ const expectedRange=expectedRangeDisplay(idea);
  const previewIdentity='<div class="studio-contract-identity" aria-label="Selected option contract">'+
   '<span class="studio-contract-ticker">'+esc(normalizeTicker(idea.ticker)||'Ticker')+'</span>'+
   '<span class="studio-contract-expiry'+(displayContract.hasExpiry?'':' is-missing')+'">'+esc(displayContract.expiry)+'</span>'+
-  '<strong class="studio-contract-strike'+(displayContract.hasStrike?'':' is-missing')+'">'+esc(displayContract.strike)+'</strong></div>'+
+  '<strong class="studio-contract-strike'+(displayContract.hasStrike?'':' is-missing')+'">'+esc(displayContract.strike)+'</strong>'+
+  '<span class="studio-expected-range" data-expected-range title="'+esc(expectedRange.title)+'">'+esc(expectedRange.label)+'</span></div>'+
   '<div class="studio-account-identity"><span>ACCOUNT</span><strong>'+esc(account().name)+'</strong></div>'+
   (idea.name&&idea.name!=='Untitled idea'?'<small class="studio-idea-name">Idea: '+esc(idea.name)+'</small>':'');
  el.innerHTML=`<div class="option-preview-heading"><div class="preview-title-stack"><div class="overline">SCENARIO STUDIO · WHAT-IF MODEL</div><h3>Projected option return by date</h3>${previewIdentity}</div><div class="preview-heading-actions"><span class="preview-mode-tag">HYPOTHETICAL RETURNS</span><button type="button" class="preview-close" data-action="close-option-preview" aria-label="Close option return preview">×</button></div></div>
@@ -1314,6 +1338,7 @@ $('optionPreview').addEventListener('input',e=>{
   p.dates[index]=e.target.value;publishTickerLevels(idea);
  }else return;
  persistPlannerDrafts();updateOptionPreviewResults();
+ if(name==='spot'||name==='ivPct')updateExpectedRangeHeader(idea);
 });
 $('quickPlanner').addEventListener('input',e=>{
  const el=e.target.closest('[data-draft-id]');if(!el)return;
