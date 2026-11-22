@@ -7,7 +7,7 @@ const sw=fs.readFileSync(new URL('../sw.js',import.meta.url),'utf8');
 
 test('selected idea highlight continues to follow active analysis or editor only',()=>{
  assert.match(app,/const editing=expandedPlanId===idea\.id,active=editing\|\|selectedPreviewId===idea\.id;/);
- assert.match(app,/case 'analyze-idea':\{const opening=selectedPreviewId!==el\.dataset\.planId;/);
+ assert.match(app,/case 'analyze-idea':\{const opening=selectedPreviewId!==el\.dataset\.planId\|\|optionPanelMode!=='analyze';/);
  assert.match(styles,/\.draft-idea\.is-active\{/);
  assert.doesNotMatch(app,/case 'select-plan-idea'/);
 });
