@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import handler from '../api/option-expirations.js';
 import {buildOCCSymbol} from '../lib/option-preview.mjs';
-import {expirationLookupKey,normalizeListedDates,expirationListingStatus,nearestListedExpirations} from '../lib/expiry-listings.mjs';
+import {expirationLookupKey,normalizeListedDates,expirationListingStatus,nearestListedExpirations,regularExpirationKind,onlyRegularListedDates} from '../lib/expiry-listings.mjs';
 
 const today=()=>new Date().toISOString().slice(0,10);
 const after=days=>new Date(Date.now()+days*86400000).toISOString().slice(0,10);
@@ -179,4 +179,65 @@ test('verified selection updates quote and risk from a still-connected hidden ex
  assert.ok(handler.includes("if(draftContract(idea))"));
  assert.ok(handler.includes("void refreshDraftPremium(idea)"));
  assert.ok(handler.includes("void refreshOptionQuote()"));
+});
+
+test('calendar labels weekly, holiday-shifted weekly, monthly and quarter-end regular dates',()=>{
+ assert.equal(regularExpirationKind('2026-12-18'),'weekly'); // Third Friday monthly
+ assert.equal(regularExpirationKind('2026-12-31'),'quarterly'); // Calendar quarter end
+ assert.equal(regularExpirationKind('2027-03-31'),'quarterly');
+ assert.equal(regularExpirationKind('2027-03-25'),'weekly'); // Good Friday 3/26 is closed
+ assert.equal(regularExpirationKind('2026-11-27'),'weekly'); // Friday after Thanksgiving
+ assert.equal(regularExpirationKind('2026-12-17'),null); // ordinary daily
+ assert.equal(regularExpirationKind('2026-12-25'),null); // market closed
+ assert.deepEqual(onlyRegularListedDates(['2026-12-17','2026-12-18','2026-12-31','2026-12-18']),['2026-12-18','2026-12-31']);
+ const filtered={status:'verified',scope:'regular',checkedFrom:'2026-12-01',checkedThrough:'2027-12-01',expirations:['2026-12-18']};
+ assert.equal(expirationListingStatus('2026-12-17',filtered),'filtered');
+ assert.equal(expirationListingStatus('2026-12-18',filtered),'listed');
+ assert.equal(expirationListingStatus('2027-12-17',filtered),'outside-range');
+});
+
+test('fast regular scope returns verified standard weeklies/quarters only, and All restores special dates',async()=>{
+ const dates=['2026-12-17','2026-12-18','2026-12-31'],requests=[];
+ await withCredentials(async url=>{
+  requests.push(new URL(url));
+  return {ok:true,json:async()=>({option_contracts:dates.map(d=>contract(d)),next_page_token:null})};
+ },async()=>{
+  const regular=res();await handler(req({ticker:'BBW',strike:'30',type:'put',scope:'regular'}),regular);
+  assert.equal(regular.statusCode,200);
+  assert.equal(regular.body.scope,'regular');
+  assert.deepEqual(regular.body.expirations,['2026-12-18','2026-12-31']);
+  assert.ok(Date.parse(regular.body.checkedThrough)-Date.parse(regular.body.checkedFrom)<370*86400000);
+  const every=res();await handler(req({ticker:'BBW',strike:'30',type:'put',scope:'all'}),every);
+  assert.equal(every.statusCode,200);
+  assert.equal(every.body.scope,'all');
+  assert.deepEqual(every.body.expirations,dates);
+  assert.ok(Date.parse(every.body.checkedThrough)-Date.parse(every.body.checkedFrom)>1000*86400000);
+  assert.equal(requests.length,2);
+  assert.ok(requests.every(u=>u.searchParams.get('limit')==='10000'));
+ });
+ const invalid=res();await handler(req({ticker:'BBW',strike:'30',type:'put',scope:'wrong'}),invalid);
+ assert.equal(invalid.statusCode,400);assert.equal(invalid.body.code,'BAD_SCOPE');
+});
+
+test('regular-only checkbox defaults on, labels regular dates, and has separate lookup caches',()=>{
+ const app=readFileSync(new URL('../app.js',import.meta.url),'utf8');
+ const html=readFileSync(new URL('../index.html',import.meta.url),'utf8');
+ const css=readFileSync(new URL('../styles.css',import.meta.url),'utf8');
+ const sw=readFileSync(new URL('../sw.js',import.meta.url),'utf8');
+ assert.match(app,/let regularExpiriesOnly=true;/);
+ assert.match(app,/const scopedExpirationKey=idea/);
+ assert.match(app,/data\.scope!==scope/);
+ assert.match(app,/name="regularExpiriesOnly"/);
+ assert.match(app,/Regular only/);
+ assert.match(app,/\(Regular\)/);
+ assert.match(app,/status==='filtered'/);
+ assert.match(app,/Hidden by filter/);
+ assert.match(app,/case 'refresh-listed-expirations'/);
+ assert.match(app,/if\(e\.target\.name==='regularExpiriesOnly'\)/);
+ assert.match(app,/regularExpiriesOnly=next/);
+ assert.match(app,/renderPlanner\(analytics\(\)\)/);
+ assert.match(app,/scope\}\);/);
+ assert.match(css,/\.expiry-regular-toggle/);
+ assert.match(sw,/swing-risk-desk-shell-v3\.10-regular-expiries/);
+ assert.match(html,/SWING RISK DESK \/ v3\.10 regular expiration filter/);
 });

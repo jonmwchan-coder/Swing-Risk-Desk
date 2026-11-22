@@ -808,3 +808,13 @@ html,body{max-width:100%}
  .chain-panel-heading .preview-heading-actions{flex-direction:row;align-items:center;gap:6px}
  .chain-range-btn{min-height:29px;padding:5px 8px}
 }
+
+/* v3.10: compact regular-expiry filter alongside verified date label. */
+.draft-contract-fields .draft-expiration-field .expiry-field-heading{justify-content:flex-start;flex-wrap:wrap;column-gap:7px;row-gap:3px}
+.expiry-field-title{margin-right:auto}
+.draft-contract-fields .expiry-regular-toggle{display:inline-flex;align-items:center;gap:4px;min-height:20px;font-size:10px;font-weight:650;letter-spacing:0;color:#bbd8d4;white-space:nowrap;cursor:pointer;user-select:none}
+.draft-contract-fields .expiry-regular-toggle input[type="checkbox"]{width:14px;height:14px;min-width:14px;min-height:14px;padding:0;margin:0;accent-color:#79cbb1;cursor:pointer}
+@media(max-width:690px){
+ .draft-contract-fields .expiry-regular-toggle{min-height:27px;font-size:11px}
+ .draft-contract-fields .expiry-regular-toggle input[type="checkbox"]{width:17px;height:17px;min-width:17px;min-height:17px}
+}

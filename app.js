@@ -10,7 +10,7 @@ import {buildSingleTradeHandoff,singleTradeExportFilename,TRADE_HANDOFF_SCHEMA} 
 import {emptyPreview,normalizePreview,projectOptionReturns,buildOCCSymbol,MAX_PREVIEW_DATES,MAX_PREVIEW_TARGETS,easternCloseMs} from './lib/option-preview.mjs';
 import {nextSession} from './lib/calendar.mjs';
 import {draftContract,draftContractKey,normalizeTicker,sortPlanIdeas,PLAN_SORT_MODES} from './lib/planner-contract.mjs';
-import {expirationLookupKey,normalizeListedDates,expirationListingStatus,nearestListedExpirations} from './lib/expiry-listings.mjs';
+import {expirationLookupKey,normalizeListedDates,expirationListingStatus,nearestListedExpirations,regularExpirationKind} from './lib/expiry-listings.mjs';
 import {renderChainPanel} from './lib/chain-view.mjs';
 import {copyPlannerIdeas,isEmptyPlannerPlaceholder,isUneditedTickerScenario,tickerScenarioKey,hydrateTickerScenario,broadcastTickerScenario,visibleTickerDates} from './lib/planner-workflows.mjs';
 
@@ -285,11 +285,14 @@ function renderSettings(a){const f=$('settingsForm');const tracked=calculateAcco
 
 // Listing metadata is transient, not stored with hypothetical draft pricing.
 const expirationListings=new Map();
-const LISTING_TTL_MS=120000;
+// A small regular-only lookup is the default; All is opt-in and cached separately.
+let regularExpiriesOnly=true;
+const scopedExpirationKey=idea=>{const key=expirationLookupKey(idea);return key?key+'|'+(regularExpiriesOnly?'regular':'all'):'';};
+const LISTING_TTL_MS=300000;
 let listingDebounce=null;
 
 function listingBadge(idea){
- const key=expirationLookupKey(idea);
+ const key=scopedExpirationKey(idea);
  if(!key)return '';
  const state=expirationListings.get(key);
  if(!state)return '<span class="listing-badge listing-neutral">Dates unverified</span>';
@@ -298,6 +301,7 @@ function listingBadge(idea){
  const status=expirationListingStatus(idea.expiry,state);
  if(!state.expirations.length)return '<span class="listing-badge listing-warning">No listed contracts</span>';
  if(status==='listed')return '<span class="listing-badge listing-listed">✓ Listed</span>';
+ if(status==='filtered')return '<span class="listing-badge listing-neutral">Hidden by regular filter</span>';
  if(status==='not-listed')return '<span class="listing-badge listing-warning">Not listed</span>';
  if(status==='outside-range')return '<span class="listing-badge listing-neutral">Outside checked range</span>';
  return '<span class="listing-badge listing-neutral">Choose a listed date</span>';
@@ -307,7 +311,7 @@ function listingBadge(idea){
 // Manual overrides stay available, but they are never presented as verified.
 const manualExpiryIds=new Set();
 function expiryIndicator(idea){
- const key=expirationLookupKey(idea),data=expirationListings.get(key);
+ const key=scopedExpirationKey(idea),data=expirationListings.get(key);
  if(!key)return '';
  if(!data)return '<span class="expiry-inline-status neutral">Unverified</span>';
  if(data.status==='loading')return '<span class="expiry-inline-status neutral"><span class="mini-spin" aria-hidden="true"></span> Checking</span>';
@@ -315,12 +319,13 @@ function expiryIndicator(idea){
  if(!data.expirations.length)return '<span class="expiry-inline-status warning">None found</span>';
  const status=expirationListingStatus(idea.expiry,data);
  if(status==='listed')return '<span class="expiry-inline-status good">✓ Listed</span>';
+ if(status==='filtered')return '<span class="expiry-inline-status neutral">Hidden by filter</span>';
  if(status==='not-listed')return '<span class="expiry-inline-status warning">Not listed</span>';
  if(status==='outside-range')return '<span class="expiry-inline-status neutral">Unverified date</span>';
  return '<span class="expiry-inline-status neutral">'+data.expirations.length+' dates</span>';
 }
 function expirationField(idea){
- const key=expirationLookupKey(idea),listing=key?expirationListings.get(key):null;
+ const key=scopedExpirationKey(idea),listing=key?expirationListings.get(key):null;
  const verified=listing?.status==='verified';
  const dates=verified?listing.expirations||[]:[];
  const manual=manualExpiryIds.has(idea.id);
@@ -335,8 +340,9 @@ function expirationField(idea){
   ?'<button class="expiry-secondary-action" type="button" data-action="enter-manual-expiry" data-plan-id="'+esc(idea.id)+'" title="Choose an unverified date manually">Manual</button>':'';
  const returnLink=manual
   ?'<button class="expiry-secondary-action" type="button" data-action="use-listed-expirations" data-plan-id="'+esc(idea.id)+'">Listed dates</button>':'';
- const label='<span class="expiry-field-heading">EXPIRATION <span data-expiry-status>'+expiryIndicator(idea)+'</span>'+retry+manualLink+returnLink+'</span>';
- const title='Exact active option expirations for this ticker, strike, and Call/Put. Other dates are not offered in the dropdown.';
+ const regularToggle='<label class="expiry-regular-toggle" title="Only verified standard Friday weekly/monthly and quarter-end expirations; uncheck to fetch every expiry"><input type="checkbox" name="regularExpiriesOnly" aria-label="Regular expirations only"'+(regularExpiriesOnly?' checked':'')+'> Regular only</label>';
+ const label='<span class="expiry-field-heading"><span class="expiry-field-title">EXPIRATION</span>'+regularToggle+'<span data-expiry-status>'+expiryIndicator(idea)+'</span>'+retry+manualLink+returnLink+'</span>';
+ const title=regularExpiriesOnly?'Verified regular Friday or quarter-end expirations for this contract, searched over the next 12 months. Uncheck Regular only for all available dates.':'All verified active standard expirations for this contract over the next three years.';
  let control='';
  if(manual){
   control='<input type="date" name="expiry" aria-label="Manual expiration (unverified)" value="'+esc(idea.expiry||'')+'" title="Manual override: not a verified listed expiration">';
@@ -346,11 +352,11 @@ function expirationField(idea){
   else if(!listing||listing.status==='loading')placeholder='Checking listed dates…';
   else if(!verified)placeholder='Unable to verify · Retry';
   else if(!dates.length)placeholder='No listed dates for this contract';
-  else if(parseDay(idea.expiry)&&!selected)placeholder=fmtDate(idea.expiry,true)+(status==='outside-range'?' · Unverified':' · Not listed');
+  else if(parseDay(idea.expiry)&&!selected)placeholder=fmtDate(idea.expiry,true)+(status==='filtered'?' · Hidden by filter':status==='outside-range'?' · Unverified':' · Not listed');
   else if(!selected)placeholder='Choose listed expiration…';
   const disabled=!verified||!dates.length;
   const needsPlaceholder=disabled||!selected;
-  const options=dates.map(d=>'<option value="'+esc(d)+'"'+(selected&&d===idea.expiry?' selected':'')+'>'+esc(fmtDate(d,true))+'</option>').join('');
+  const options=dates.map(d=>'<option value="'+esc(d)+'"'+(selected&&d===idea.expiry?' selected':'')+'>'+esc(fmtDate(d,true))+(regularExpirationKind(d)?' (Regular)':'')+'</option>').join('');
   control='<select name="listedExpiry" aria-label="Available listed expiration dates" title="'+title+'"'+
    (disabled?' disabled':'')+(verified&&!selected&&parseDay(idea.expiry)?' class="expiry-unlisted"':'')+'>'+
    (needsPlaceholder?'<option value="" disabled selected>'+placeholder+'</option>':'')+
@@ -373,7 +379,7 @@ function updateListingCard(idea){
  }
 }
 function updateListingCardsForKey(key){
- for(const idea of plannerIdeas())if(expirationLookupKey(idea)===key)updateListingCard(idea);
+ for(const idea of plannerIdeas())if(scopedExpirationKey(idea)===key)updateListingCard(idea);
 }
 function showInlineQuoteLoading(idea){
  const card=[...document.querySelectorAll('[data-draft-id]')].find(x=>x.dataset.draftId===idea?.id);
@@ -385,7 +391,7 @@ function showInlineQuoteLoading(idea){
  }
 }
 async function ensureListedExpirations(idea,force=false){
- const key=expirationLookupKey(idea);
+ const key=scopedExpirationKey(idea);
  if(!key)return;
  const current=expirationListings.get(key);
  if(current?.status==='loading')return;
@@ -394,15 +400,15 @@ async function ensureListedExpirations(idea,force=false){
  }
  expirationListings.set(key,{status:'loading'});
  updateListingCardsForKey(key);
- const [ticker,strike,type]=key.split('|');
+ const [ticker,strike,type,scope]=key.split('|');
  try{
-  const query=new URLSearchParams({ticker,strike:String(Number(strike)),type:type.toLowerCase()});
+  const query=new URLSearchParams({ticker,strike:String(Number(strike)),type:type.toLowerCase(),scope});
   const response=await fetch('/api/option-expirations?'+query,{cache:'no-store'});
   const data=await response.json().catch(()=>({}));
   if(!response.ok)throw Error(data.error||'Listing service unavailable.');
   if(data.status!=='verified'||data.ticker!==ticker||Number(data.strike)!==Number(strike)||
-   data.type!==type.toLowerCase()||!Array.isArray(data.expirations))throw Error('Option listing response could not be verified.');
-  expirationListings.set(key,{status:'verified',expirations:normalizeListedDates(data.expirations),
+   data.type!==type.toLowerCase()||data.scope!==scope||!Array.isArray(data.expirations))throw Error('Option listing response could not be verified.');
+  expirationListings.set(key,{status:'verified',scope,expirations:normalizeListedDates(data.expirations),
    checkedFrom:data.checkedFrom,checkedThrough:data.checkedThrough,fetchedAt:Date.now()});
  }catch(e){
   expirationListings.set(key,{status:'error',message:String(e.message||'Lookup unavailable').slice(0,170),fetchedAt:Date.now()});
@@ -410,17 +416,17 @@ async function ensureListedExpirations(idea,force=false){
 }
 function queueListedExpirations(idea,immediate=false){
  if(listingDebounce)clearTimeout(listingDebounce);
- if(!expirationLookupKey(idea)){updateListingCard(idea);return;}
+ if(!scopedExpirationKey(idea)){updateListingCard(idea);return;}
  if(immediate){void ensureListedExpirations(idea);return;}
- const id=idea.id,key=expirationLookupKey(idea);
+ const id=idea.id,key=scopedExpirationKey(idea);
  listingDebounce=setTimeout(()=>{
   const current=plannerIdeas().find(i=>i.id===id);
-  if(current&&expirationLookupKey(current)===key)void ensureListedExpirations(current);
+  if(current&&scopedExpirationKey(current)===key)void ensureListedExpirations(current);
  },600);
 }
 function applyListedExpiry(ideaId,date){
  const idea=plannerIdeas().find(x=>x.id===ideaId);
- const listing=idea&&expirationListings.get(expirationLookupKey(idea));
+ const listing=idea&&expirationListings.get(scopedExpirationKey(idea));
  if(!idea||!parseDay(date)||listing?.status!=='verified'||!listing.expirations.includes(date))return;
  const card=[...document.querySelectorAll('[data-draft-id]')].find(x=>x.dataset.draftId===idea.id);
  const field=card?.querySelector('input[name="expiry"]');
@@ -1315,6 +1321,18 @@ $('quickPlanner').addEventListener('focusout',e=>{
 $('quickPlanner').addEventListener('change',e=>{
  const node=e.target.closest('[data-draft-id]');
  if(!node)return;
+ if(e.target.name==='regularExpiriesOnly'){
+  const next=!!e.target.checked;
+  if(next===regularExpiriesOnly)return;
+  regularExpiriesOnly=next;
+  if(listingDebounce)clearTimeout(listingDebounce);
+  // Mode changes never alter the saved contract or its selected expiration.
+  e.target.blur();
+  renderPlanner(analytics());
+  const idea=plannerIdeas().find(x=>x.id===node.dataset.draftId);
+  if(idea)void ensureListedExpirations(idea);
+  return;
+ }
  if(e.target.name==='listedExpiry'){
   if(e.target.value==='__manual__'){
    manualExpiryIds.add(node.dataset.draftId);
