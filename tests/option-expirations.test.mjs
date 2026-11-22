@@ -98,23 +98,50 @@ test('UI discloses loading, listed, not-listed, unavailable, and direct alternat
  const app=readFileSync(new URL('../app.js',import.meta.url),'utf8');
  const css=readFileSync(new URL('../styles.css',import.meta.url),'utf8');
  const sw=readFileSync(new URL('../sw.js',import.meta.url),'utf8');
- for(const snippet of ['Checking dates','Not listed','Lookup unavailable','✓ Listed','Choose a verified date',
-  'name="listedExpiry"','data-action="choose-listed-expiry"','data-listing-panel','data-listing-badge',
+ for(const snippet of ['Checking dates','Not listed','Lookup unavailable','✓ Listed','Choose expiration',
+  'name="listedExpiry"','__manual__','data-expiration-field','data-listing-badge',
   'data-action="refresh-listed-expirations"','ensureListedExpirations','showInlineQuoteLoading','mini-spin'])
   assert.ok(app.includes(snippet),'Missing '+snippet);
  assert.ok(app.includes("field.dispatchEvent(new Event('change',{bubbles:true}))"));
+ assert.ok(app.includes('function expirationField(idea)'));
+ assert.ok(app.includes('data-action="use-listed-expirations"'));
+ assert.ok(!app.includes('function listingPanel(idea)'));
+ assert.ok(!app.includes('data-listing-panel'));
+ assert.ok(!css.includes('.draft-listing-panel{'));
  assert.match(css,/prefers-reduced-motion/);
  assert.match(css,/\.mini-spin/);
  assert.ok(sw.includes('/lib/expiry-listings.mjs'));
 });
 
 
-test('contract form reads left to right: ticker, strike, call/put, then verified expiration',()=>{
+test('contract row has exactly one contextual expiration control after ticker/strike/type',()=>{
  const app=readFileSync(new URL('../app.js',import.meta.url),'utf8');
  const start=app.indexOf('<div class="draft-contract-fields">');
  assert.ok(start>0);
- const fields=app.slice(start,start+1200);
- const indices=['name="ticker"','name="strike"','name="optionType"','name="expiry"'].map(name=>fields.indexOf(name));
+ const row=app.slice(start,start+900);
+ const indices=['name="ticker"','name="strike"','name="optionType"','expirationField(idea)'].map(x=>row.indexOf(x));
  assert.ok(indices.every(i=>i>=0));
  assert.deepEqual([...indices].sort((a,b)=>a-b),indices);
+ assert.ok(!row.includes('<input type="date" name="expiry"'),'no separate always-visible calendar');
+ assert.ok(!row.includes('listingPanel(idea)'),'no duplicate listed-expiration panel');
+});
+
+test('verified dates replace manual picker; fallback is explicit and non-destructive',()=>{
+ const app=readFileSync(new URL('../app.js',import.meta.url),'utf8');
+ const start=app.indexOf('function expirationField(idea){');
+ const end=app.indexOf('function updateListingCard(idea)',start);
+ const field=app.slice(start,end);
+ assert.ok(field.includes('if(!manual)'));
+ assert.ok(field.includes('select name="listedExpiry"'));
+ assert.ok(field.includes('input type="date" name="expiry"'));
+ assert.ok(field.includes('<input type="hidden" name="expiry"'));
+ assert.ok(field.includes('manualExpiryIds.has(idea.id)'));
+ assert.ok(field.includes('disabled selected'));
+ assert.ok(field.includes('Enter date manually…'));
+ assert.ok(field.includes('expirationListingStatus'));
+ assert.ok(app.includes("if(e.target.value==='__manual__')"));
+ assert.ok(app.includes("manualExpiryIds.add(node.dataset.draftId)"));
+ assert.ok(app.includes("manualExpiryIds.delete(el.dataset.planId)"));
+ assert.ok(app.includes("field.dispatchEvent(new Event('input',{bubbles:true}))"));
+ assert.ok(app.includes("field.dispatchEvent(new Event('change',{bubbles:true}))"));
 });

@@ -716,20 +716,24 @@ html,body{max-width:100%}
 .listing-badge.listing-warning{color:#f0c493;border-color:#806041;background:#413021}
 .listing-badge.listing-loading{color:#b6cdd3;border-color:#385967;background:#1b333c}
 .draft-mini-quote[data-tone="loading"]{color:#a1cbd2}
-.draft-listing-panel{margin:10px 0 2px;padding:9px 10px;border:1px solid #314e5a;border-radius:8px;background:#10242e;display:flex;flex-wrap:wrap;gap:7px 12px;align-items:center;font-size:10px;line-height:1.45;min-width:0}
-.listing-hint{display:inline-flex;gap:6px;align-items:center;color:#94b3be}
-.listing-verified-content{width:100%;display:flex;align-items:center;flex-wrap:wrap;gap:7px 10px}
-.listing-feedback{font-size:10px;line-height:1.5;flex:1 1 220px}
-.listing-feedback.listing-positive{color:#9bddb9}
-.listing-feedback.listing-negative{color:#efc393}
-.listing-feedback.listing-neutral{color:#a1b6bf}
-.listing-feedback button,.listing-notice button{border:1px solid #97744d;border-radius:6px;background:#443729;color:#f4d0a6;padding:4px 7px;min-height:27px;font-size:10px;cursor:pointer;margin:2px 0 2px 4px}
-.listing-feedback button:hover,.listing-notice button:hover{border-color:#d6a66c;background:#604731}
-.listing-notice{width:100%;line-height:1.5}
-.listing-notice.listing-warning{color:#f0c493}
-.listing-notice.listing-neutral{color:#acbfcb}
-.listing-picker{flex:0 1 235px;min-width:190px}
-.listing-picker>span{display:block;font-size:9px;letter-spacing:.04em;color:#95b6c0;font-weight:760;margin-bottom:3px}
-.draft-editor .listing-picker select{width:100%;min-height:32px;padding:4px 8px;border:1px solid #4e7f79;border-radius:7px;background:#112f34;color:#daf4eb;font-size:11px}
-.listing-source{flex-basis:100%;font-size:9px;line-height:1.4;color:#7f9fac}
-@media(max-width:690px){.draft-listing-panel{padding:8px}.listing-picker{flex:1 1 100%}.listing-picker select{min-height:38px}.listing-feedback{flex:1 1 100%}}
+
+/* v3.5: one contextual expiration field, never two primary date controls. */
+.draft-idea.is-expanded .draft-listing-indicator{display:none}
+.draft-contract-fields .draft-expiration-field{min-width:0}
+.draft-contract-fields .draft-expiration-field .expiry-field-heading{
+ display:flex;align-items:center;justify-content:space-between;gap:4px;
+ min-height:17px;font-size:9px;letter-spacing:.06em;font-weight:750;color:#9ac0c8
+}
+.expiry-inline-status{display:inline-flex;align-items:center;gap:4px;font-size:9px;letter-spacing:0;font-weight:650;white-space:nowrap}
+.expiry-inline-status.neutral{color:#89aab5}
+.expiry-inline-status.good{color:#9ce0b8}
+.expiry-inline-status.warning{color:#efbd86}
+.expiry-inline-status .mini-spin{width:9px;height:9px;border-width:1.4px}
+.draft-expiration-field select.expiry-unlisted{border-color:#ab8151;color:#f0cba1}
+.draft-expiration-field .expiry-secondary-action{
+ appearance:none;cursor:pointer;border:none;background:transparent;
+ color:#a2c7d0;text-decoration:underline;text-underline-offset:2px;
+ font:inherit;font-size:9px;letter-spacing:0;min-height:17px;padding:0 0 0 3px
+}
+.draft-expiration-field .expiry-secondary-action:hover{color:#e1f1ef}
+@media(max-width:690px){.draft-contract-fields .draft-expiration-field select{min-height:38px}}
