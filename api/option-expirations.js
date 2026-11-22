@@ -2,6 +2,7 @@
    NEVER infer existence from a missing indicative quote. Alpaca contract metadata
    is the listing authority for this UI; it is not a broker-wide OPRA guarantee. */
 import {buildOCCSymbol} from '../lib/option-preview.mjs';
+import {onlyRegularListedDates} from '../lib/expiry-listings.mjs';
 
 const home='https://swing-risk-desk-vercel-v11.vercel.app';
 const DAY_MS=86400000;
@@ -16,10 +17,14 @@ export default async function handler(req,res){
  const rawStrike=String(req.query?.strike??'').trim(),strike=Number(rawStrike);
  const optionType=String(req.query?.type??'').toLowerCase();
  if(!/^[A-Z][A-Z0-9.\-]{0,10}$/.test(ticker)||!rawStrike||!Number.isFinite(strike)||strike<=0||strike>99999.999||Math.abs(strike*1000-Math.round(strike*1000))>1e-5||!['call','put'].includes(optionType))return err(res,400,'BAD_CONTRACT','Enter a valid ticker, positive strike (up to 3 decimals), and Call or Put.');
+ // Older clients remain exhaustive by default. The new UI explicitly opts
+ // into the faster ~12-month, calendar-filtered regular-expiry lookup.
+ const scope=String(req.query?.scope??'all').toLowerCase();
+ if(!['regular','all'].includes(scope))return err(res,400,'BAD_SCOPE','Choose regular or all listed expirations.');
  const id=process.env.ALPACA_DATA_KEY_ID,secret=process.env.ALPACA_DATA_SECRET_KEY;
  if(!id||!secret)return err(res,503,'NOT_CONFIGURED','Alpaca option listing lookup is not connected. Configure the existing server-side Alpaca data keys.');
  const checkedFrom=new Date().toISOString().slice(0,10);
- const checkedThrough=new Date(Date.parse(checkedFrom+'T00:00:00Z')+1096*DAY_MS).toISOString().slice(0,10);
+ const checkedThrough=new Date(Date.parse(checkedFrom+'T00:00:00Z')+(scope==='regular'?366:1096)*DAY_MS).toISOString().slice(0,10);
  const headers={'APCA-API-KEY-ID':id,'APCA-API-SECRET-KEY':secret,Accept:'application/json'};
  const expirations=new Set();
  let pageToken='',pageCount=0;
@@ -29,7 +34,7 @@ export default async function handler(req,res){
    if(++pageCount>6)return err(res,503,'RESULT_INCOMPLETE','Too many option contracts to verify all expirations. No dates have been excluded; try your broker chain.');
    const query=new URLSearchParams({
     underlying_symbols:ticker,status:'active',type:optionType,strike_price_gte:String(strike),
-    strike_price_lte:String(strike),expiration_date_gte:checkedFrom,expiration_date_lte:checkedThrough,limit:'1000'
+    strike_price_lte:String(strike),expiration_date_gte:checkedFrom,expiration_date_lte:checkedThrough,limit:'10000'
    });
    if(pageToken)query.set('page_token',pageToken);
    const remaining=deadline-Date.now();
@@ -55,10 +60,19 @@ export default async function handler(req,res){
    if(next)visited.add(next);
    pageToken=next;
   }while(pageToken);
+  const listed=[...expirations].sort();
+  // Calendar screening is applied ONLY after exact standard OCC-contract verification.
+  // Alpaca has no weekly/quarterly category filter; a shorter date window
+  // reduces the initial provider result set in Regular-only mode.
+  res.setHeader('Cache-Control','public, s-maxage=300, stale-while-revalidate=600');
   return res.status(200).json({
-   ticker,strike,type:optionType,expirations:[...expirations].sort(),checkedFrom,checkedThrough,
-   checkedAt:new Date().toISOString(),status:'verified',provider:'Alpaca active standard option contracts',
-   note:'Listed contracts only; a valid contract may have no indicative quote. Verify availability with your broker before trading.'
+   ticker,strike,type:optionType,scope,
+   expirations:scope==='regular'?onlyRegularListedDates(listed):listed,
+   checkedFrom,checkedThrough,checkedAt:new Date().toISOString(),
+   status:'verified',provider:'Alpaca active standard option contracts',
+   note:scope==='regular'
+    ?'Calendar-matched Friday (including holiday-shifted) and quarter-end expirations within the next 12 months; every returned date is an active verified standard contract. Uncheck Regular only for the full three-year lookup.'
+    :'All active standard contract expirations within the three-year lookup window. Regular labels indicate calendar patterns, not an Alpaca option category.'
   });
  }catch(error){
   const timeout=error?.name==='TimeoutError'||error?.name==='AbortError'||Date.now()>=deadline;
