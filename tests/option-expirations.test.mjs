@@ -98,7 +98,7 @@ test('UI discloses loading, listed, not-listed, unavailable, and direct alternat
  const app=readFileSync(new URL('../app.js',import.meta.url),'utf8');
  const css=readFileSync(new URL('../styles.css',import.meta.url),'utf8');
  const sw=readFileSync(new URL('../sw.js',import.meta.url),'utf8');
- for(const snippet of ['Checking dates','Not listed','Lookup unavailable','✓ Listed','Choose a verified date',
+ for(const snippet of ['Checking dates','Not listed','Lookup unavailable','✓ Listed','Choose expiration',
   'name="listedExpiry"','__manual__','data-expiration-field','data-listing-badge',
   'data-action="refresh-listed-expirations"','ensureListedExpirations','showInlineQuoteLoading','mini-spin'])
   assert.ok(app.includes(snippet),'Missing '+snippet);
