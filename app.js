@@ -368,7 +368,7 @@ function updateListingCard(idea){
   if(live)live.innerHTML=expiryIndicator(idea);
   // Never destroy the actual date input or dropdown while the user is
   // interacting with it; delegated change handling updates it afterward.
-  if(!field.contains(document.activeElement))field.outerHTML=expirationField(idea);
+  if(field.dataset.dispatchingExpiry!=='true'&&!field.contains(document.activeElement))field.outerHTML=expirationField(idea);
  }
 }
 function updateListingCardsForKey(key){
@@ -425,9 +425,16 @@ function applyListedExpiry(ideaId,date){
  const field=card?.querySelector('input[name="expiry"]');
  if(!field)return;
  if(field.value===date){updateListingCard(idea);return;}
- field.value=date;
- field.dispatchEvent(new Event('input',{bubbles:true}));
- field.dispatchEvent(new Event('change',{bubbles:true}));
+ // Dispatch both events against the ORIGINAL connected input. Otherwise
+ // the input handler can rerender and detach the hidden field before 'change'
+ // reaches the delegated quote-refresh listener (especially on mobile).
+ const wrapper=field.closest('[data-expiration-field]');
+ if(wrapper)wrapper.dataset.dispatchingExpiry='true';
+ try{
+  field.value=date;
+  field.dispatchEvent(new Event('input',{bubbles:true}));
+  field.dispatchEvent(new Event('change',{bubbles:true}));
+ }finally{if(wrapper)delete wrapper.dataset.dispatchingExpiry;}
  card.querySelector('select[name="listedExpiry"]')?.blur();
  updateListingCard(idea);
 }
