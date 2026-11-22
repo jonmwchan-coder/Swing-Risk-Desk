@@ -787,3 +787,14 @@ html,body{max-width:100%}
  .chain-refresh{margin-left:0}
  .chain-table th,.chain-table td{padding:9px 6px}
 }
+
+/* Native dropdown on desktop/mobile: only verified expirations are selectable.
+   No always-open mobile calendar with fictitious dates. */
+.draft-expiration-field select:disabled{color:#8da5ae;background:#17242d;border-color:#3b5360;opacity:1;cursor:progress}
+.draft-expiration-field select option:disabled{color:#bc9879}
+.draft-expiration-field select:not(:disabled){cursor:pointer}
+.draft-contract-fields .draft-expiration-field .expiry-field-heading{flex-wrap:wrap;row-gap:2px}
+@media(max-width:690px){
+ .draft-expiration-field select:not(:disabled){font-size:13px}
+ .draft-expiration-field .expiry-secondary-action{min-height:21px}
+}
