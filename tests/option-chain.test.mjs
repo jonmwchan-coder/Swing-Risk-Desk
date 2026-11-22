@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import handler from '../api/option-chain.js';
 import {buildOCCSymbol} from '../lib/option-preview.mjs';
-import {aroundStrike,heatLevels,numericOrNull} from '../lib/chain-liquidity.mjs';
+import {aroundStrike,heatLevels,numericOrNull,symbolBatches} from '../lib/chain-liquidity.mjs';
 import {renderChainPanel} from '../lib/chain-view.mjs';
 
 const date=()=>new Date(Date.now()+29*86400000).toISOString().slice(0,10);
@@ -213,4 +213,131 @@ test('chain uses an uncluttered table without highest secondary tertiary legend'
    assert.equal(rows.filter(row=>Boolean(row[side]?.[key])).length,3);
   }
  }
+});
+
+
+test('All strikes returns every listed standard strike, while Nearby keeps 31 and fetches batched OI/VOL/quotes',async()=>{
+ const strikes=Array.from({length:52},(_,i)=>10+i);
+ const contracts=strikes.flatMap((strike,i)=>[
+  makeContract(strike,'call',i+100),
+  makeContract(strike,'put',i+200)
+ ]);
+ const seen={snapshots:[],bars:[],contracts:0};
+ await withCredentials(async url=>{
+  const u=new URL(url);
+  if(u.pathname==='/v2/options/contracts'){
+   seen.contracts++;
+   return {ok:true,json:async()=>({option_contracts:contracts,next_page_token:null})};
+  }
+  const symbols=(u.searchParams.get('symbols')||'').split(',').filter(Boolean);
+  if(u.pathname.endsWith('/options/snapshots')){
+   seen.snapshots.push(symbols);
+   return {ok:true,json:async()=>({snapshots:Object.fromEntries(symbols.map(symbol=>[
+    symbol,{latestQuote:{bp:2,ap:2.2,t:'2026-11-20T19:59:00Z'},impliedVolatility:0.8,greeks:{delta:.5}}
+   ]))})};
+  }
+  if(u.pathname.endsWith('/options/bars')){
+   seen.bars.push(symbols);
+   return {ok:true,json:async()=>({bars:Object.fromEntries(symbols.map(symbol=>[
+    symbol,[{t:'2026-11-20T05:00:00Z',v:400}]
+   ]))})};
+  }
+  throw Error('Unexpected API '+url);
+ },async()=>{
+  const full=response();await handler(request({scope:'all'}),full);
+  assert.equal(full.statusCode,200);
+  assert.equal(full.body.status,'ok');
+  assert.equal(full.body.scope,'all');
+  assert.equal(full.body.totalStrikeCount,52);
+  assert.equal(full.body.displayedStrikeCount,52);
+  assert.deepEqual(full.body.rows.map(row=>row.strike),strikes);
+  assert.equal(full.body.rows[51].call.openInterest,151);
+  assert.equal(full.body.rows[51].put.openInterest,251);
+  assert.equal(full.body.rows[51].put.volume,400);
+  assert.equal(full.body.rows[0].call.bid,2);
+  assert.equal(full.body.volumeStatus,'available');
+  assert.equal(full.body.quoteStatus,'indicative');
+  assert.equal(full.body.rows.filter(r=>r.call.oiHeat>0).length,3);
+  assert.equal(full.body.rows.filter(r=>r.put.oiHeat>0).length,3);
+  assert.equal(full.body.rows[51].call.oiHeat,3);
+  assert.equal(seen.snapshots.length,2,'full chain snapshots must be batched');
+  assert.equal(seen.bars.length,2,'full chain daily volume must be batched');
+  assert.equal(seen.snapshots.flat().length,104);
+  assert.equal(seen.bars.flat().length,104);
+  assert.ok(seen.snapshots.every(group=>group.length<=75));
+  assert.ok(seen.bars.every(group=>group.length<=75));
+  const compact=response();await handler(request(),compact);
+  assert.equal(compact.statusCode,200);
+  assert.equal(compact.body.scope,'nearby');
+  assert.equal(compact.body.displayedStrikeCount,31);
+  assert.equal(compact.body.totalStrikeCount,52);
+  assert.equal(compact.body.rows.find(row=>row.strike===35)?.strike,35);
+ });
+ const invalid=response();await handler(request({scope:'none'}),invalid);
+ assert.equal(invalid.statusCode,400);
+ assert.equal(invalid.body.code,'BAD_SCOPE');
+ assert.deepEqual(symbolBatches([1,2,3,4,5],2),[[1,2],[3,4],[5]]);
+});
+
+test('if any full-chain data batch fails, all listed strikes and dated OI survive without partial-volume rankings',async()=>{
+ const strikes=Array.from({length:45},(_,i)=>10+i);
+ const contracts=strikes.flatMap(strike=>[makeContract(strike,'call',100+strike),makeContract(strike,'put',200+strike)]);
+ let barsRequested=0,snapsRequested=0;
+ await withCredentials(async url=>{
+  const u=new URL(url);
+  if(u.pathname==='/v2/options/contracts')return {ok:true,json:async()=>({option_contracts:contracts,next_page_token:null})};
+  if(u.pathname.endsWith('/options/snapshots')){
+   snapsRequested++;
+   if(snapsRequested===2)return {ok:false,status:503};
+   const symbols=(u.searchParams.get('symbols')||'').split(',');
+   return {ok:true,json:async()=>({snapshots:Object.fromEntries(symbols.map(symbol=>[
+    symbol,{latestQuote:{bp:1.2,ap:1.3},impliedVolatility:.6}
+   ]))})};
+  }
+  if(u.pathname.endsWith('/options/bars')){
+   barsRequested++;
+   if(barsRequested===2)return {ok:false,status:503};
+   const symbols=(u.searchParams.get('symbols')||'').split(',');
+   return {ok:true,json:async()=>({bars:Object.fromEntries(symbols.map(symbol=>[
+    symbol,[{t:'2026-11-20T00:00:00Z',v:111}]
+   ]))})};
+  }
+  throw Error('Unexpected URL '+url);
+ },async()=>{
+  const out=response();await handler(request({scope:'all'}),out);
+  assert.equal(out.statusCode,200);
+  assert.equal(out.body.rows.length,45);
+  assert.equal(out.body.rows[0].call.openInterest,110);
+  assert.equal(out.body.rows[0].call.volume,null);
+  assert.equal(out.body.rows[0].call.bid,null);
+  assert.equal(out.body.volumeStatus,'unavailable');
+  assert.equal(out.body.quoteStatus,'unavailable');
+  assert.ok(out.body.rows.every(row=>row.call.volumeHeat===undefined),'never rank incomplete volume');
+ });
+ assert.equal(barsRequested,2);
+ assert.equal(snapsRequested,2);
+});
+
+test('all-strikes control is subtle, reversible and does not resurrect removed heat legend',()=>{
+ const idea={id:'plan',ticker:'IREN',expiry:date(),strike:'14',optionType:'Put'};
+ const rows=heatLevels(Array.from({length:45},(_,i)=>({strike:10+i,
+  call:{openInterest:100+i,volume:200+i},put:{openInterest:900-i,volume:850-i}
+ })));
+ const data={status:'ok',rows,scope:'all',displayedStrikeCount:45,quoteStatus:'indicative',
+  oiDates:['2026-11-20'],volumeDate:'2026-11-20'};
+ const full=renderChainPanel({idea,data,side:'Put',scope:'all'});
+ const nearby=renderChainPanel({idea,data:{...data,displayedStrikeCount:31},side:'Put',scope:'nearby'});
+ assert.match(full,/data-action="toggle-chain-range"/);
+ assert.match(full,/aria-pressed="true"/);
+ assert.match(full,/Nearby strikes/);
+ assert.match(full,/Showing all 45 listed standard strikes/);
+ assert.match(nearby,/All strikes/);
+ assert.match(nearby,/aria-pressed="false"/);
+ assert.match(nearby,/Showing 31 nearby strikes/);
+ assert.doesNotMatch(full,/chain-legend|chain-swatch|Highest|Secondary|Tertiary|Heat is relative within displayed strikes/i);
+ const app=readFileSync(new URL('../app.js',import.meta.url),'utf8');
+ assert.match(app,/case 'toggle-chain-range':/);
+ assert.match(app,/optionChainRange=optionChainRange==='all'\?'nearby':'all'/);
+ assert.match(app,/scope:parts\[3\]/);
+ assert.match(app,/optionPanelMode='chain';if\(opening\)optionChainRange='nearby'/);
 });
