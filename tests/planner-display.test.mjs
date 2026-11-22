@@ -33,15 +33,15 @@ function getElementById(id){if(!els.has(id))els.set(id,elem(id));return els.get(
 globalThis.document={getElementById,querySelectorAll:selector=>selector==='[data-plan-status]'?[...statuses.values()]:[],querySelector:()=>null,addEventListener:()=>{},body:{appendChild:()=>{}},createElement:()=>({click:()=>{},remove:()=>{}})};
 await import(new URL('../app.js', import.meta.url).href);
 
-test('a priced idea prominently distinguishes USD premium-only, USD cash with fees, and CAD risk-budget capacity',()=>{
+test('a priced idea shows USD premiums, estimated buy fees, and CAD risk-budget capacity',()=>{
  const first=statuses.get('priced-one');
  assert.ok(first, 'first idea rendered');
  assert.match(first.innerHTML,/Option premiums \(USD\)<\/span><strong>USD \$300\.00<\/strong>/);
  assert.match(first.innerHTML,/2 contracts × USD \$1\.50 per share × 100/);
- assert.match(first.innerHTML,/Est\. total cash to buy \(USD\)<\/span><strong>USD \$301\.54<\/strong>/);
+ assert.match(first.innerHTML,/Estimated buy fees \(USD\)<\/span><strong>USD \$1\.54<\/strong>/);
  assert.match(first.innerHTML,/5-day risk budget used \(CAD\)<\/span><strong>CAD \$300\.00<\/strong>/);
  assert.match(first.innerHTML,/not cash paid to IBKR/);
- assert.match(first.innerHTML,/Risk budget left \(CAD\)<\/span><strong>CAD \$300\.00<\/strong>/);
+ assert.match(first.innerHTML,/Remaining Risk Budget \(CAD\)<\/span><strong>CAD \$300\.00<\/strong>/);
 });
 
 test('multi-entry summary separates USD premiums, USD fees, total USD cash, and CAD risk',()=>{
