@@ -170,7 +170,7 @@ export default async function handler(req,res){
  try{contracts=await getContracts(ticker,expiry,headers);}
  catch(error){return respond(res,error.status===429?429:502,'CONTRACTS_UNAVAILABLE',
   'Could not verify the entire option chain. No incomplete list was ranked.');}
- if(!contracts.length)return res.status(200).json({status:'empty',ticker,expiry,centerStrike,rows:[],
+ if(!contracts.length)return res.status(200).json({status:'empty',ticker,expiry,centerStrike,scope,rows:[],
    message:'No active standard 100-share options found for this expiry in Alpaca.'});
  const strikes=scope==='all'?[...new Set(contracts.map(c=>c.strike))].sort((a,b)=>a-b):aroundStrike(contracts.map(c=>c.strike),centerStrike);
  const selected=contracts.filter(c=>strikes.includes(c.strike));
