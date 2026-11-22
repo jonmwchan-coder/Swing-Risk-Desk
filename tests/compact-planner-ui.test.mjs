@@ -28,3 +28,15 @@ test('quote details and portfolio breakdown are expandable, no calculations dele
  assert.match(app,/data-plan-status/);
  assert.match(app,/Alpaca Basic/);
 });
+
+test('selected expiration and strike stand out in a structured, responsive contract label',()=>{
+ assert.match(app,/function contractDisplayParts\(idea\)/);
+ assert.match(app,/function compactContractMarkup\(idea\)/);
+ assert.match(app,/class="draft-contract-hero" data-idea-contract/);
+ assert.match(app,/innerHTML=compactContractMarkup\(idea\)/,'edits preserve date and strike styling');
+ assert.match(css,/\.draft-contract-expiry\{font-size:16px/);
+ assert.match(css,/\.draft-contract-strike\{font-size:18px/);
+ assert.match(css,/\.draft-listing-indicator:empty\{display:none\}/);
+ assert.ok(!app.includes('✓ Expiry listed'),'remove redundant positive badge');
+ assert.ok(app.includes('Not listed'),'keep important warning');
+});

@@ -25,7 +25,7 @@ test('quote refresh starts when Analyze % is selected or Refresh is explicitly c
  assert.match(app,/fetch\(`\/api\/option-quote\?symbol=/);
  assert.match(app,/unless you manually override it/);
  assert.match(app,/if\(valid&&!idea\.priceManual\)idea\.price=idea\.marketMid/);
- assert.match(sw,/swing-risk-desk-shell-v3\.11-expiry-first/);
+ assert.match(sw,/swing-risk-desk-shell-v3\.12-contract-identity/);
  assert.match(sw,/\/lib\/option-preview\.mjs/);
 });
 test('cost and model output always describe currencies and limitations',()=>{
@@ -43,4 +43,17 @@ test('scrolling is confined to matrix; phone sizing remains responsive',()=>{
  assert.match(css,/\.preview-matrix-scroll\{[^}]*max-width:100%;overflow-x:auto/);
  assert.match(css,/@media\(max-width:690px\)\{\.option-preview/);
  assert.match(css,/\.option-preview\[hidden\]\{display:none!important\}/);
+});
+
+test('Scenario Studio header prioritizes readable contract and account identity',()=>{
+ assert.match(app,/const previewIdentity=/);
+ assert.match(app,/class="studio-contract-identity"/);
+ assert.match(app,/class="studio-account-identity"/);
+ assert.match(app,/esc\(account\(\)\.name\)/,'account comes from active portfolio');
+ assert.match(app,/const displayContract=contractDisplayParts\(idea\)/);
+ assert.match(app,/Projected option return by date<\/h3>\$\{previewIdentity\}/);
+ assert.match(css,/\.studio-contract-expiry\{/);
+ assert.match(css,/\.studio-contract-strike\{/);
+ assert.match(css,/\.studio-account-identity strong\{/);
+ assert.doesNotMatch(app,/esc\(\[idea\.ticker,idea\.name,idea\.expiry,idea\.strike,idea\.optionType\]/,'old microscopic summary removed');
 });
