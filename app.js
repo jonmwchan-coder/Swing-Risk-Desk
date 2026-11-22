@@ -1066,7 +1066,7 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
   case 'toggle-plan-details':{expandedPlanId=expandedPlanId===el.dataset.planId?null:el.dataset.planId;if(expandedPlanId&&selectedPreviewId&&expandedPlanId!==selectedPreviewId){selectedPreviewId=null;quoteRefreshToken++;}renderPlanner(analytics());if(expandedPlanId){const idea=plannerIdeas().find(i=>i.id===expandedPlanId);if(idea)queueListedExpirations(idea,true);}break;}
   case 'collapse-plan-ideas':expandedPlanId=null;renderPlanner(analytics());break;
  case 'refresh-listed-expirations':{const idea=plannerIdeas().find(x=>x.id===el.dataset.planId);if(idea)void ensureListedExpirations(idea,true);break;}
- case 'use-listed-expirations':{manualExpiryIds.delete(el.dataset.planId);const idea=plannerIdeas().find(x=>x.id===el.dataset.planId);if(idea)updateListingCard(idea);break;}
+ case 'use-listed-expirations':{manualExpiryIds.delete(el.dataset.planId);el.blur();const idea=plannerIdeas().find(x=>x.id===el.dataset.planId);if(idea){updateListingCard(idea);const card=[...document.querySelectorAll('[data-draft-id]')].find(x=>x.dataset.draftId===el.dataset.planId);card?.querySelector('[name="listedExpiry"]')?.focus();}break;}
  case 'clear-plan-ideas':{if(!confirm('Clear all saved Quick size check ideas for this portfolio? Recorded positions will not be affected.'))break;expandedPlanId=null;selectedPreviewId=null;quoteRefreshToken++;plannerDrafts[account().id]=[defaultPlanIdea(uid(),account().stressPct,false)];persistPlannerDrafts();renderPlanner(analytics());showToast('Saved size-check ideas cleared for this portfolio.');break;}
  case 'analyze-idea':{const opening=selectedPreviewId!==el.dataset.planId;selectedPreviewId=opening?el.dataset.planId:null;if(opening)adoptTickerLevels(currentPreviewIdea());expandedPlanId=null;quoteRefreshToken++;quoteRefreshMessage='';quoteConnectionState='unknown';renderPlanner(analytics());if(opening)$('optionPreview')?.scrollIntoView({block:'start',behavior:'smooth'});if(opening)void refreshOptionQuote();break;}
  case 'close-option-preview':selectedPreviewId=null;quoteRefreshToken++;renderPlanner(analytics());break;
@@ -1164,6 +1164,21 @@ $('quickPlanner').addEventListener('input',e=>{
  }
  if(['ticker','strike','optionType'].includes(name))queueListedExpirations(idea);
  if(changed&&currentPreviewIdea()?.id===idea.id)renderOptionPreview();
+});
+// A listing lookup can finish while a user is still focused inside the
+// fallback calendar. Switch to the verified dropdown on blur, not mid-typing.
+$('quickPlanner').addEventListener('focusout',e=>{
+ const field=e.target.closest('[data-expiration-field]');
+ if(!field)return;
+ const id=field.closest('[data-draft-id]')?.dataset.draftId;
+ if(!id)return;
+ setTimeout(()=>{
+  const card=[...document.querySelectorAll('[data-draft-id]')].find(x=>x.dataset.draftId===id);
+  const currentField=card?.querySelector('[data-expiration-field]');
+  if(!currentField||currentField.contains(document.activeElement))return;
+  const idea=plannerIdeas().find(x=>x.id===id);
+  if(idea)updateListingCard(idea);
+ },0);
 });
 $('quickPlanner').addEventListener('change',e=>{
  const node=e.target.closest('[data-draft-id]');
