@@ -247,8 +247,8 @@ test('regular-only checkbox defaults on, labels regular dates, and has separate 
  assert.match(app,/renderPlanner\(analytics\(\)\)/);
  assert.match(app,/scope\}\);/);
  assert.match(css,/\.expiry-regular-toggle/);
- assert.match(sw,/swing-risk-desk-shell-v3\.13-expected-range/);
- assert.match(html,/SWING RISK DESK \/ v3\.13 expected underlying range/);
+ assert.match(sw,/swing-risk-desk-shell-v3\.14-atm-range/);
+ assert.match(html,/SWING RISK DESK \/ v3\.14 shared ATM underlying range/);
 });
 
 test('refresh can restart a stalled expiration request; strike edits never refetch dates',()=>{
