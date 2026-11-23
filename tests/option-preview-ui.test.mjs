@@ -21,11 +21,11 @@ test('next sessions, custom exit dates and extra TP targets have explicit contro
 });
 test('quote refresh starts when Analyze % is selected or Refresh is explicitly clicked, without changing entry premium',()=>{
  assert.match(app,/case 'refresh-option-quote':void refreshOptionQuote\(\);break;/);
- assert.match(app,/if\(opening\)void refreshOptionQuote\(\);/);
+ assert.match(app,/if\(opening\)\{void ensureAtmRange\(currentPreviewIdea\(\)\);void refreshOptionQuote\(\);\}/);
  assert.match(app,/fetch\(`\/api\/option-quote\?symbol=/);
  assert.match(app,/unless you manually override it/);
  assert.match(app,/if\(valid&&!idea\.priceManual\)idea\.price=idea\.marketMid/);
- assert.match(sw,/swing-risk-desk-shell-v3\.13-expected-range/);
+ assert.match(sw,/swing-risk-desk-shell-v3\.14-atm-range/);
  assert.match(sw,/\/lib\/option-preview\.mjs/);
 });
 test('cost and model output always describe currencies and limitations',()=>{
@@ -58,15 +58,18 @@ test('Scenario Studio header prioritizes readable contract and account identity'
  assert.doesNotMatch(app,/esc\(\[idea\.ticker,idea\.name,idea\.expiry,idea\.strike,idea\.optionType\]/,'old microscopic summary removed');
 });
 
-test('compact expected underlying range stays alongside strike and updates when manual spot or IV changes',()=>{
- assert.match(app,/expectedUnderlyingRange,buildOCCSymbol/);
+test('small preview expected range uses shared ATM reference, not selected-strike IV',()=>{
+ assert.match(app,/const atmRangeCache=new Map\(\)/);
+ assert.match(app,/function atmRangeKey\(idea\)/);
  assert.match(app,/function expectedRangeDisplay\(idea\)/);
  assert.match(app,/class="studio-expected-range" data-expected-range/);
- assert.match(app,/if\(name==='spot'\|\|name==='ivPct'\)updateExpectedRangeHeader\(idea\)/);
- assert.match(app,/Underlying 1σ: /);
- assert.match(app,/Underlying 1σ range: add spot \+ IV/);
- assert.match(app,/this selected strike\/expiry/);
+ assert.match(app,/atmRangeCache\.get\(key\)/);
+ assert.match(app,/ATM 1σ underlying: /);
+ assert.match(app,/label:'Range unavailable'/);
+ assert.match(app,/No guessed inputs/);
+ assert.doesNotMatch(app,/expectedUnderlyingRange\(\{spot:p\.spot,ivPct:p\.ivPct/);
+ assert.match(app,/if\(opening\)\{void ensureAtmRange\(currentPreviewIdea\(\)\)/);
+ assert.match(app,/if\(selectedPreviewId===idea\.id\)void ensureAtmRange\(idea\)/);
  assert.match(css,/\.studio-expected-range\{/);
  assert.match(css,/@media\(max-width:690px\)\{\.studio-expected-range/);
- assert.ok(!app.includes('ATM expected move guaranteed'));
 });

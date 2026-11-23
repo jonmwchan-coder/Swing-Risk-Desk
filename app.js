@@ -7,7 +7,7 @@ import {calculatePlanBasket,defaultPlanIdea,parsePlannedContract,MAX_PLAN_IDEAS,
 import {PLANNER_LOCAL_KEY,loadPlannerDrafts,savePlannerDrafts,clearPlannerDraftStorage} from './lib/planner-storage.mjs';
 import {DEFAULT_BUY_FEE_USD,DEFAULT_SELL_FEE_USD,estimateOrderFee,ratePerContract} from './lib/fees.mjs';
 import {buildSingleTradeHandoff,singleTradeExportFilename,TRADE_HANDOFF_SCHEMA} from './lib/trade-export.mjs';
-import {emptyPreview,normalizePreview,projectOptionReturns,expectedUnderlyingRange,buildOCCSymbol,MAX_PREVIEW_DATES,MAX_PREVIEW_TARGETS,easternCloseMs} from './lib/option-preview.mjs';
+import {emptyPreview,normalizePreview,projectOptionReturns,buildOCCSymbol,MAX_PREVIEW_DATES,MAX_PREVIEW_TARGETS,easternCloseMs} from './lib/option-preview.mjs';
 import {nextSession} from './lib/calendar.mjs';
 import {draftContract,draftContractKey,normalizeTicker,sortPlanIdeas,PLAN_SORT_MODES} from './lib/planner-contract.mjs';
 import {expirationLookupKey,normalizeListedDates,expirationListingStatus,nearestListedExpirations,regularExpirationKind} from './lib/expiry-listings.mjs';
@@ -646,7 +646,7 @@ function renderChainPreview(idea=currentPreviewIdea()){
  el.hidden=false;
  el.innerHTML=renderChainPanel({idea,data:entry?.status==='ready'?entry.data:null,
   loading:entry?.status==='loading',error:entry?.status==='error'?entry.message:'',
-  side:chainSide,scope:optionChainRange});
+  side:chainSide,scope:optionChainRange,atmRange:expectedRangeDisplay(idea)});
 }
 async function refreshOptionChain(force=false){
  const idea=currentPreviewIdea();
@@ -722,27 +722,85 @@ function percentCell(cell){
  const value=cell.returnPct;
  return `<div class="preview-return ${value>=0?'preview-positive':'preview-negative'}">${value>0?'+':''}${value.toFixed(1)}%</div><small>USD ${money(cell.netUsd)} net</small><small>USD ${money(cell.projectedSellPremium)} model exit/sh</small>`;
 }
+// The ATM expected move is shared across BOTH chain and return preview.
+// It is ticker + expiration specific; never keyed to selected strike, side or account.
+const atmRangeCache=new Map(),pendingAtmRanges=new Map();
+const ATM_RANGE_TTL_MS=90000;
+function atmRangeKey(idea){
+ const ticker=normalizeTicker(idea?.ticker),expiry=String(idea?.expiry||'');
+ return /^[A-Z][A-Z0-9.-]{0,10}$/.test(ticker)&&parseDay(expiry)?ticker+'|'+expiry:'';
+}
 function expectedRangeDisplay(idea){
- const p=idea?.preview||{};
- const result=expectedUnderlyingRange({spot:p.spot,ivPct:p.ivPct,expiry:idea?.expiry});
- if(!result)return {
-  label:'Underlying 1σ range: add spot + IV',
-  title:'Requires a valid underlying price, selected-contract implied volatility and a future expiry. Refresh the quote or enter spot/IV manually.'
- };
+ const key=atmRangeKey(idea),entry=key?atmRangeCache.get(key):null;
+ if(!key)return {label:'Range unavailable',title:'Choose a valid ticker and expiration to request ATM data.',state:'unavailable'};
+ if(!entry)return {label:'ATM range loading…',title:'Checking the IEX underlying trade and near-ATM option IV.',state:'loading'};
+ if(entry.status==='loading')return {label:'ATM range loading…',title:'Checking the IEX underlying trade and near-ATM option IV.',state:'loading'};
+ if(entry.status!=='ok')return {label:'Range unavailable',
+  title:entry.reason||'An actual underlying price and valid ATM IV could not be verified. No guessed inputs.',state:'unavailable'};
+ const d=entry.data,r=d.range;
  return {
-  label:'Underlying 1σ: '+money(result.lower)+'–'+money(result.upper)+
-   ' (±'+money(result.move)+', '+result.movePct.toFixed(1)+'%)',
-  title:'Approximate one-standard-deviation UNDERLYING range through 4 PM ET on expiry. Uses '+
-   money(result.spot)+' spot and '+result.ivPct.toFixed(1)+'% IV from this selected strike/expiry, with '+
-   result.days.toFixed(1)+' calendar days remaining. Not an option-price range or forecast; IV/spot may be stale.'
+  label:'ATM 1σ underlying: '+money(r.lower)+'–'+money(r.upper)+' (±'+money(r.move)+', '+r.movePct.toFixed(1)+'%)',
+  title:'Estimated underlying-price range through 4 PM ET expiration using '+money(d.spotUsd)+
+   ' IEX spot and '+d.atmIvPct.toFixed(1)+'% IV at nearest standard ATM strike '+money(d.atmStrike)+
+   ' ('+d.ivMethod+'). '+r.days.toFixed(1)+' calendar days remaining. '+
+   'Indicative data, not executable, a price target, a guaranteed probability or an option-premium range.',
+  state:'ok'
  };
 }
 function updateExpectedRangeHeader(idea){
+ if(!idea||atmRangeKey(idea)!==atmRangeKey(currentPreviewIdea()))return;
  const node=$('optionPreview')?.querySelector('[data-expected-range]');
  if(!node)return;
  const range=expectedRangeDisplay(idea);
  node.textContent=range.label;
  node.title=range.title;
+ node.dataset.rangeStatus=range.state;
+}
+async function ensureAtmRange(idea,force=false){
+ const key=atmRangeKey(idea);
+ if(!key)return;
+ const cached=atmRangeCache.get(key);
+ if(cached?.status==='loading'&&!force)return;
+ if(!force&&cached&&['ok','unavailable'].includes(cached.status)&&Date.now()-cached.fetchedAt<ATM_RANGE_TTL_MS){
+  updateExpectedRangeHeader(idea);return;
+ }
+ pendingAtmRanges.get(key)?.abort();
+ const controller=new AbortController();
+ pendingAtmRanges.set(key,controller);
+ atmRangeCache.set(key,{status:'loading'});
+ updateExpectedRangeHeader(idea);
+ const [ticker,expiry]=key.split('|');
+ const timeout=setTimeout(()=>controller.abort(),13000);
+ try{
+  const query=new URLSearchParams({ticker,expiry});
+  const response=await fetch('/api/atm-range?'+query,{cache:'no-store',signal:controller.signal});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw Error(data.error||'ATM data service unavailable.');
+  if(data.ticker!==ticker||data.expiry!==expiry||!['ok','unavailable'].includes(data.status))
+   throw Error('ATM data response invalid.');
+  if(pendingAtmRanges.get(key)!==controller)return;
+  if(data.status==='unavailable'){
+   atmRangeCache.set(key,{status:'unavailable',reason:String(data.reason||'No valid ATM IV or underlying price.').slice(0,250),fetchedAt:Date.now()});
+  }else{
+   const fields=[data.spotUsd,data.atmStrike,data.atmIvPct,
+    data.range?.lower,data.range?.upper,data.range?.move,data.range?.movePct,data.range?.days];
+   if(fields.some(x=>typeof x!=='number'||!Number.isFinite(x)||x<0)||
+    data.spotUsd<=0||data.atmStrike<=0||data.atmIvPct<=0||data.atmIvPct>1000||
+    data.range.upper<data.range.lower||data.range.move<=0)
+    throw Error('ATM source values incomplete.');
+   atmRangeCache.set(key,{status:'ok',data,fetchedAt:Date.now()});
+  }
+ }catch(error){
+  if(pendingAtmRanges.get(key)!==controller)return;
+  atmRangeCache.set(key,{status:'unavailable',reason:controller.signal.aborted?'ATM range lookup timed out. Refresh the chain to retry.':
+   String(error.message||'ATM data unavailable.').slice(0,250),fetchedAt:Date.now()});
+ }finally{
+  clearTimeout(timeout);
+  if(pendingAtmRanges.get(key)===controller){
+   pendingAtmRanges.delete(key);
+   updateExpectedRangeHeader(idea);
+  }
+ }
 }
 function renderOptionPreview(){
  const el=$('optionPreview');if(!el)return;
@@ -765,7 +823,7 @@ function renderOptionPreview(){
   '<span class="studio-contract-ticker">'+esc(normalizeTicker(idea.ticker)||'Ticker')+'</span>'+
   '<span class="studio-contract-expiry'+(displayContract.hasExpiry?'':' is-missing')+'">'+esc(displayContract.expiry)+'</span>'+
   '<strong class="studio-contract-strike'+(displayContract.hasStrike?'':' is-missing')+'">'+esc(displayContract.strike)+'</strong>'+
-  '<span class="studio-expected-range" data-expected-range title="'+esc(expectedRange.title)+'">'+esc(expectedRange.label)+'</span></div>'+
+  '<span class="studio-expected-range" data-expected-range data-range-status="'+esc(expectedRange.state)+'" title="'+esc(expectedRange.title)+'">'+esc(expectedRange.label)+'</span></div>'+
   '<div class="studio-account-identity"><span>ACCOUNT</span><strong>'+esc(account().name)+'</strong></div>'+
   (idea.name&&idea.name!=='Untitled idea'?'<small class="studio-idea-name">Idea: '+esc(idea.name)+'</small>':'');
  el.innerHTML=`<div class="option-preview-heading"><div class="preview-title-stack"><div class="overline">SCENARIO STUDIO · WHAT-IF MODEL</div><h3>Projected option return by date</h3>${previewIdentity}</div><div class="preview-heading-actions"><span class="preview-mode-tag">HYPOTHETICAL RETURNS</span><button type="button" class="preview-close" data-action="close-option-preview" aria-label="Close option return preview">×</button></div></div>
@@ -1249,22 +1307,22 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'enter-manual-expiry':{manualExpiryIds.add(el.dataset.planId);el.blur();const idea=plannerIdeas().find(x=>x.id===el.dataset.planId);if(idea){updateListingCard(idea);const card=[...document.querySelectorAll('[data-draft-id]')].find(x=>x.dataset.draftId===el.dataset.planId);card?.querySelector('input[type="date"][name="expiry"]')?.focus();}break;}
  case 'use-listed-expirations':{manualExpiryIds.delete(el.dataset.planId);el.blur();const idea=plannerIdeas().find(x=>x.id===el.dataset.planId);if(idea){updateListingCard(idea);const card=[...document.querySelectorAll('[data-draft-id]')].find(x=>x.dataset.draftId===el.dataset.planId);card?.querySelector('[name="listedExpiry"]')?.focus();}break;}
  case 'clear-plan-ideas':{if(!confirm('Clear all saved Quick size check ideas for this portfolio? Recorded positions will not be affected.'))break;expandedPlanId=null;selectedPreviewId=null;quoteRefreshToken++;plannerDrafts[account().id]=[defaultPlanIdea(uid(),account().stressPct,false)];persistPlannerDrafts();renderPlanner(analytics());showToast('Saved size-check ideas cleared for this portfolio.');break;}
- case 'analyze-idea':{const opening=selectedPreviewId!==el.dataset.planId||optionPanelMode!=='analyze';optionPanelMode='analyze';chainFetchToken++;selectedPreviewId=opening?el.dataset.planId:null;if(opening)adoptTickerLevels(currentPreviewIdea());expandedPlanId=null;quoteRefreshToken++;quoteRefreshMessage='';quoteConnectionState='unknown';renderPlanner(analytics());if(opening)$('optionPreview')?.scrollIntoView({block:'start',behavior:'smooth'});if(opening)void refreshOptionQuote();break;}
+ case 'analyze-idea':{const opening=selectedPreviewId!==el.dataset.planId||optionPanelMode!=='analyze';optionPanelMode='analyze';chainFetchToken++;selectedPreviewId=opening?el.dataset.planId:null;if(opening)adoptTickerLevels(currentPreviewIdea());expandedPlanId=null;quoteRefreshToken++;quoteRefreshMessage='';quoteConnectionState='unknown';renderPlanner(analytics());if(opening)$('optionPreview')?.scrollIntoView({block:'start',behavior:'smooth'});if(opening){void ensureAtmRange(currentPreviewIdea());void refreshOptionQuote();}break;}
  case 'view-option-chain':{
   const opening=selectedPreviewId!==el.dataset.planId||optionPanelMode!=='chain';
   selectedPreviewId=opening?el.dataset.planId:null;
   optionPanelMode='chain';if(opening)optionChainRange='nearby';expandedPlanId=null;quoteRefreshToken++;
   const idea=currentPreviewIdea();if(idea)chainSide=idea.optionType==='Call'?'Call':'Put';
   renderPlanner(analytics());
-  if(opening){$('optionPreview')?.scrollIntoView({block:'start',behavior:'smooth'});void refreshOptionChain();}
+  if(opening){$('optionPreview')?.scrollIntoView({block:'start',behavior:'smooth'});void ensureAtmRange(idea);void refreshOptionChain();}
   break;
  }
  case 'open-chain-analyze':{
   if(!currentPreviewIdea())break;
   chainFetchToken++;optionPanelMode='analyze';quoteRefreshMessage='';quoteConnectionState='unknown';
-  renderPlanner(analytics());void refreshOptionQuote();break;
+  renderPlanner(analytics());void ensureAtmRange(currentPreviewIdea());void refreshOptionQuote();break;
  }
- case 'refresh-option-chain':void refreshOptionChain(true);break;
+ case 'refresh-option-chain':void ensureAtmRange(currentPreviewIdea(),true);void refreshOptionChain(true);break;
  case 'toggle-chain-range':{
   optionChainRange=optionChainRange==='all'?'nearby':'all';
   renderChainPreview();void refreshOptionChain();break;
@@ -1338,7 +1396,6 @@ $('optionPreview').addEventListener('input',e=>{
   p.dates[index]=e.target.value;publishTickerLevels(idea);
  }else return;
  persistPlannerDrafts();updateOptionPreviewResults();
- if(name==='spot'||name==='ivPct')updateExpectedRangeHeader(idea);
 });
 $('quickPlanner').addEventListener('input',e=>{
  const el=e.target.closest('[data-draft-id]');if(!el)return;
@@ -1422,8 +1479,9 @@ $('quickPlanner').addEventListener('change',e=>{
  }
  adoptTickerLevels(idea);
  if(['ticker','optionType'].includes(e.target.name))queueListedExpirations(idea,true);
+ if(selectedPreviewId===idea.id)void ensureAtmRange(idea);
  if(selectedPreviewId===idea.id&&optionPanelMode==='chain'){
-  renderOptionPreview();void refreshOptionChain();
+  renderOptionPreview();void ensureAtmRange(idea);void refreshOptionChain();
  }else if(draftContract(idea)){if(selectedPreviewId===idea.id)void refreshOptionQuote();else void refreshDraftPremium(idea);}
  else {persistPlannerDrafts();if(currentPreviewIdea()?.id===idea.id)renderOptionPreview();}
  if(e.target.name==='expiry')updateListingCard(idea);

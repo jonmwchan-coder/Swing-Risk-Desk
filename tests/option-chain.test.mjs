@@ -370,3 +370,26 @@ test('expiry-first option chain works with blank strike and centers nearby rows 
  assert.ok(app.includes("if(parts[2])qs.set('strike',parts[2]);"));
  assert.ok(app.includes("case 'pick-chain-contract':pickChainContract(el);break;"));
 });
+
+test('chain expiration header shows shared ATM range before strike selection, with unavailable safeguard',()=>{
+ const idea={id:'sample',ticker:'BBW',expiry:date(),strike:'',optionType:'Call'};
+ const ok={state:'ok',label:'ATM 1σ underlying: $30.00–$40.00 (±$5.00, 14.3%)',
+  title:'Actual IEX $35 and nearest standard ATM strike $35'};
+ const html=renderChainPanel({idea,atmRange:ok,loading:true});
+ assert.match(html,/class="chain-atm-range"/);
+ assert.match(html,/data-expected-range/);
+ assert.match(html,/data-range-status="ok"/);
+ assert.match(html,/30\.00–\$40\.00/);
+ assert.ok(html.indexOf('chain-atm-range')<html.indexOf('Loading strike ladder'));
+ const missing=renderChainPanel({idea,atmRange:{state:'unavailable',label:'Range unavailable',title:'No spot price'},data:null});
+ assert.match(missing,/Range unavailable/);
+ assert.match(missing,/data-range-status="unavailable"/);
+ const app=readFileSync(new URL('../app.js',import.meta.url),'utf8');
+ assert.match(app,/atmRange:expectedRangeDisplay\(idea\)/);
+ assert.match(app,/case 'refresh-option-chain':void ensureAtmRange\(currentPreviewIdea\(\),true\)/);
+ assert.match(app,/function atmRangeKey\(idea\)/);
+ assert.match(app,/ticker\+'\|'\+expiry/);
+ const css=readFileSync(new URL('../styles.css',import.meta.url),'utf8');
+ assert.match(css,/\.chain-date-range-row\{/);
+ assert.match(css,/\.chain-atm-range\[data-range-status="unavailable"\]/);
+});
