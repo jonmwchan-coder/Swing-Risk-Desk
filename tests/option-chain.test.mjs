@@ -393,3 +393,18 @@ test('chain expiration header shows shared ATM range before strike selection, wi
  assert.match(css,/\.chain-date-range-row\{/);
  assert.match(css,/\.chain-atm-range\[data-range-status="unavailable"\]/);
 });
+
+test('ATM expected range is a subdued neutral translucent label, not a green callout',()=>{
+ const css=readFileSync(new URL('../styles.css',import.meta.url),'utf8');
+ const regular=css.match(/\.chain-atm-range\{([^}]*)\}/)?.[1]||'';
+ assert.match(regular,/background:rgba\(130,143,162,\.08\)/);
+ assert.match(regular,/border:1px solid rgba\(154,168,188,\.25\)/);
+ assert.match(regular,/font-weight:620/);
+ assert.doesNotMatch(regular,/#1b4a52|#569b9a|#d5fbf0/i);
+ for(const state of ['loading','unavailable']){
+  const style=css.match(new RegExp('\\.chain-atm-range\\[data-range-status="'+state+'"\\]\\{([^}]*)\\}'))?.[1]||'';
+  assert.match(style,/background:rgba\(130,143,162,\.06\)/);
+  assert.doesNotMatch(style,/#393127|#806646|#1b4a52/i);
+ }
+ assert.match(css,/\.studio-expected-range\{/,'Projected Return styling is unchanged');
+});

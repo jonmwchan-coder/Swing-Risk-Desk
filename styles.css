@@ -873,14 +873,14 @@ html,body{max-width:100%}
 }
 @media(max-width:690px){.studio-expected-range{font-size:10px;padding:4px 6px}}
 
-/* v3.14: ATM-based expected move is primary beside the View Chain expiry. */
+/* v3.15: ATM-based expected move beside the View Chain expiry, neutral translucent styling. */
 .chain-date-range-row{display:flex;align-items:center;flex-wrap:wrap;gap:6px 13px;margin-top:8px;min-width:0}
 .chain-date-range-row h3{margin:0}
 .chain-atm-range{display:inline-flex;align-items:center;max-width:100%;min-height:29px;padding:6px 9px;
- background:#1b4a52;border:1px solid #569b9a;border-radius:9px;
- font-size:13px;font-weight:780;line-height:1.3;color:#d5fbf0;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
-.chain-atm-range[data-range-status="loading"]{color:#b6d2db;background:#26374d;border-color:#64738b}
-.chain-atm-range[data-range-status="unavailable"]{color:#d7c4a6;background:#393127;border-color:#806646}
+ background:rgba(130,143,162,.08);border:1px solid rgba(154,168,188,.25);border-radius:9px;
+ font-size:12px;font-weight:620;line-height:1.3;color:#b8c8e3;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.chain-atm-range[data-range-status="loading"]{color:#acbbd0;background:rgba(130,143,162,.06);border-color:rgba(154,168,188,.18)}
+.chain-atm-range[data-range-status="unavailable"]{color:#b7bac2;background:rgba(130,143,162,.06);border-color:rgba(154,168,188,.18)}
 .studio-expected-range[data-range-status="unavailable"]{color:#c3aeb5}
 .studio-expected-range[data-range-status="loading"]{color:#b1bdd4}
 @media(max-width:690px){.chain-date-range-row{align-items:flex-start;gap:7px}
