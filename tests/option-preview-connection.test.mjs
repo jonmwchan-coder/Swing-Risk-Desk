@@ -5,7 +5,7 @@ const app=fs.readFileSync(new URL('../app.js',import.meta.url),'utf8');
 const server=fs.readFileSync(new URL('../api/option-quote.js',import.meta.url),'utf8');
 const css=fs.readFileSync(new URL('../styles.css',import.meta.url),'utf8');
 test('Analyze % automatically requests only the selected idea quote once, not all ideas',()=>{
- assert.match(app,/case 'analyze-idea':\{const opening=.*?if\(opening\)void refreshOptionQuote\(\);break;\}/);
+ assert.match(app,/case 'analyze-idea':\{const opening=.*?if\(opening\)\{void ensureAtmRange\(currentPreviewIdea\(\)\);void refreshOptionQuote\(\);\}break;\}/);
  assert.match(app,/currentPreviewIdea\(\)\?\.id!==idea\.id/);
  assert.match(app,/symbol=buildOCCSymbol\(draftContract\(idea\)\)/);
 });

@@ -21,7 +21,7 @@ test('next sessions, custom exit dates and extra TP targets have explicit contro
 });
 test('quote refresh starts when Analyze % is selected or Refresh is explicitly clicked, without changing entry premium',()=>{
  assert.match(app,/case 'refresh-option-quote':void refreshOptionQuote\(\);break;/);
- assert.match(app,/if\(opening\)void refreshOptionQuote\(\);/);
+ assert.match(app,/if\(opening\)\{void ensureAtmRange\(currentPreviewIdea\(\)\);void refreshOptionQuote\(\);\}/);
  assert.match(app,/fetch\(`\/api\/option-quote\?symbol=/);
  assert.match(app,/unless you manually override it/);
  assert.match(app,/if\(valid&&!idea\.priceManual\)idea\.price=idea\.marketMid/);
