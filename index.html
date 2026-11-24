@@ -56,7 +56,7 @@
         <article class="metric-card"><div class="metric-title"><span class="metric-symbol green">&#9679;</span> OPEN RISK RESERVED</div><strong id="reservedMetric">$0.00</strong><small id="reservedHint">No open positions</small></article>
         <article class="metric-card"><div class="metric-title"><span class="metric-symbol red">&#9679;</span> ROLLING NET LOSSES</div><strong id="lossMetric">$0.00</strong><small id="lossHint">Profitable partials can offset losing exits only within the same position/attempt</small></article>
         <article class="metric-card"><div class="metric-title"><span class="metric-symbol muted">&#9679;</span> ROLLING RISK CEILING</div><strong id="capMetric">$600.00</strong><small id="capHint">3% of $20,000 CAD</small></article>
-        <article class="metric-card"><div class="metric-title"><span class="metric-symbol blue">&#9679;</span> OPEN PREMIUM AT COST</div><strong id="costMetric">$0.00</strong><small id="costHint">Remaining debit at current FX</small></article>
+        <article class="metric-card"><div class="metric-title"><span class="metric-symbol blue">&#9679;</span> OPEN COST BASIS</div><strong id="costMetric">$0.00</strong><small id="costHint">Acquisition cost of remaining contracts, including buy fees</small></article>
       </div>
       <div class="equity-tracker" id="equityTracker" aria-live="polite">Tracked equity adjusts automatically after realized profit or loss.</div>
 
@@ -177,7 +177,7 @@
       <div class="bottom-danger"><button type="button" class="text-link text-delete" data-action="reset-data">Reset all locally saved data</button><small>Does not change anything in Google Sheets or IBKR.</small></div>
     </section>
   </main>
-  <footer><span>SWING RISK DESK / v3.20 position layout</span><span>Process over P&amp;L. All figures in CAD unless marked USD.</span></footer>
+  <footer><span>SWING RISK DESK / v3.21 currency display</span><span>Process over P&amp;L. USD/CAD display at portfolio FX; risk accounting in CAD.</span></footer>
 </div>
 <dialog id="editorDialog" class="editor-dialog"><div class="dialog-content"><div class="dialog-header"><div><div class="overline" id="dialogEyebrow">POSITION</div><h2 id="dialogTitle">New position</h2></div><button type="button" class="icon-button" data-action="close-dialog" aria-label="Close dialog">&#10005;</button></div><div id="dialogBody"></div></div></dialog>
 <dialog id="positionAnalysisDialog" class="editor-dialog position-analysis-dialog" aria-labelledby="positionAnalysisTitle"><div class="dialog-content"><div class="dialog-header"><div><div class="overline">POSITION SCENARIO STUDIO</div><h2 id="positionAnalysisTitle">Analyze %</h2></div><button type="button" class="icon-button" data-pa-action="close" aria-label="Close position analysis">&#10005;</button></div><div id="positionAnalysisBody" class="position-analysis-body"></div></div></dialog>

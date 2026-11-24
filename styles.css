@@ -933,3 +933,15 @@ html,body{max-width:100%}
 .positions-budget-summary .pos-cad{font-size:.72em;color:#9bb2b7;font-weight:500}
 .positions-budget-summary>small{color:#8eacb8;font-size:11px}
 @media(max-width:690px){#dashboardPositions .pos-data.pos-risk-row{grid-template-columns:repeat(2,minmax(0,1fr))}.positions-budget-summary{padding:10px 12px}.positions-budget-summary strong{font-size:19px}}
+
+/* v3.21: USD-first, smaller CAD equivalents; keep compact displays readable. */
+.pos-cad{font-size:.72em;font-weight:500;color:#9bb2b7;white-space:normal}
+.pos-usd{font-variant-numeric:tabular-nums}
+.hero-number{white-space:normal;overflow-wrap:normal}
+.hero-number .pos-usd{font-size:1em;opacity:1;white-space:nowrap}
+.hero-number .pos-cad{font-size:.42em;letter-spacing:-.02em;white-space:nowrap}
+.metric-card strong .pos-usd,.draft-metric strong .pos-usd,.planner-summary-chip strong .pos-usd{white-space:normal}
+.metric-card strong .pos-cad,.draft-metric strong .pos-cad,.planner-summary-chip strong .pos-cad,.result-line strong .pos-cad{font-size:.72em;letter-spacing:normal;display:inline}
+.metric-card strong,.planner-summary-chip strong,.draft-metric strong,.result-line strong{overflow-wrap:anywhere;white-space:normal}
+.session-day .loss .pos-cad,.runway-number .pos-cad{display:block;font-size:.76em}
+.equity-tracker .pos-cad,.draft-mini-field .pos-cad{font-size:.78em}
