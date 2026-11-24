@@ -945,3 +945,11 @@ html,body{max-width:100%}
 .metric-card strong,.planner-summary-chip strong,.draft-metric strong,.result-line strong{overflow-wrap:anywhere;white-space:normal}
 .session-day .loss .pos-cad,.runway-number .pos-cad{display:block;font-size:.76em}
 .equity-tracker .pos-cad,.draft-mini-field .pos-cad{font-size:.78em}
+
+/* v3.22: concise CAD risk capacity header and three portfolio metrics. */
+#view-dashboard .metric-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+.hero-number .hero-available-cad{font-size:1em;opacity:1;white-space:nowrap;letter-spacing:inherit}
+.hero-number .hero-ceiling-cad{font-size:.48em;font-weight:650;opacity:.78;white-space:nowrap;letter-spacing:-.025em;color:#c7dcd9}
+.hero-number{display:flex;flex-wrap:wrap;align-items:baseline;gap:7px 12px;line-height:1.14}
+@media(max-width:690px){#view-dashboard .metric-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}#view-dashboard .metric-card{padding:10px 8px}#view-dashboard .metric-card strong{font-size:clamp(13px,3.8vw,20px)}#view-dashboard .metric-card .pos-cad{display:block}.hero-number .hero-ceiling-cad{font-size:.5em}}
+@media(max-width:370px){#view-dashboard .metric-grid{grid-template-columns:1fr}#view-dashboard .metric-card .pos-cad{display:inline}}
