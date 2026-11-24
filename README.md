@@ -1,3 +1,9 @@
+## v3.22: Dashboard risk summary (2026-11-24)
+
+- The top Available for New Risk figure is explicitly CAD available **of CAD rolling risk ceiling**, with a smaller denominator. Both numbers come directly from the selected portfolio's existing risk calculation. Negative available capacity remains visible. The headline is CAD-only by request; the cards below retain USD-first and smaller CAD equivalents.
+- Dashboard portfolio cards are now ordered: Open Cost Basis (all currently held contracts combined, including allocated acquisition commissions), Open Risk Reserved, Rolling Net Losses. The separate Rolling Risk Ceiling card is removed because it is already in the headline. No acquisition cost is deducted twice; available risk = ceiling minus open reserves minus rolling net losing attempts.
+- Presentation-only change. Existing position records, calculations, scenario history and settings are unchanged. Rollback: v3.21 commit `9a76a1a3c50e5f9856c26021981c6c0e7334bafe`, deployment `dpl_92gGh23AGWqnBop8ZLdgS9GMWLKJ`.
+
 ## v3.21: Consistent currency display and open cost basis (2026-11-24)
 
 - Position average entry premium now displays two decimals in USD per share with the smaller CAD equivalent at selected portfolio FX. Weighted average calculations, execution prices and commission precision are unchanged. Market-value quote details and scale-in/merge previews use two-decimal average premiums as well.
