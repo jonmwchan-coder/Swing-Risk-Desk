@@ -899,3 +899,11 @@ html,body{max-width:100%}
 .position-card .pos-data .pos-market-value small{line-height:1.35}
 .position-card .pos-data .pos-data-label{overflow-wrap:anywhere}
 @media(max-width:600px){.position-card .pos-data strong .pos-usd{white-space:normal}}
+
+/* v3.18: compact dashboard, five independent sizing inputs on wider cards. */
+#dashboardPositions .pos-data{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+#dashboardPositions .pos-data strong{font-size:clamp(13px,1.5vw,19px);white-space:normal;overflow-wrap:anywhere}
+#dashboardPositions .pos-data .pos-usd{white-space:normal}
+.draft-mini-field[data-idea-loss]{color:var(--text);white-space:normal}
+.draft-mini-field[data-idea-loss][hidden]{display:none}
+@media(min-width:1100px){.draft-editor .draft-fields{grid-template-columns:repeat(5,minmax(0,1fr))}}
