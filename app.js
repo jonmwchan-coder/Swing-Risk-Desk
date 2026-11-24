@@ -1230,6 +1230,175 @@ function editExit(positionId,txId){const p=findPosition(positionId),tx=p.exits.f
   if(changed.length){makeJournalEntry(p,{date:today(),kind:'Exit annotation change',source:`App annotation for ${tx.date} ${tx.time||''} / ${tx.id}`,text:`Updated exit ${tx.date} (${tx.qty} contracts): ${changed.map(k=>`${k}: [${String(tx[k]??'')||'blank'}] -> [${String(next[k]??'')||'blank'}]`).join('\n')}`});Object.assign(tx,next,{annotationEditedAt:new Date().toISOString()});}
   showToast(`Exit details saved; ${changed.length} change(s) in journal history.`);return true;});
 }
+
+/* Position-owned scenario studio. Independent of local Quick Size Check drafts. */
+let positionAnalysisSession=null;
+function positionAnalysisContext(session){
+ if(account().id!==session.accountId)return null;
+ const m=analytics(),x=m.positions.find(v=>v.position.id===session.positionId);
+ if(!x||draftContractKey(x.position)!==session.contractKey)return null;
+ const live=m.asOf===onOrBeforeSession(today(),state.customClosed||[])&&x.metrics.qty>0&&easternCloseMs(x.position.expiry)>Date.now();
+ return {m,x,live,basis:live?currentAnalysisBasis(x.position,x.metrics,m.account,m.asOf):null};
+}
+function openPositionAnalysis(id){
+ const p=findPosition(id),m=analytics(),key=draftContractKey(p),dialog=$('positionAnalysisDialog');
+ if(!dialog)return;
+ if(positionAnalysisSession?.controller)positionAnalysisSession.controller.abort();
+ const initial=workingAnalysisPreview(p,today(),state.customClosed||[]);
+ const session={positionId:id,accountId:m.account.id,contractKey:key,working:initial.preview,source:initial.source,mode:'current',status:'',busy:false,dirty:false,controller:null,token:0};
+ const ctx=positionAnalysisContext(session),events=positionAnalysisEvents(p);
+ if(!ctx?.live||!ctx.basis)session.mode=events.at(-1)?.id||'none';
+ positionAnalysisSession=session;
+ renderPositionAnalysis();
+ dialog.showModal();
+ if(session.mode==='current')void refreshPositionAnalysisQuote();
+}
+function positionAnalysisSelection(session,ctx){
+ if(session.mode==='current')return {preview:session.working,basis:ctx.basis,contract:draftContract(ctx.x.position),asOf:new Date(),multiplier:Number(ctx.x.position.multiplier||100),editable:true,event:null};
+ const event=positionAnalysisEvents(ctx.x.position).find(e=>e.id===session.mode);
+ return event?{preview:event.preview,basis:event.basis,contract:event.contract,asOf:event.capturedAt,multiplier:event.multiplier,editable:false,event}:null;
+}
+function analysisTime(value){
+ const d=new Date(value);
+ return Number.isFinite(d.getTime())?d.toLocaleString('en-CA',{timeZone:'America/Toronto',month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})+' ET':'Time unavailable';
+}
+function renderPositionAnalysis(){
+ const session=positionAnalysisSession,root=$('positionAnalysisBody');if(!session||!root)return;
+ const ctx=positionAnalysisContext(session);
+ if(!ctx){root.innerHTML='<p class="preview-warning">The position or portfolio changed. Close and reopen Analyze %.</p>';return;}
+ const p=ctx.x.position,events=positionAnalysisEvents(p),selection=positionAnalysisSelection(session,ctx);
+ $('positionAnalysisTitle').textContent=p.ticker+' '+p.strike+(p.optionType==='Put'?'P':'C')+' · Analyze %';
+ const options=[...(ctx.live&&ctx.basis?[['current','Current position · editable']]:[]),...events.map((e,i)=>[e.id,(e.kind==='entry'?'Recorded entry #'+(events.slice(0,i+1).filter(v=>v.kind==='entry').length):'Saved scenario')+' · '+analysisTime(e.capturedAt)])];
+ if(!options.some(x=>x[0]===session.mode))options.push([session.mode,'No recorded scenario available']);
+ const selector=`<label class="position-analysis-select"><span>ANALYSIS VIEW</span><select name="position-analysis-mode">${options.map(([id,label])=>`<option value="${esc(id)}" ${id===session.mode?'selected':''}>${esc(label)}</option>`).join('')}</select></label>`;
+ if(!selection){root.innerHTML=selector+'<div class="preview-prompt">No original analysis snapshot was recorded for this position. Earlier quotes, IV and targets cannot be reconstructed. An eligible open position can be analyzed using a new scenario.</div>';return;}
+ const {preview:v,basis:b,contract,editable,event}=selection;
+ const identity=`<div class="studio-contract-identity"><span class="studio-contract-ticker">${esc(contract?.ticker||p.ticker)}</span><span class="studio-contract-expiry">${esc(contract?.expiry||p.expiry)}</span><strong class="studio-contract-strike">${esc(contract?.strike??p.strike)}${(contract?.optionType||p.optionType)==='Put'?'P':'C'}</strong></div><div class="studio-account-identity"><span>ACCOUNT</span><strong>${esc(ctx.m.account.name)}</strong></div>`;
+ const basisText=b?`${esc(b.qty)} contract(s) · avg entry ${usd(b.price,4)}/share · entry cost incl. buy fees ${usd(Number(b.qty)*Number(b.price)*Number(selection.multiplier||100)+Number(b.fee))}`:'Entry basis unavailable';
+ const statusText=editable?'Remaining contracts only; percentages use actual weighted entry cost and allocated buy commissions. Closed contracts and realized P/L are excluded from this matrix.':'Frozen scenario from '+analysisTime(event.capturedAt)+'. The original input values are read-only. This models the recorded fill / saved basis, not the later trade outcome.';
+ const provenance=editable?(session.source?`Targets loaded from ${session.source.kind==='entry'?'recorded entry':'saved scenario'} · ${analysisTime(session.source.capturedAt)}.`:'No original Analyze % data was saved; start a new scenario. No historical values inferred.'):`Recorded in ledger ${analysisTime(event.recordedAt)}. ${event.kind==='entry'?'Draft assumptions captured when Record was clicked; confirmed execution is stored separately.':''}`;
+ const header=selector+identity+`<p class="preview-explainer"><strong>${esc(basisText)}</strong><br>${esc(statusText)}<br>${esc(provenance)}</p>`;
+ if(!v){root.innerHTML=header+'<div class="preview-prompt">No scenario inputs were captured for this entry.</div>';return;}
+ const dates=Array.isArray(v.dates)?v.dates:[],targets=Array.isArray(v.targets)?v.targets:[];
+ const disable=editable?'':'disabled';
+ const quoteLabel=editable?(v.quoteAt?'Reference quote '+analysisTime(v.quoteAt):v.quoteSource||'No current quote'):(v.quoteAt?'Captured quote timestamp '+analysisTime(v.quoteAt):v.quoteSource||'No quote timestamp saved');
+ const marketFields=[['spot','Underlying price (USD)','0.01'],['ivPct','Option IV (%)','0.01'],['bid','Option bid (USD/share)','0'],['ask','Option ask (USD/share)','0']];
+ const textPlan=[p.underlyingInvalidation?'Recorded invalidation: '+p.underlyingInvalidation:'',p.targetLevels?'Recorded target notes: '+p.targetLevels:''].filter(Boolean);
+ const canAddDate=editable&&dates.length<MAX_PREVIEW_DATES&&parseDay(contract?.expiry);
+ const draftNote=event?.kind==='entry'&&event.draft?`<details class="preview-data-help"><summary>Original sizing assumptions</summary><p>${esc(event.draft.name||'Saved sizing idea')} · planned qty ${esc(event.draft.qty??'—')} · quoted/planned premium ${esc(event.draft.price??'—')} USD/share · estimated buy fees ${esc(event.draft.fee??'—')} USD · estimated loss ${esc(event.draft.plannedLossPct??'—')}% · stress ${esc(event.draft.stress??'—')}%</p><p>${esc(event.draft.quoteMessage||'')}</p></details>`:'';
+ root.innerHTML=header+`
+  <div class="preview-quote-card"><div class="preview-workspace-step"><span>01</span><strong>Market reference</strong><small>${esc(quoteLabel)}</small></div>
+  <div class="preview-inputs">${marketFields.map(([name,label,min])=>`<label><span>${label}</span><input type="number" name="pa-${name}" min="${min}" step="any" value="${esc(v[name]??'')}" ${disable}></label>`).join('')}</div>
+  <div class="preview-quote-row">${editable?`<button type="button" class="btn btn-outline preview-refresh" data-pa-action="refresh" ${session.busy||!buildOCCSymbol(contract)?'disabled':''}>${session.busy?'Fetching quote…':'Refresh quote'}</button>`:''}<small data-pa-status role="status">${esc(session.mode==='current'?session.status:quoteLabel)}</small></div></div>
+  ${draftNote}
+  ${textPlan.length&&editable?`<p class="help-line">${textPlan.map(esc).join('<br>')}</p>`:''}
+  <div class="preview-grid-head"><strong><span class="preview-step-number">02</span> Underlying price targets (USD)</strong>${editable?`<button type="button" class="btn btn-outline preview-add-btn" data-pa-action="add-target" ${targets.length>=MAX_PREVIEW_TARGETS?'disabled':''}>+ TP</button>`:''}</div>
+  <div class="preview-targets">${targets.map((t,i)=>`<label class="preview-target-row"><strong>${esc(t.name)}</strong><input type="number" name="pa-target" data-index="${i}" min="0.01" step=".01" value="${esc(t.price)}" placeholder="Underlying USD price" ${disable}>${editable&&!['stop','tp1','tp2'].includes(t.id)?`<button type="button" class="preview-remove-mini" data-pa-action="remove-target" data-index="${i}" aria-label="Remove ${esc(t.name)}">×</button>`:''}</label>`).join('')}</div>
+  <div class="preview-grid-head"><strong><span class="preview-step-number">03</span> Exit dates · 4 PM ET</strong>${editable?`<div class="position-analysis-date-actions"><button type="button" class="btn btn-outline preview-add-btn" data-pa-action="reset-dates">Next sessions</button><button type="button" class="btn btn-outline preview-add-btn" data-pa-action="add-date" ${canAddDate?'':'disabled'}>+ Date</button></div>`:''}</div>
+  <div class="preview-dates">${dates.map((date,i)=>`<label class="preview-date-row"><span>Date ${i+1}${editable&&easternCloseMs(date)<Date.now()?' · past':''}</span><input type="date" name="pa-date" data-index="${i}" value="${esc(date)}" max="${esc(contract?.expiry||'2100-01-01')}" ${disable}>${editable&&dates.length>1?`<button type="button" class="preview-remove-mini" data-pa-action="remove-date" data-index="${i}">×</button>`:''}</label>`).join('')}</div>
+  <div class="preview-output-title"><span class="preview-step-number">04</span><div><strong>Scenario return matrix</strong><small>Price × date · net projected percentage after fees</small></div><span class="preview-output-tag">MODEL, NOT FORECAST</span></div>
+  <div id="positionAnalysisResults" aria-live="polite"></div>
+  <p class="preview-caution">Same European-style model as Quick Size Check; fixed assumed IV, rates and dividends. Quotes are indicative, not guaranteed fills. The current view never treats old entry premium as today's market value.</p>
+  ${editable?`<div class="modal-actions position-analysis-footer"><small id="positionAnalysisSaveHint">${session.dirty?'Unsaved scenario edits.':'Save to retain the current targets and assumptions.'}</small><button type="button" class="btn btn-primary" data-pa-action="save">Save scenario</button></div>`:''}`;
+ updatePositionAnalysisResults();
+}
+function updatePositionAnalysisResults(){
+ const session=positionAnalysisSession,container=$('positionAnalysisResults');if(!session||!container)return;
+ const ctx=positionAnalysisContext(session),selection=ctx&&positionAnalysisSelection(session,ctx);if(!selection)return;
+ const result=modelPositionAnalysis(selection);
+ if(!result.valid){container.innerHTML=`<div class="preview-prompt">${esc(result.reason)}</div>`;return;}
+ const heading=result.dateHeaders.map(d=>`<th>${esc(fmtDate(d,true))}<small>${d===selection.contract.expiry?'Expiration':esc(d)+' 4 PM ET'}</small></th>`).join('');
+ const rows=result.rows.map(r=>`<tr><th>${esc(r.name)}<small>${r.spotPrice>0?usd(r.spotPrice):'Set target price'}</small></th>${r.values.map(x=>`<td class="${!x.valid?'preview-empty-cell':x.returnPct>=0?'preview-profit-cell':'preview-loss-cell'}">${percentCell(x)}</td>`).join('')}</tr>`).join('');
+ const theta=result.thetaNextCalendarDayUsdPerContract;
+ container.innerHTML=`<div class="preview-result-summary"><div><span>Modeled 1-day theta · unchanged stock / IV</span><strong class="${theta<0?'preview-negative':'preview-positive'}">${usd(theta)} / contract / day</strong></div><div><span>Actual analyzed acquisition cost</span><strong>${usd(result.baseCostUsd)}</strong></div><div><span>IV assumed at every date</span><strong>${result.ivPct.toFixed(1)}%</strong></div></div><div class="preview-matrix-scroll" role="region" aria-label="Modeled position returns by date" tabindex="0"><table class="preview-matrix"><thead><tr><th>Underlying target</th>${heading}</tr></thead><tbody>${rows}</tbody></table></div><small class="preview-footnote">Valuation anchored to ${esc(result.anchorLabel)}. Return = modeled net USD P/L divided by this view's actual acquisition cost, including buy fees. Estimated sell fees and half the indicative spread (when available) are deducted. Past/after-expiry dates are unavailable; use Next sessions in the current view.</small>`;
+}
+function markPositionAnalysisDirty(session){
+ session.dirty=true;const hint=$('positionAnalysisSaveHint');if(hint)hint.textContent='Unsaved scenario edits.';
+}
+async function refreshPositionAnalysisQuote(){
+ const session=positionAnalysisSession,ctx=session&&positionAnalysisContext(session);
+ if(!session||!ctx?.live||!ctx.basis||session.mode!=='current')return;
+ const symbol=buildOCCSymbol(draftContract(ctx.x.position));if(!symbol)return;
+ session.controller?.abort();const controller=new AbortController(),token=++session.token;
+ session.controller=controller;session.busy=true;session.status='Requesting exact contract and underlying…';renderPositionAnalysis();
+ const timeout=setTimeout(()=>controller.abort(),15000);
+ try{
+  const response=await fetch('/api/option-quote?symbol='+encodeURIComponent(symbol),{cache:'no-store',signal:controller.signal});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok||data.symbol!==symbol)throw Error(data.error||'Quote unavailable for this contract.');
+  if(positionAnalysisSession!==session||session.token!==token||!positionAnalysisContext(session)?.live)return;
+  const v=session.working;
+  const positive=x=>x!==null&&x!==undefined&&Number.isFinite(Number(x))&&Number(x)>0;
+  v.spot=positive(data.spotUsd)?String(data.spotUsd):'';
+  if(!v.ivManual||!(Number(v.ivPct)>0))v.ivPct=positive(data.ivPct)&&Number(data.ivPct)<=1000?String(data.ivPct):'';
+  const bid=Number(data.optionBidUsd),ask=Number(data.optionAskUsd),valid=data.optionBidUsd!=null&&data.optionAskUsd!=null&&Number.isFinite(bid)&&Number.isFinite(ask)&&bid>=0&&ask>0&&ask>=bid;
+  v.bid=valid?String(bid):'';v.ask=valid?String(ask):'';
+  v.quoteAt=typeof data.quoteAt==='string'&&Number.isFinite(Date.parse(data.quoteAt))?data.quoteAt:'';
+  v.quoteSource=data.provider||'Alpaca indicative';session.status=[!v.spot?'Underlying unavailable; enter manually.':'',!v.ivPct?'IV unavailable; enter broker IV.':'',!valid?'No valid option midpoint; theoretical model only.':'Indicative bid/ask loaded.',v.ivManual?'Using saved/manual IV.':''].filter(Boolean).join(' ');
+  if(valid)positionQuotes.set(symbol,{mid:(bid+ask)/2,at:v.quoteAt||null});
+  updatePositionQuoteCells();
+ }catch(err){
+  if(positionAnalysisSession===session&&session.token===token)session.status='Quote unavailable. '+(controller.signal.aborted?'Request timed out.':String(err.message||'Refresh failed').slice(0,180))+' Enter current assumptions manually.';
+ }finally{clearTimeout(timeout);if(positionAnalysisSession===session&&session.token===token){session.busy=false;session.controller=null;renderPositionAnalysis();}}
+}
+function positionAnalysisInput(e){
+ const session=positionAnalysisSession;if(!session||session.mode!=='current')return;
+ const name=e.target.name,v=session.working,index=Number(e.target.dataset.index);
+ if(['pa-spot','pa-ivPct','pa-bid','pa-ask'].includes(name)){
+  const key=name.slice(3);v[key]=e.target.value;if(key==='ivPct')v.ivManual=Number(v.ivPct)>0;
+  v.quoteSource='Manual assumptions';v.quoteAt='';session.status='Manual market assumptions.';
+  // A user edit supersedes an in-flight automatic refresh.
+  if(session.busy){session.token++;session.controller?.abort();session.controller=null;session.busy=false;}
+  const status=$('positionAnalysisBody').querySelector('[data-pa-status]');if(status)status.textContent=session.status;
+  const refresh=$('positionAnalysisBody').querySelector('[data-pa-action="refresh"]');if(refresh){refresh.disabled=false;refresh.textContent='Refresh quote';}
+ }else if(name==='pa-target'&&v.targets[index])v.targets[index].price=e.target.value;
+ else if(name==='pa-date'&&v.dates[index]){
+  if(!parseDay(e.target.value)||e.target.value>positionAnalysisContext(session)?.x.position.expiry||v.dates.some((d,i)=>i!==index&&d===e.target.value))return;
+  v.dates[index]=e.target.value;
+ }else return;
+ markPositionAnalysisDirty(session);updatePositionAnalysisResults();
+}
+function positionAnalysisAction(action,element){
+ const session=positionAnalysisSession,ctx=session&&positionAnalysisContext(session);
+ if(!session||session.mode!=='current'||!ctx?.live||!ctx.basis)return;
+ const v=session.working,p=ctx.x.position,index=Number(element.dataset.index);
+ if(action==='refresh'){void refreshPositionAnalysisQuote();return;}
+ if(action==='add-target'&&v.targets.length<MAX_PREVIEW_TARGETS){
+  let n=3;while(v.targets.some(t=>t.name==='TP'+n))n++;
+  v.targets.push({id:uid().replace(/[^A-Za-z0-9_-]/g,'').slice(0,40),name:'TP'+n,price:''});
+ }else if(action==='remove-target'&&v.targets[index]&&!['stop','tp1','tp2'].includes(v.targets[index].id))v.targets.splice(index,1);
+ else if(action==='reset-dates'){
+  const dates=emptyPreview(today(),state.customClosed||[]).dates.filter(d=>d<=p.expiry);v.dates=dates.length?dates:[p.expiry];
+ }else if(action==='add-date'&&v.dates.length<MAX_PREVIEW_DATES){
+  const start=[today(),...v.dates.filter(parseDay)].sort().at(-1),date=nextSession(start,state.customClosed||[]);
+  if(date>p.expiry)return showToast('No additional session before expiry. Edit or reset the saved dates.');
+  if(!v.dates.includes(date))v.dates.push(date);
+ }else if(action==='remove-date'&&v.dates.length>1&&v.dates[index])v.dates.splice(index,1);
+ else if(action==='save'){
+  const live=findPosition(session.positionId),event=appendAnalysisRevision(live,v,ctx.basis,uid());
+  if(!save()){live.analysisHistory=live.analysisHistory.filter(x=>x.id!==event.id);session.status='Could not save. Original scenario history remains unchanged.';renderPositionAnalysis();return;}
+  session.dirty=false;session.source=event;session.status='Scenario saved to position history.';renderPositionAnalysis();return;
+ }else return;
+ markPositionAnalysisDirty(session);renderPositionAnalysis();
+}
+function initPositionAnalysis(){
+ const dialog=$('positionAnalysisDialog'),root=$('positionAnalysisBody');if(!dialog||!root)return;
+ root.addEventListener('input',positionAnalysisInput);
+ root.addEventListener('change',e=>{
+  const session=positionAnalysisSession;if(!session)return;
+  if(e.target.name==='position-analysis-mode'){
+   session.mode=e.target.value;renderPositionAnalysis();
+   if(session.mode==='current'&&!session.working.spot&&!session.busy)void refreshPositionAnalysisQuote();
+  }else if(e.target.name==='pa-date')renderPositionAnalysis();
+ });
+ dialog.addEventListener('click',e=>{
+  const el=e.target.closest('[data-pa-action]');if(!el)return;
+  if(el.dataset.paAction==='close'){dialog.close();return;}
+  try{positionAnalysisAction(el.dataset.paAction,el);}catch(err){showToast(err.message);const status=root.querySelector('[data-pa-status]');if(status)status.textContent=err.message;}
+ });
+ dialog.addEventListener('close',()=>{const session=positionAnalysisSession;positionAnalysisSession=null;session?.controller?.abort();root.innerHTML='';});
+}
+
 function openPositionDetail(id){positionFilter='all';activeTab='positions';render();const item=$('positionsFull').querySelectorAll('[data-position]');for(const el of item)if(el.dataset.position===id){const details=el.querySelector('details');if(details)details.open=true;el.scrollIntoView({block:'center',behavior:'smooth'});break;}}
 function renderInbox(){const pending=state.brokerInbox||[],conflicts=state.conflicts||[],archive=(state.archive||[]).filter(x=>!x.restoredAt);
  $('importInbox').innerHTML=`<div class="inbox-head"><strong>Import exceptions: ${pending.length} pending · ${conflicts.length} conflicting · ${archive.length} archived</strong><span>All retained in full JSON backup</span></div>`+
@@ -1534,6 +1703,7 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
 
 document.addEventListener('click',e=>{const tab=e.target.closest('[data-tab]');if(tab){switchTab(tab.dataset.tab);return;}const filter=e.target.closest('[data-filter]');if(filter){positionFilter=filter.dataset.filter;renderPositions(analytics());return;}const action=e.target.closest('[data-action]');if(action){runAction(action.dataset.action,action);}});
 $('editorDialog').addEventListener('click',e=>{if(e.target===$('editorDialog'))$('editorDialog').close();});
+initPositionAnalysis();
 $('accountSelect').addEventListener('change',e=>{activeAccountId=e.target.value;selectedPreviewId=null;expandedPlanId=null;quoteRefreshToken++;quoteRefreshBusy=false;tickerInputOrigins.clear();rememberAccount();render();});
 $('asOfDate').addEventListener('change',e=>{const d=e.target.value;if(parseDay(d)){asOfOverride=d;render();}else showToast('Enter a valid date.');});
 // Browser tabs share the latest sizing ideas. A change in another tab is not a trade.
