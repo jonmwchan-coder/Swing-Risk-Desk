@@ -1,7 +1,7 @@
 // Optional offline shell for the local-first risk calculator.
 // NEVER caches transaction data, FX API responses or private JSON imports.
-const CACHE = 'swing-risk-desk-shell-v3.18-selective-copy';
-const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/lib/risk.mjs', '/lib/calendar.mjs', '/lib/ibkr.mjs', '/lib/ledger.mjs', '/lib/planner.mjs','/lib/planner-contract.mjs','/lib/expiry-listings.mjs','/lib/chain-view.mjs','/lib/planner-workflows.mjs','/lib/option-preview.mjs', '/lib/planner-storage.mjs', '/lib/fees.mjs', '/lib/cloud.mjs', '/lib/trade-export.mjs', '/manifest.webmanifest', '/icons/icon.svg'];
+const CACHE = 'swing-risk-desk-shell-v3.19-position-analysis';
+const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/lib/risk.mjs', '/lib/calendar.mjs', '/lib/ibkr.mjs', '/lib/ledger.mjs', '/lib/planner.mjs','/lib/planner-contract.mjs','/lib/expiry-listings.mjs','/lib/chain-view.mjs','/lib/planner-workflows.mjs','/lib/option-preview.mjs', '/lib/position-analysis.mjs', '/lib/planner-storage.mjs', '/lib/fees.mjs', '/lib/cloud.mjs', '/lib/trade-export.mjs', '/manifest.webmanifest', '/icons/icon.svg'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)));
   self.skipWaiting();
