@@ -1,3 +1,9 @@
+## v3.21: Consistent currency display and open cost basis (2026-11-24)
+
+- Position average entry premium now displays two decimals in USD per share with the smaller CAD equivalent at selected portfolio FX. Weighted average calculations, execution prices and commission precision are unchanged. Market-value quote details and scale-in/merge previews use two-decimal average premiums as well.
+- Dashboard's former Open Premium at Cost label is now Open Cost Basis: sum of remaining acquisition debits including allocated buy commissions, not current market value or available risk. Main dashboard, position and Quick Size Check monetary summaries display USD first and smaller CAD equivalents. CAD-authored rolling risk and realized amounts are converted for display only, at the selected portfolio FX. Input fields and underlying contract identities retain their native currency, and historical execution data are unchanged.
+- Rollback: v3.20 commit `0754af9323f82dbea5f484fb78ff30d19451efcd`, deployment `dpl_CMM6sxYn71dJzMz3cjBFadroy3S1`. No data migration or changes to risk formulas.
+
 ## v3.20: Position metrics and single portfolio budget (2026-11-24)
 
 - Dashboard open-position cards and the detailed Positions & Partial Exits risk row use the same order: Open Cost Basis, Avg Entry Premium, Stress Risk, Planned Loss. Average entry is the existing weighted-average option premium in USD per share (excluding commissions); open cost basis includes allocated entry fees. Closed cards label the last attempt average rather than implying contracts remain open. Small screens wrap the four metrics into two rows.
