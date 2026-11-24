@@ -892,3 +892,10 @@ html,body{max-width:100%}
 .position-card .pos-data.pos-performance small,.position-card .pos-data.pos-risk-row small{overflow-wrap:anywhere;white-space:normal}
 .position-card .pos-data.pos-risk-row{margin-top:4px}
 @media(max-width:600px){.position-card .pos-data.pos-performance,.position-card .pos-data.pos-risk-row{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* v3.17: USD first, subdued CAD equivalent, without adding another position row. */
+.position-card .pos-data strong .pos-cad,.modal-summary .pos-cad{display:inline;font-size:.70em;font-weight:500;color:var(--muted,#9bb2b7);white-space:normal}
+.position-card .pos-data strong .pos-usd{white-space:nowrap}
+.position-card .pos-data .pos-market-value small{line-height:1.35}
+.position-card .pos-data .pos-data-label{overflow-wrap:anywhere}
+@media(max-width:600px){.position-card .pos-data strong .pos-usd{white-space:normal}}
