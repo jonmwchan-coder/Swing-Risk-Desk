@@ -57,6 +57,7 @@ let positionFilter='open';
 let asOfOverride=null;
 let toastTimer=null;
 let plannerPrefill=null;
+const positionQuotes=new Map();
 let selectedPreviewId=null;
 let optionPanelMode='analyze';
 let chainSide='Put';
@@ -243,12 +244,33 @@ function renderOverview(m){
   const runway=budgetRunway(state,m.account.id,asOf(),10);
   $('runwayChart').innerHTML=runway.map((r,i)=>{const h=m.budgetCad>0?Math.max(4,Math.min(100,100*Math.max(0,r.available)/m.budgetCad)):4;return `<div class="runway-item"><div class="runway-number ${r.available<0?'neg':''}">${money(r.available,0)}</div><div class="runway-bar-box"><div class="runway-bar ${r.available<0?'negative':''}" style="height:${h}%"></div></div><div class="runway-date">${i===0?'NOW':fmtDate(r.date)}</div></div>`;}).join('');
 }
+function quoteForPosition(p,z){
+ if(z.qty===0)return {value:0,detail:'No open contracts',refresh:false};
+ if(analytics().asOf!==onOrBeforeSession(today(),state.customClosed||[]))return {value:null,detail:'Historical view · no quote',refresh:false};
+ const symbol=buildOCCSymbol(draftContract(p)),q=positionQuotes.get(symbol);
+ if(!symbol||Number(p.multiplier||100)!==100||p.expiry<today())return {value:null,detail:'Quote unavailable',refresh:false};
+ return {value:q?.mid!=null?z.qty*Number(p.multiplier||100)*q.mid:null,detail:q?.loading?'Refreshing…':q?.error?'Quote unavailable · retry':q?.mid!=null?`Mid ${usd(q.mid,4)} · ${q.at?new Date(q.at).toLocaleString('en-CA',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZone:'America/Toronto'})+' ET':'time unknown'} · indicative`:'Refresh indicative quote',refresh:true};
+}
+async function refreshPositionQuote(id){
+ const p=findPosition(id),symbol=buildOCCSymbol(draftContract(p));
+ if(!symbol||positionQuotes.get(symbol)?.loading)return;
+ positionQuotes.set(symbol,{loading:true});render();
+ try{
+  const response=await fetch(`/api/option-quote?symbol=${encodeURIComponent(symbol)}`,{cache:'no-store'});
+  const data=await response.json().catch(()=>({}));
+  const bid=Number(data.optionBidUsd),ask=Number(data.optionAskUsd);
+  if(!response.ok||data.symbol!==symbol||data.optionBidUsd==null||data.optionAskUsd==null||!Number.isFinite(bid)||!Number.isFinite(ask)||bid<0||ask<=0||ask<bid)throw Error(data.error||'No valid indicative bid/ask');
+  positionQuotes.set(symbol,{mid:(bid+ask)/2,at:data.quoteAt&&Number.isFinite(Date.parse(data.quoteAt))?data.quoteAt:null});
+ }catch(err){positionQuotes.set(symbol,{error:true});showToast(String(err.message||'Quote unavailable').slice(0,180));}
+ render();
+}
 function positionCard(x,full){const p=x.position,z=x.metrics;const isOpen=z.qty>0;const days=p.expiry?Math.round((new Date(`${p.expiry}T12:00:00Z`)-new Date(`${analytics().asOf}T12:00:00Z`))/86400000):null;
  const fmt=days===null?'No expiry':days<0?`Expired ${-days}d ago`:days===0?'Expires today':`${days} calendar days to expiry`;
- const label=p.optionType==='Put'?'P':'C';const flag=!p.underlyingInvalidation?.trim();
+ const label=p.optionType==='Put'?'P':'C';const flag=!p.underlyingInvalidation?.trim();const quote=quoteForPosition(p,z);
  return `<article class="position-card" data-position="${esc(p.id)}">
   <div class="pos-top"><div><div class="pos-ticker">${esc(p.ticker)}</div><div class="pos-contract">${esc(p.expiry?fmtDate(p.expiry,true):'')} ${esc(p.strike||'?')}${label} <span style="color:#688e9a">/</span> ${esc(p.ideaId||'Single idea')}</div><div class="pos-meta">${esc(p.sector||'Sector not recorded')} &bull; ${esc(fmt)}</div></div><div class="pos-badge ${isOpen?'':'closed'}">${isOpen?`${z.qty} OPEN`:'CLOSED'}</div></div>
-  <div class="pos-data"><div><div class="pos-data-label">RISK RESERVE</div><strong>${money(z.reserveCad,0)}</strong><small>${z.hasFixed?'Reserve floor applied':`${z.reservePct}% stress / cap`}</small></div><div><div class="pos-data-label">REMAINING DEBIT</div><strong>${money(z.premiumCad,0)}</strong><small>CAD at current FX</small></div><div><div class="pos-data-label">PLANNED LOSS</div><strong>${z.planLoss===null?'Not set':money(z.planLoss,0)}</strong><small>${z.planLoss===null?'Add option exit est.':'Estimated at stop mark'}</small></div>${full?`<div><div class="pos-data-label">REALIZED NET</div><strong class="${z.realizedTotal<0?'neg':'pos'}">${money(z.realizedTotal,0)}</strong><small>Recorded exits to date</small></div><div><div class="pos-data-label">REALIZED RETURN</div><strong class="${z.realizedReturnPct===null?'':z.realizedReturnPct<0?'neg':'pos'}">${formattedReturn(z.realizedReturnPct)}</strong><small>Closed contracts · net of fees</small></div><div><div class="pos-data-label">STRESS RATE</div><strong>${z.reservePct}%</strong><small>${z.stressPct===account().stressPct?'Default or same':'Custom'}</small></div>`:''}</div>
+  <div class="pos-data pos-performance"><div><div class="pos-data-label">TOTAL ENTRY COST</div><strong>${usd(z.totalEntryDebitUsd)}</strong><small>Avg ${z.averageEntryUsd===null?'—':usd(z.averageEntryUsd,4)} / share · fees in total</small></div><div><div class="pos-data-label">MARKET VALUE</div><strong>${quote.value===null?'—':usd(quote.value)}</strong><small>${esc(quote.detail)} ${quote.refresh?`<button class="fee-reset-mini" type="button" data-action="refresh-position-quote" data-id="${esc(p.id)}" title="Refresh indicative option midpoint">Refresh</button>`:''}</small></div><div><div class="pos-data-label">REALIZED NET</div><strong class="${z.realizedTotal<0?'neg':'pos'}">${cad(z.realizedTotal)}</strong><small>Recorded exits to date</small></div><div><div class="pos-data-label">REALIZED RETURN</div><strong class="${z.realizedReturnPct===null?'':z.realizedReturnPct<0?'neg':'pos'}">${formattedReturn(z.realizedReturnPct)}</strong><small>Closed contracts · net of fees</small></div></div>
+  <div class="pos-data pos-risk-row"><div><div class="pos-data-label">RISK RESERVE</div><strong>${cad(z.reserveCad,0)}</strong><small>${z.hasFixed?'Reserve floor applied':`${z.reservePct}% stress / cap`}</small></div><div><div class="pos-data-label">REMAINING DEBIT</div><strong>${cad(z.premiumCad,0)}</strong><small>CAD at current FX</small></div><div><div class="pos-data-label">PLANNED LOSS</div><strong>${z.planLoss===null?'Not set':cad(z.planLoss,0)}</strong><small>${z.planLoss===null?'Add option exit est.':'Estimated at stop mark'}</small></div><div><div class="pos-data-label">STRESS RATE</div><strong>${z.reservePct}%</strong><small>${z.stressPct===account().stressPct?'Default or same':'Custom'}</small></div></div>
   <div class="pos-note"><span class="${flag?'warning':''}">${flag?'Needs an underlying invalidation / time stop':`Wrong if: ${esc(p.underlyingInvalidation).slice(0,125)}`}${p.targetLevels?`<br>Targets: ${esc(p.targetLevels).slice(0,200)}`:''}${p.thesis?`<br>Idea: ${esc(p.thesis).slice(0,160)}`:''}</span><span>${esc(p.reviewBy?`Review by ${fmtDate(p.reviewBy)}`:'')}</span></div>
   <div class="pos-actions">${isOpen?`<button type="button" class="btn-mini emph" data-action="close-position" data-id="${esc(p.id)}">Record exit</button><button type="button" class="btn-mini" data-action="add-fill" data-id="${esc(p.id)}">Add contracts</button>`:''}<button type="button" class="btn-mini" data-action="edit-position" data-id="${esc(p.id)}">Edit plan</button><button type="button" class="btn-mini" data-action="add-note" data-id="${esc(p.id)}">+ Journal note</button>${full?`<button type="button" class="btn-mini" data-action="export-trade" data-id="${esc(p.id)}" title="Download only this position for GPT master review">Export trade</button>`:''}${full?`<button type="button" class="btn-mini" data-action="see-transactions" data-id="${esc(p.id)}">Fills / corrections</button><button type="button" class="btn-mini" data-action="delete-position" data-id="${esc(p.id)}">Delete</button>`:''}</div>
   ${full?`<details class="pos-details" id="detail-${esc(p.id)}"><summary>Original record and transactions</summary><p class="help-line">Source: ${esc(p.source||'Manual entry')} &bull; Master ID: ${esc(p.externalId||'Not linked')}</p><div class="plan-details"><div><strong>Thesis</strong><p>${esc(p.thesis||'Not recorded')}</p></div><div><strong>Catalyst / why now</strong><p>${esc(p.catalyst||'Not recorded')} ${esc(p.entryReason||'')}</p></div><div><strong>Management</strong><p>${esc(p.managementPlan||'Not recorded')}</p></div><div><strong>Other notes</strong><p>${esc(p.notes||'Not recorded')}</p></div></div><div class="journal-timeline">${renderTimeline(p)}</div><div class="modal-transaction-list">${transactionList(p)}</div></details>`:''}</article>`;
@@ -1328,6 +1350,7 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'edit-exit':editExit(id,el.dataset.tx);break;
  case 'view-position':openPositionDetail(id);break;
  case 'add-fill':addFill(id);break;
+ case 'refresh-position-quote':void refreshPositionQuote(id);break;
  case 'close-recorded-idea':$('editorDialog').close();dropPlannerIdea(el.dataset.planId);break;
  case 'manual-pnl':manualPnl();break;
  case 'add-account':addAccount();break;
