@@ -500,13 +500,13 @@ function renderPlanner(m){
  }
  if(changed)persistPlannerDrafts();
  const sortedIdeas=sortPlanIdeas(ideas,planSortMode);
- const basket=calculatePlanBasket(sortedIdeas,m.account,m.availableCad);
+ const basket=calculatePlanBasket(sortedIdeas,m.account,m.availableCad,m.positions);
  const byId=new Map(basket.rows.map(x=>[x.id,x]));
  const fixedIdeaCap=activeIdeaCapCad(m.account);
  $('quickPlanner').innerHTML=sortedIdeas.map((idea,index)=>{
   const editing=expandedPlanId===idea.id,active=editing||selectedPreviewId===idea.id;
   const riskRow=byId.get(idea.id),overCap=Boolean(riskRow?.overIdeaCap);
-  const capOverCad=overCap?riskRow.reserveCad-fixedIdeaCap:0;
+  const capOverCad=overCap?riskRow.totalReserveCad-fixedIdeaCap:0;
   const symbol=normalizeTicker(idea.ticker)||'NEW TICKER',name=idea.name||'Untitled idea';
 
   const moneyOrDash=v=>String(v??'').trim()&&Number.isFinite(Number(v))&&Number(v)>0?money(Number(v)):'—';
@@ -515,14 +515,14 @@ function renderPlanner(m){
   const quoteTone=idea.quoteStatus==='unavailable'?'warning':idea.priceManual?'manual':idea.quoteStatus==='indicative'?'indicative':idea.quoteStatus==='saved'?'warning':'empty';
   return `<article class="draft-idea ${active?'is-active':''} ${editing?'is-expanded':'is-collapsed'} ${overCap?'is-over-idea-cap':''}" data-draft-id="${esc(idea.id)}">
     <div class="draft-head"><div class="draft-identity"><strong class="draft-ticker" data-idea-ticker>${esc(symbol)}</strong><span class="draft-idea-name" data-idea-name>${esc(name)}</span><span class="draft-contract-hero" data-idea-contract aria-label="Selected expiration and strike">${compactContractMarkup(idea)}</span><span data-listing-badge class="draft-listing-indicator">${listingBadge(idea)}</span></div>
-      <div class="draft-actions"><button type="button" class="draft-edit-btn" data-action="toggle-plan-details" data-plan-id="${esc(idea.id)}" aria-expanded="${editing}">${editing?'Done':'Edit'}</button><button type="button" class="draft-preview-btn" data-action="analyze-idea" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id&&optionPanelMode==='analyze'}">${selectedPreviewId===idea.id&&optionPanelMode==='analyze'?'Hide %':'Analyze %'}</button><button type="button" class="draft-chain-btn" data-action="view-option-chain" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id&&optionPanelMode==='chain'}" title="Compare call and put volume, open interest and indicative quotes for this expiration">${selectedPreviewId===idea.id&&optionPanelMode==='chain'?'Hide chain':'View chain'}</button><button type="button" class="draft-record" data-action="plan-to-position" data-plan-id="${esc(idea.id)}">Record</button><button type="button" class="draft-remove" data-action="remove-plan-idea" data-plan-id="${esc(idea.id)}" aria-label="Remove ${esc(symbol)} ${esc(name)}">×</button></div></div>
-    <div class="draft-compact-line"><span class="draft-mini-field">Qty <strong data-idea-qty>${esc(idea.qty||'—')}</strong></span><span class="draft-mini-field">Premium <strong data-idea-premium>${esc(premium)}</strong><small>/share</small></span><span class="draft-mini-quote" data-tone="${quoteTone}" data-idea-quote>${idea.quoteStatus==='loading'?'<span class="mini-spin" aria-hidden="true"></span> ':''}${esc(quote)}</span></div>
-    <div class="draft-cap-alert" data-cap-warning="${esc(idea.id)}" role="status" ${overCap?'':'hidden'}>${overCap?`<strong>ABOVE FIXED IDEA CAP · +${cad(capOverCad)}</strong><span>This idea uses ${cad(riskRow.reserveCad)} vs your ${cad(fixedIdeaCap)} guide. Rolling pool is separate.</span><button type="button" data-action="focus-cap-policy" title="Review your fixed versus flexible risk allocation">Review policy</button>`:''}</div>
+      <div class="draft-actions"><button type="button" class="draft-edit-btn" data-action="toggle-plan-details" data-plan-id="${esc(idea.id)}" aria-expanded="${editing}">${editing?'Done':'Edit'}</button><button type="button" class="draft-preview-btn" data-action="analyze-idea" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id&&optionPanelMode==='analyze'}">${selectedPreviewId===idea.id&&optionPanelMode==='analyze'?'Hide %':'Analyze %'}</button><button type="button" class="draft-chain-btn" data-action="view-option-chain" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id&&optionPanelMode==='chain'}" title="Compare call and put volume, open interest and indicative quotes for this expiration">${selectedPreviewId===idea.id&&optionPanelMode==='chain'?'Hide chain':'View chain'}</button><button type="button" class="draft-record" data-action="plan-to-position" data-plan-id="${esc(idea.id)}" ${riskRow?.valid&&riskRow.qty>0&&draftContract(idea)?'':'disabled'}>${riskRow?.existingQty?'Record add':'Record'}</button><button type="button" class="draft-remove" data-action="remove-plan-idea" data-plan-id="${esc(idea.id)}" aria-label="Remove ${esc(symbol)} ${esc(name)}">×</button></div></div>
+    <div class="draft-compact-line"><span class="draft-mini-field"><strong data-idea-held></strong> Add <strong data-idea-qty>${esc(idea.qty||'—')}</strong></span><span class="draft-mini-field">Premium <strong data-idea-premium>${esc(premium)}</strong><small>/share</small></span><span class="draft-mini-quote" data-tone="${quoteTone}" data-idea-quote>${idea.quoteStatus==='loading'?'<span class="mini-spin" aria-hidden="true"></span> ':''}${esc(quote)}</span></div>
+    <div class="draft-cap-alert" data-cap-warning="${esc(idea.id)}" role="status" ${overCap?'':'hidden'}>${overCap?`<strong>ABOVE FIXED IDEA CAP · +${cad(capOverCad)}</strong><span>Combined position uses ${cad(riskRow.totalReserveCad)} vs your ${cad(fixedIdeaCap)} guide. Rolling pool is separate.</span><button type="button" data-action="focus-cap-policy" title="Review your fixed versus flexible risk allocation">Review policy</button>`:''}</div>
     ${editing?`<div class="draft-editor"><div class="draft-editor-heading"><strong>Contract setup</strong><span>Independent contract and assumptions per idea</span></div>
       <label class="draft-name-field"><span>IDEA NAME</span><input type="text" name="name" maxlength="80" value="${esc(idea.name||'')}" placeholder="Breakout continuation"></label>
       <div class="draft-contract-fields"><label><span>TICKER</span><input type="text" name="ticker" maxlength="12" value="${esc(idea.ticker||'')}" placeholder="IREN" autocomplete="off" spellcheck="false"></label><label><span>TYPE</span><select name="optionType"><option value="Call" ${idea.optionType!=='Put'?'selected':''}>Call</option><option value="Put" ${idea.optionType==='Put'?'selected':''}>Put</option></select></label>${expirationField(idea)}<label><span>STRIKE (USD)</span><input type="number" name="strike" min="0.001" step="0.001" value="${esc(idea.strike||'')}" placeholder="Choose in chain"></label></div>
       <div class="draft-editor-heading draft-editor-pricing"><strong>Entry &amp; risk</strong><span>Typing premium = manual override</span></div>
-      <div class="draft-fields"><label><span>QTY</span><input type="number" inputmode="numeric" name="qty" min="1" step="1" value="${esc(idea.qty)}" aria-label="Idea ${index+1} contract quantity"></label><label><span>BUY PREMIUM (USD/SHARE)</span><input type="number" inputmode="decimal" name="price" min="0.01" step="0.0001" value="${esc(idea.price)}" aria-label="Idea ${index+1} price per share in USD"></label><label><span>BUY FEES (USD) <button class="fee-reset-mini" type="button" data-action="reset-draft-fee" data-plan-id="${esc(idea.id)}">Auto</button></span><input type="number" inputmode="decimal" name="fee" min="0" step="0.01" value="${esc(idea.fee)}" aria-label="Idea ${index+1} total entry commissions in USD"></label><label><span>EST. LOSS %</span><input type="number" inputmode="numeric" name="stress" min="0" max="100" step="1" value="${esc(idea.stress)}" aria-label="Idea ${index+1} stress loss percent"></label></div></div>`:''}
+      <div class="draft-fields"><label><span>ADDITIONAL QTY</span><input type="number" inputmode="numeric" name="qty" min="0" step="1" value="${esc(idea.qty)}" aria-label="Idea ${index+1} contract quantity"></label><label><span>BUY PREMIUM (USD/SHARE)</span><input type="number" inputmode="decimal" name="price" min="0.01" step="0.0001" value="${esc(idea.price)}" aria-label="Idea ${index+1} price per share in USD"></label><label><span>BUY FEES (USD) <button class="fee-reset-mini" type="button" data-action="reset-draft-fee" data-plan-id="${esc(idea.id)}">Auto</button></span><input type="number" inputmode="decimal" name="fee" min="0" step="0.01" value="${esc(idea.fee)}" aria-label="Idea ${index+1} total entry commissions in USD"></label><label><span>EST. LOSS %</span><input type="number" inputmode="numeric" name="stress" min="0" max="100" step="1" value="${esc(riskRow?.positionId?riskRow.stress??idea.stress:idea.stress)}" ${riskRow?.positionId?'disabled title="Uses existing position stress; edit the position plan to change it"':''} aria-label="Idea ${index+1} stress loss percent"></label></div></div>`:''}
     <div class="draft-metrics" data-plan-status="${esc(idea.id)}"></div>
     <details class="draft-quote-detail"><summary>Quote details</summary><div class="draft-quote-body"><div><span>Source</span><strong>${esc(p.quoteSource||'Not requested')}</strong></div><div><span>Bid / ask</span><strong>${esc(moneyOrDash(p.bid))} / ${esc(moneyOrDash(p.ask))}</strong></div><div><span>Midpoint</span><strong>${esc(mid)}</strong></div><div><span>Quote time (UTC)</span><strong>${esc(p.quoteAt||'Not available')}</strong></div><p>${esc(idea.quoteMessage||'Select a contract to request a quote.')}</p><small>Indicative Alpaca Basic, not executable OPRA quotes. Verify your broker quote.</small></div></details>
    </article>`;
@@ -533,35 +533,40 @@ function renderPlanner(m){
  updatePlannerMetrics(m);renderOptionPreview();
 }
 function updatePlannerMetrics(m){
- const ideas=sortPlanIdeas(plannerIdeas(m.account.id),planSortMode);const result=calculatePlanBasket(ideas,m.account,m.availableCad);
+ const ideas=sortPlanIdeas(plannerIdeas(m.account.id),planSortMode);const result=calculatePlanBasket(ideas,m.account,m.availableCad,m.positions);
  const activeCap=activeIdeaCapCad(m.account);
  for(const r of result.rows){const el=[...document.querySelectorAll('[data-plan-status]')].find(x=>x.dataset.planStatus===r.id);if(!el)continue;
+   const card=el.closest?.('.draft-idea'),idea=ideas.find(i=>i.id===r.id);
+   const held=card?.querySelector('[data-idea-held]'),record=card?.querySelector('[data-action="plan-to-position"]'),stressInput=card?.querySelector('[name="stress"]');
+   if(held)held.textContent=r.existingQty?`${r.existingQty} held${r.valid?` / ${r.existingQty+r.qty} planned ·`:' ·'}`:'';
+   if(record){record.disabled=!r.valid||!r.qty||!draftContract(idea);record.textContent=r.existingQty?'Record add':'Record';}
+   if(stressInput){stressInput.disabled=!!r.positionId;if(r.positionId&&r.stress!=null)stressInput.value=String(r.stress);else if(document.activeElement!==stressInput)stressInput.value=idea.stress;}
   const warnEl=[...document.querySelectorAll('[data-cap-warning]')].find(x=>x.dataset.capWarning===r.id);
   if(warnEl){
    warnEl.hidden=!r.valid||!r.overIdeaCap;
-   const overCad=r.valid&&r.overIdeaCap?r.reserveCad-activeCap:0;
-   if(!warnEl.hidden)warnEl.innerHTML=`<strong>ABOVE FIXED IDEA CAP · +${cad(overCad)}</strong><span>This idea uses ${cad(r.reserveCad)} vs your ${cad(activeCap)} guide. Rolling pool is separate.</span><button type="button" data-action="focus-cap-policy">Review policy</button>`;
+   const overCad=r.valid&&r.overIdeaCap?r.totalReserveCad-activeCap:0;
+   if(!warnEl.hidden)warnEl.innerHTML=`<strong>ABOVE FIXED IDEA CAP · +${cad(overCad)}</strong><span>Combined position uses ${cad(r.totalReserveCad)} vs your ${cad(activeCap)} guide. Rolling pool is separate.</span><button type="button" data-action="focus-cap-policy">Review policy</button>`;
    warnEl.closest?.('.draft-idea')?.classList?.toggle('is-over-idea-cap',!warnEl.hidden);
   }
   if(!r.valid){el.className='draft-metrics draft-incomplete';el.textContent=r.reason;continue;}
-  const warning=r.overIdeaCap?`<small class="draft-cap-warning">Fixed guide exceeded by ${cad(r.reserveCad-activeCap)} (limit ${cad(activeCap)})</small>`:'';
+  const warning=r.overIdeaCap?`<small class="draft-cap-warning">Fixed guide exceeded by ${cad(r.totalReserveCad-activeCap)} (limit ${cad(activeCap)})</small>`:'';
   el.className=`draft-metrics ${r.overBudget?'draft-breach':''}`;
   el.innerHTML=`<div class="draft-metric draft-premium-total"><span>Option premiums (USD)</span><strong>${usd(r.premiumTotalUsd)}</strong><small>${r.qty} contracts × ${usd(r.price)} per share × 100</small></div>
     <div class="draft-metric"><span>Estimated buy fees (USD)</span><strong>${usd(r.fee)}</strong><small>Additional to option premiums · estimated entry fees</small></div>
-    <div class="draft-metric"><span>5-day risk budget used (CAD)</span><strong>${cad(r.reserveCad)}</strong><small>${m.account.mode==='strict'?'100% of estimated buy cost':`${r.stress}% assumed loss`} · not cash paid to IBKR</small>${warning}</div>
-    <div class="draft-metric"><span>Remaining Risk Budget (CAD)</span><strong>${cad(r.remainingCad)}</strong><small>After this and preceding draft ideas</small></div>`;
+    <div class="draft-metric"><span>Additional risk (CAD)</span><strong>${cad(r.reserveCad)}</strong><small>${r.existingQty?`Held ${cad(r.existingReserveCad)} → combined ${cad(r.totalReserveCad)}`:m.account.mode==='strict'?'100% of estimated buy cost':`${r.stress}% assumed loss`}</small>${warning}</div>
+    <div class="draft-metric"><span>Remaining Risk Budget (CAD)</span><strong>${cad(r.remainingCad)}</strong><small>After open positions, rolling losses and preceding drafts</small></div>`;
  }
 
  const capMode=$('plannerCapMode'),capHelp=$('plannerCapPolicyHelp');
  if(capMode)capMode.value=activeCap===null?'pool':'fixed';
  if(capHelp)capHelp.textContent=activeCap===null
   ?`Flexible: share ${cad(Math.max(0,result.availableCad))} currently available across one or several ideas. No individual cap warning; the combined rolling budget still applies. ${m.account.mode==='strict'?'Strict mode reserves the full option debit.':'Stress-loss reserves are estimates, not worst-case losses; an option can lose its full debit.'}`
-  :`Fixed: each idea is compared with ${cad(activeCap)}. A warning is advisory; the combined rolling risk ceiling still applies.`;
+  :`Fixed: each combined position or new idea is compared with ${cad(activeCap)}. A warning is advisory; the combined rolling risk ceiling still applies.`;
  const flags=$('plannerCapFlagSummary'),offenders=result.rows.filter(r=>r.valid&&r.overIdeaCap);
  if(flags){
   flags.hidden=!offenders.length;
   flags.innerHTML=offenders.length?`<strong>${offenders.length} idea${offenders.length===1?'':'s'} above your ${cad(activeCap)} fixed guide:</strong>
-    <div class="planner-cap-offenders">${offenders.map(r=>{const idea=ideas.find(i=>i.id===r.id);const name=[normalizeTicker(idea?.ticker)||'UNTITLED',idea?.name].filter(Boolean).join(' · ');return `<button type="button" data-action="jump-to-cap-idea" data-plan-id="${esc(r.id)}">${esc(name)} · +${cad(r.reserveCad-activeCap)} over <span>Review idea</span></button>`;}).join('')}</div>
+    <div class="planner-cap-offenders">${offenders.map(r=>{const idea=ideas.find(i=>i.id===r.id);const name=[normalizeTicker(idea?.ticker)||'UNTITLED',idea?.name].filter(Boolean).join(' · ');return `<button type="button" data-action="jump-to-cap-idea" data-plan-id="${esc(r.id)}">${esc(name)} · +${cad(r.totalReserveCad-activeCap)} over <span>Review idea</span></button>`;}).join('')}</div>
     <small>Use the risk policy selector to switch to Flexible rolling pool if you're intentionally concentrating risk. This does not increase the rolling ceiling.</small>`:''; 
  }
  const strip=$('plannerSummaryStrip');
@@ -577,7 +582,7 @@ function updatePlannerMetrics(m){
   <div class="result-line"><span>Combined option premiums · qty × price × 100 (USD)</span><strong>${usd(result.plannedPremiumUsd)}</strong></div>
   <div class="result-line"><span>Combined estimated buy fees (USD)</span><strong>${usd(result.plannedBuyFeesUsd)}</strong></div>
   <div class="result-line planner-purchase-total"><span>Total cash to buy all ideas · premiums + fees (USD)</span><strong>${usd(result.plannedDebitUsd)}</strong></div>
-  <div class="result-line"><span>5-day risk budget used by these ideas (CAD)</span><strong>${cad(result.plannedReserveCad)}</strong></div>
+  <div class="result-line"><span>Additional risk from unrecorded ideas (CAD)</span><strong>${cad(result.plannedReserveCad)}</strong></div>
   <div class="result-line result-main ${result.overBudget?'negative':''}"><span>5-day risk budget left after all ideas (CAD)</span><strong>${cad(result.remainingCad)}</strong></div>
   <div class="result-line"><span>${!result.complete?'Enter USD premiums for remaining drafts':result.overBudget?'Combined draft entries breach your CAD rolling risk limit':result.overIdeaCap?'Combined CAD budget fits; check per-idea CAD risk caps':'All priced drafts fit the CAD rolling risk budget'}</span><strong class="${result.overBudget?'neg':result.complete&&!result.overIdeaCap?'pos':'risk-warning'}">${result.overBudget?'OVER BUDGET':!result.complete?'INCOMPLETE':result.overIdeaCap?'CAP REVIEW':'FITS'}</strong></div>
   <div class="planner-fx-note">FX used for estimated CAD risk: 1 USD = ${Number(m.account.fx).toFixed(4)} CAD (portfolio setting).</div>`;
