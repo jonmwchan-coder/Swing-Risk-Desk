@@ -924,3 +924,12 @@ html,body{max-width:100%}
 .position-analysis-footer small{color:#9fb6cc}
 .position-analysis-body [data-pa-status]{color:#a9bfcd;line-height:1.5}
 @media(max-width:690px){.position-analysis-dialog{width:calc(100% - 12px);max-height:calc(100% - 12px)}.position-analysis-body .preview-inputs{grid-template-columns:repeat(2,minmax(0,1fr))}.position-analysis-select select{flex-basis:100%}}
+
+/* v3.20: consistent position metrics, budget once per portfolio. */
+#dashboardPositions .pos-data.pos-risk-row{grid-template-columns:repeat(4,minmax(0,1fr));max-width:none}
+#dashboardPositions .pos-data.pos-risk-row strong{font-size:clamp(13px,1.4vw,18px)}
+.positions-budget-summary{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px 18px;margin:0 0 14px;padding:12px 16px;border:1px solid #2c4855;border-radius:12px;background:#10232d}
+.positions-budget-summary strong{display:block;margin-top:3px;font-size:21px;font-variant-numeric:tabular-nums}
+.positions-budget-summary .pos-cad{font-size:.72em;color:#9bb2b7;font-weight:500}
+.positions-budget-summary>small{color:#8eacb8;font-size:11px}
+@media(max-width:690px){#dashboardPositions .pos-data.pos-risk-row{grid-template-columns:repeat(2,minmax(0,1fr))}.positions-budget-summary{padding:10px 12px}.positions-budget-summary strong{font-size:19px}}
