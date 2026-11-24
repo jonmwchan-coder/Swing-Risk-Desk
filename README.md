@@ -1,3 +1,9 @@
+## v3.20: Position metrics and single portfolio budget (2026-11-24)
+
+- Dashboard open-position cards and the detailed Positions & Partial Exits risk row use the same order: Open Cost Basis, Avg Entry Premium, Stress Risk, Planned Loss. Average entry is the existing weighted-average option premium in USD per share (excluding commissions); open cost basis includes allocated entry fees. Closed cards label the last attempt average rather than implying contracts remain open. Small screens wrap the four metrics into two rows.
+- The detailed performance row retains total entry cost, market value, realized net and realized return. Rolling $ Budget Remaining is shown once above the Positions list for the selected portfolio and date, including with no matching positions; it does not change with open/closed/all filters.
+- No changes to risk formulas, position history, recorded fills, or scenario analysis. Rollback: v3.19 commit `a17cb464226b8ea1bd70036c0a133e83fc8e0bf5`, deployment `dpl_FnQivxPXgBvXAynA1g8JX4ryCNRu`. Code-only rollback; no data migration needed.
+
 ## v3.19: Position Analyze % and entry-time scenario history
 
 - **Analyze %** is available on dashboard swing positions and Positions & Partial Exits, including closed positions. The current view reuses the same scenario pricing model, with actual remaining quantity, weighted entry premium, allocated buy fees and estimated sell fees. It requests a new indicative quote automatically. Missing bid/ask uses an explicitly unanchored theoretical value, not the historical entry premium as today's value.

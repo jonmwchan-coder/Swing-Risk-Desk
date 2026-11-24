@@ -89,3 +89,12 @@ assert.match(getElementById('dashboardPositions').innerHTML,/data-action="analyz
 assert.match(getElementById('positionsFull').innerHTML,/data-action="analyze-position"/);
 assert.match(html,/id="positionAnalysisDialog"/);
 assert.match(html,/id="positionAnalysisBody"/);
+
+// v3.20: both position views share the same open cost/entry/stress/loss order.
+for(const id of ['dashboardPositions','positionsFull']){
+ const card=getElementById(id).innerHTML;
+ assert.match(card,/OPEN COST BASIS[\s\S]*AVG ENTRY PREMIUM[\s\S]*STRESS RISK[\s\S]*PLANNED LOSS/);
+ assert.doesNotMatch(card,/\$ BUDGET REMAINING/);
+}
+assert.match(getElementById('positionsBudget').innerHTML,/\$ BUDGET REMAINING/);
+assert.match(html,/id="positionsBudget"/);
