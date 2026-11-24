@@ -83,14 +83,7 @@
           <div id="plannerCapFlagSummary" class="planner-cap-flag-summary" aria-live="polite" hidden></div>
           <div class="draft-toolbar">
             <div class="draft-sort-bar"><label for="planSortSelect">SORT IDEAS</label><select id="planSortSelect" aria-label="Sort saved ideas"><option value="created">Original order</option><option value="ticker">Ticker A-Z</option><option value="name">Idea name A-Z</option><option value="expiry">Expiration earliest first</option></select></div>
-            <div class="draft-add-bar"><button type="button" class="btn btn-outline draft-add-btn" data-action="add-plan-idea">+ Add idea</button><button type="button" class="draft-collapse-all" data-action="collapse-plan-ideas">Collapse all</button><span id="planIdeaCount" class="draft-count"></span><button type="button" class="draft-copy-btn" data-action="toggle-planner-copy" title="Copy these hypothetical sizing ideas to another existing portfolio; does not record a trade">Copy to portfolio…</button><button type="button" class="draft-clear-btn" data-action="clear-plan-ideas" title="Remove only this portfolio's saved hypothetical sizing ideas">Clear ideas</button></div>
-          </div>
-          <div id="plannerCopyPanel" class="planner-copy-panel" hidden aria-label="Copy Quick Size Check ideas to another portfolio">
-            <div class="planner-copy-title"><strong>Copy saved sizing ideas</strong><small>Drafts only — no trades, account balances, or recorded positions.</small></div>
-            <label for="plannerCopyTarget"><span>DESTINATION PORTFOLIO</span><select id="plannerCopyTarget" aria-label="Select destination portfolio"></select></label>
-            <button type="button" id="plannerCopyConfirm" class="btn btn-subtle" data-action="confirm-planner-copy">Copy ideas</button>
-            <button type="button" class="draft-copy-cancel" data-action="cancel-planner-copy">Cancel</button>
-            <p id="plannerCopyHint" class="planner-copy-hint" aria-live="polite"></p>
+            <div class="draft-add-bar"><button type="button" class="btn btn-outline draft-add-btn" data-action="add-plan-idea">+ Add idea</button><button type="button" class="draft-collapse-all" data-action="collapse-plan-ideas">Collapse all</button><span id="planIdeaCount" class="draft-count"></span><button type="button" class="draft-clear-btn" data-action="clear-plan-ideas" title="Remove only this portfolio's saved hypothetical sizing ideas">Clear ideas</button></div>
           </div>
           <div id="quickPlanner" class="draft-ideas" role="group" aria-label="Saved, individually expandable planned option entries"></div>
           <div class="draft-saved-status" id="plannerSavedStatus" aria-live="polite">Auto-saved on this device</div>
