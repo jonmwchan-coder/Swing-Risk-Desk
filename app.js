@@ -1,6 +1,6 @@
 import {calculateAccount,calculatePosition,simulateExit,budgetRunway,lossReleases,round2,roundUp} from './lib/risk.mjs';
 import {isSession,torontoToday,onOrBeforeSession,parseDay,dayOffset} from './lib/calendar.mjs';
-import {SCHEMA,normalizeLedger,importIbkrTrades,mergeFullBackup,makeJournalEntry,recordPlanEdit,backupSnapshot} from './lib/ledger.mjs';
+import {SCHEMA,normalizeLedger,importIbkrTrades,mergeFullBackup,makeJournalEntry,recordPlanEdit,backupSnapshot,planOpenPositionMerge} from './lib/ledger.mjs';
 import {isIbkrCsv,parseIbkrTrades} from './lib/ibkr.mjs';
 import {createCloudController} from './lib/cloud.mjs';
 import {calculatePlanBasket,defaultPlanIdea,parsePlannedContract,MAX_PLAN_IDEAS,activeIdeaCapCad,openContractMatches,remainingDraftQuantity} from './lib/planner.mjs';
@@ -266,13 +266,13 @@ async function refreshPositionQuote(id){
 }
 function positionCard(x,full){const p=x.position,z=x.metrics;const isOpen=z.qty>0;const days=p.expiry?Math.round((new Date(`${p.expiry}T12:00:00Z`)-new Date(`${analytics().asOf}T12:00:00Z`))/86400000):null;
  const fmt=days===null?'No expiry':days<0?`Expired ${-days}d ago`:days===0?'Expires today':`${days} calendar days to expiry`;
- const label=p.optionType==='Put'?'P':'C';const flag=!p.underlyingInvalidation?.trim();const quote=quoteForPosition(p,z);
+ const label=p.optionType==='Put'?'P':'C';const flag=!p.underlyingInvalidation?.trim();const quote=quoteForPosition(p,z);const duplicates=isOpen&&analytics().asOf===onOrBeforeSession(today(),state.customClosed||[])?openContractMatches(p,analytics().positions,p.accountId).length:0;
  return `<article class="position-card" data-position="${esc(p.id)}">
   <div class="pos-top"><div><div class="pos-ticker">${esc(p.ticker)}</div><div class="pos-contract">${esc(p.expiry?fmtDate(p.expiry,true):'')} ${esc(p.strike||'?')}${label} <span style="color:#688e9a">/</span> ${esc(p.ideaId||'Single idea')}</div><div class="pos-meta">${esc(p.sector||'Sector not recorded')} &bull; ${esc(fmt)}</div></div><div class="pos-badge ${isOpen?'':'closed'}">${isOpen?`${z.qty} OPEN`:'CLOSED'}</div></div>
   <div class="pos-data pos-performance"><div><div class="pos-data-label">TOTAL ENTRY COST</div><strong>${usd(z.totalEntryDebitUsd)}</strong><small>Avg ${z.averageEntryUsd===null?'—':usd(z.averageEntryUsd,4)} / share · fees in total</small></div><div><div class="pos-data-label">MARKET VALUE</div><strong>${quote.value===null?'—':usd(quote.value)}</strong><small>${esc(quote.detail)} ${quote.refresh?`<button class="fee-reset-mini" type="button" data-action="refresh-position-quote" data-id="${esc(p.id)}" title="Refresh indicative option midpoint">Refresh</button>`:''}</small></div><div><div class="pos-data-label">REALIZED NET</div><strong class="${z.realizedTotal<0?'neg':'pos'}">${cad(z.realizedTotal)}</strong><small>Recorded exits to date</small></div><div><div class="pos-data-label">REALIZED RETURN</div><strong class="${z.realizedReturnPct===null?'':z.realizedReturnPct<0?'neg':'pos'}">${formattedReturn(z.realizedReturnPct)}</strong><small>Closed contracts · net of fees</small></div></div>
   <div class="pos-data pos-risk-row"><div><div class="pos-data-label">RISK RESERVE</div><strong>${cad(z.reserveCad,0)}</strong><small>${z.hasFixed?'Reserve floor applied':`${z.reservePct}% stress / cap`}</small></div><div><div class="pos-data-label">REMAINING DEBIT</div><strong>${cad(z.premiumCad,0)}</strong><small>CAD at current FX</small></div><div><div class="pos-data-label">PLANNED LOSS</div><strong>${z.planLoss===null?'Not set':cad(z.planLoss,0)}</strong><small>${z.planLoss===null?'Add option exit est.':'Estimated at stop mark'}</small></div><div><div class="pos-data-label">STRESS RATE</div><strong>${z.reservePct}%</strong><small>${z.stressPct===account().stressPct?'Default or same':'Custom'}</small></div></div>
   <div class="pos-note"><span class="${flag?'warning':''}">${flag?'Needs an underlying invalidation / time stop':`Wrong if: ${esc(p.underlyingInvalidation).slice(0,125)}`}${p.targetLevels?`<br>Targets: ${esc(p.targetLevels).slice(0,200)}`:''}${p.thesis?`<br>Idea: ${esc(p.thesis).slice(0,160)}`:''}</span><span>${esc(p.reviewBy?`Review by ${fmtDate(p.reviewBy)}`:'')}</span></div>
-  <div class="pos-actions">${isOpen?`<button type="button" class="btn-mini emph" data-action="close-position" data-id="${esc(p.id)}">Record exit</button><button type="button" class="btn-mini" data-action="add-fill" data-id="${esc(p.id)}">Add contracts</button>`:''}<button type="button" class="btn-mini" data-action="edit-position" data-id="${esc(p.id)}">Edit plan</button><button type="button" class="btn-mini" data-action="add-note" data-id="${esc(p.id)}">+ Journal note</button>${full?`<button type="button" class="btn-mini" data-action="export-trade" data-id="${esc(p.id)}" title="Download only this position for GPT master review">Export trade</button>`:''}${full?`<button type="button" class="btn-mini" data-action="see-transactions" data-id="${esc(p.id)}">Fills / corrections</button><button type="button" class="btn-mini" data-action="delete-position" data-id="${esc(p.id)}">Delete</button>`:''}</div>
+  <div class="pos-actions">${isOpen?`<button type="button" class="btn-mini emph" data-action="close-position" data-id="${esc(p.id)}">Record exit</button><button type="button" class="btn-mini" data-action="add-fill" data-id="${esc(p.id)}">Add contracts</button>${duplicates>1?`<button type="button" class="btn-mini" data-action="merge-positions" data-id="${esc(p.id)}" title="Review matching open positions before merging">Merge duplicates (${duplicates})</button>`:''}`:''}<button type="button" class="btn-mini" data-action="edit-position" data-id="${esc(p.id)}">Edit plan</button><button type="button" class="btn-mini" data-action="add-note" data-id="${esc(p.id)}">+ Journal note</button>${full?`<button type="button" class="btn-mini" data-action="export-trade" data-id="${esc(p.id)}" title="Download only this position for GPT master review">Export trade</button>`:''}${full?`<button type="button" class="btn-mini" data-action="see-transactions" data-id="${esc(p.id)}">Fills / corrections</button><button type="button" class="btn-mini" data-action="delete-position" data-id="${esc(p.id)}">Delete</button>`:''}</div>
   ${full?`<details class="pos-details" id="detail-${esc(p.id)}"><summary>Original record and transactions</summary><p class="help-line">Source: ${esc(p.source||'Manual entry')} &bull; Master ID: ${esc(p.externalId||'Not linked')}</p><div class="plan-details"><div><strong>Thesis</strong><p>${esc(p.thesis||'Not recorded')}</p></div><div><strong>Catalyst / why now</strong><p>${esc(p.catalyst||'Not recorded')} ${esc(p.entryReason||'')}</p></div><div><strong>Management</strong><p>${esc(p.managementPlan||'Not recorded')}</p></div><div><strong>Other notes</strong><p>${esc(p.notes||'Not recorded')}</p></div></div><div class="journal-timeline">${renderTimeline(p)}</div><div class="modal-transaction-list">${transactionList(p)}</div></details>`:''}</article>`;
 }
 function renderTimeline(p){
@@ -1008,6 +1008,7 @@ function fillTarget(contract,a){
  return matches[0]?.position||null;
 }
 function addToExisting(p,a,fill){
+ const live=state.positions.find(x=>x.id===p.id&&x.accountId===a.id);if(!live||draftContractKey(live)!==draftContractKey(p))throw Error('Position changed; reopen the recording dialog.');p=live;
  const before=analytics(),current=calculatePosition(p,a,before.asOf),latest=calculatePosition(p,a,'9999-12-31');
  if(!current.qty||!latest.qty||current.issues.length||latest.issues.length)throw Error('Position is closed or has execution conflicts. Reconcile in Positions.');
  if(fill.date>p.expiry)throw Error('Entry cannot be after expiry.');
@@ -1162,7 +1163,7 @@ function renderInbox(){const pending=state.brokerInbox||[],conflicts=state.confl
  $('importInbox').innerHTML=`<div class="inbox-head"><strong>Import exceptions: ${pending.length} pending · ${conflicts.length} conflicting · ${archive.length} archived</strong><span>All retained in full JSON backup</span></div>`+
  (pending.length?`<details class="issue-details"><summary>Review ${pending.length} unreconciled IBKR row(s)</summary>${pending.slice(-50).map(x=>`<div class="issue-row"><strong>${esc(x.ticker)} ${esc(x.tradeDate)}</strong> ${esc(x.side)}: ${esc(x.reason)}<div class="history-subnote">${esc(x.raw?.Symbol||'')} / ${esc(x.raw?.['Date/Time']||'')}</div></div>`).join('')}</details>`:'')+
  (conflicts.length?`<details class="issue-details"><summary>Review ${conflicts.length} saved conflict(s)</summary>${conflicts.slice(-50).map(x=>`<div class="issue-row">${esc(x.reason||x.kind||'Import conflict')}<div class="history-subnote">${esc(x.positionId||'')}</div></div>`).join('')}</details>`:'')+
- (archive.length?`<details class="issue-details"><summary>Archived corrections (${archive.length})</summary>${archive.slice(-50).reverse().map(x=>`<div class="issue-row">${esc(x.kind||'record')} · ${esc(x.date)} · ${esc(x.label||'')} <button class="tiny-btn" type="button" data-action="restore-archive" data-id="${esc(x.id)}">Restore</button></div>`).join('')}</details>`:'');
+ (archive.length?`<details class="issue-details"><summary>Archived corrections (${archive.length})</summary>${archive.slice(-50).reverse().map(x=>`<div class="issue-row">${esc(x.kind||'record')} · ${esc(x.date)} · ${esc(x.label||'')} ${x.kind==='position-merge'||x.mergedIntoPositionId?'<small>Merge audit · backup only</small>':`<button class="tiny-btn" type="button" data-action="restore-archive" data-id="${esc(x.id)}">Restore</button>`}</div>`).join('')}</details>`:'');
 }
 function manualPnl(){const now=analytics().asOf;const body=`<p class="modal-intro">For a previously closed trade whose executions are not imported. Enter a signed <strong>NET CAD result</strong>: negative for loss, positive for profit. This is not a new position.</p><form><div class="modal-grid">${field('TRADE DATE','date','date',now,{required:'required'})}${field('REALIZED NET CAD (+/-)','pnlCad','number','',{required:'required',step:.01})}<label class="span-2"><span>LABEL / SOURCE</span><input name="note" type="text" placeholder="e.g. historical AXP runner loss" maxlength="120" required></label></div>${formEnd('Record realized result')}</form>`;
  dialog('Record prior realized P/L','HISTORICAL ADJUSTMENT',body,(d)=>{const date=requireDate(getText(d,'date'),'trade date');validateSession(date);validateAsOf(date);const pnlCad=requireRange(getText(d,'pnlCad'),-1e9,1e9,'P/L'),note=getText(d,'note');if(!note)throw new Error('Label required.');state.adjustments.push({id:uid(),accountId:account().id,date,pnlCad,note});showToast(`Saved ${money(pnlCad)} in realized CAD P/L.`);return true;});
@@ -1298,11 +1299,37 @@ async function importFile(file){
  }
  const data=JSON.parse(raw);return previewJSON(data,file.name);
 }
+function mergePositions(id){
+ const target=findPosition(id),m=analytics();
+ if(m.asOf!==onOrBeforeSession(today(),state.customClosed||[]))return showToast('Return to Today before merging positions.');
+ const candidates=openContractMatches(target,m.positions,m.account.id).filter(x=>x.position.id!==id);
+ if(!candidates.length)return showToast('No matching open positions to merge.');
+ const body=`<p class="modal-intro">Keep <strong>${esc(target.ticker)} · ${esc(target.ideaId||target.id)}</strong> as the primary position. Only merge records of the same continuous trade. Its plan stays active; source plans, notes and all executions stay in the audit trail.</p><form><div class="modal-grid">${candidates.map(x=>`<label class="span-2"><span><input type="checkbox" name="sourceId" value="${esc(x.position.id)}" checked style="width:auto;min-height:0"> ${esc(x.position.ideaId||x.position.id)} · ${x.metrics.qty} open · avg ${usd(x.metrics.averageEntryUsd,4)} · reserve ${cad(x.metrics.reserveCad)}</span></label>`).join('')}</div><div id="mergePreview" class="modal-summary"></div><label style="display:block;margin:12px 0"><input type="checkbox" name="confirmed" required style="width:auto;min-height:0"> These are the same continuous trade. I accept the previewed recalculation of risk and cost basis.</label>${formEnd('Merge selected positions')}</form>`;
+ const f=dialog('Merge matching open positions','LEDGER CORRECTION',body);
+ const preview=()=>{
+  try{
+   const d=new FormData(f),plan=planOpenPositionMerge(state,m.account.id,id,d.getAll('sourceId'),asOf()),z=plan.metrics;
+   $('mergePreview').innerHTML=`<strong>${plan.sourceCount} positions → 1 · ${z.qty} open · avg ${usd(z.averageEntryUsd,4)}</strong><span>Entry cost ${usd(z.totalEntryDebitUsd)} · open reserve ${cad(plan.oldReserveCad)} → ${cad(z.reserveCad)} · stress ${z.stressPct}% · rolling losses ${cad(plan.before.realizedLossCad)} → ${cad(plan.after.realizedLossCad)} · available ${cad(plan.before.availableCad)} → ${cad(plan.after.availableCad)} · account realized P/L ${cad(plan.before.realizedAllTime)} → ${cad(plan.after.realizedAllTime)}. ${plan.recalculatedExits?plan.recalculatedExits+' existing exit basis/P&L calculation(s) change; verified broker P&L overrides remain intact.':'Existing exit basis/P&L unchanged.'}</span>`;
+   f.querySelector('[type="submit"]').disabled=false;return plan;
+  }catch(err){$('mergePreview').textContent=err.message;f.querySelector('[type="submit"]').disabled=true;return null;}
+ };
+ f.addEventListener('change',preview);
+ f.addEventListener('submit',e=>{e.preventDefault();try{
+  if(account().id!==m.account.id||analytics().asOf!==onOrBeforeSession(today(),state.customClosed||[]))throw Error('Portfolio or date changed; reopen merge.');
+  const plan=preview();if(!plan||!new FormData(f).has('confirmed'))return;
+  if(!confirm(`Merge ${plan.sourceCount} open records into one? Available risk changes from ${cad(plan.before.availableCad)} to ${cad(plan.after.availableCad)}. ${plan.recalculatedExits?plan.recalculatedExits+' exit calculation(s) change. ':''}A pre-merge backup will download first. Source records cannot be restored individually without double counting.`))return;
+  download(`swing-risk-desk-BEFORE-POSITION-MERGE-${today()}.json`,JSON.stringify(backupSnapshot(state),null,2));
+  const previous=state;state=plan.next;
+  if(!save()){state=previous;render();throw Error('Could not save merged ledger; original records retained.');}
+  $('editorDialog').close();render();showToast(`Merged ${plan.sourceCount} records into one position. Pre-merge backup initiated.`);
+ }catch(err){showToast(err.message);const error=f.querySelector('.modal-error');if(error)error.textContent=err.message;}});
+ preview();
+}
 function archiveRecord(kind,label,record,positionId=''){
  state.archive??=[];
  state.archive.push({id:uid(),kind,label,positionId,date:new Date().toISOString(),record:structuredClone(record)});
 }
-function restoreArchive(id){const item=(state.archive||[]).find(x=>x.id===id);if(!item)return showToast('Archived item was not found.');if(item.restoredAt)return showToast('This record was already restored.');const snapshot=structuredClone(state);
+function restoreArchive(id){const item=(state.archive||[]).find(x=>x.id===id);if(!item)return showToast('Archived item was not found.');if(item.restoredAt)return showToast('This record was already restored.');if(item.kind==='position-merge'||item.mergedIntoPositionId)return showToast('Merged originals are retained for audit. Restoring one would duplicate fills; use the pre-merge backup or reconcile manually.');const snapshot=structuredClone(state);
  try{
   if(item.kind==='journal-entry'||item.kind==='plan-revision'){
     const p=state.positions.find(x=>x.id===item.positionId);if(!p)throw new Error('Restore the parent position first.');
@@ -1350,6 +1377,7 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'edit-exit':editExit(id,el.dataset.tx);break;
  case 'view-position':openPositionDetail(id);break;
  case 'add-fill':addFill(id);break;
+ case 'merge-positions':mergePositions(id);break;
  case 'refresh-position-quote':void refreshPositionQuote(id);break;
  case 'close-recorded-idea':$('editorDialog').close();dropPlannerIdea(el.dataset.planId);break;
  case 'manual-pnl':manualPnl();break;
