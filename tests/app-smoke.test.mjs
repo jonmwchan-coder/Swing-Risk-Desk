@@ -83,3 +83,9 @@ assert.match(html,/ROLLING NET LOSSES/);
 assert.match(html,/Only partials from the same position\/attempt offset one another/);
 assert.match(getElementById('lossHint').textContent,/Gross negative realized entries/);
 assert.match(getElementById('releaseBox').innerHTML,/No scheduled change in rolling losses/);
+
+// v3.19: the independent position scenario view is reachable from both cards.
+assert.match(getElementById('dashboardPositions').innerHTML,/data-action="analyze-position"/);
+assert.match(getElementById('positionsFull').innerHTML,/data-action="analyze-position"/);
+assert.match(html,/id="positionAnalysisDialog"/);
+assert.match(html,/id="positionAnalysisBody"/);
