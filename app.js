@@ -19,6 +19,8 @@ const $=id=>document.getElementById(id);
 const money=(v,digits=2)=>`${Number(v)<0?'-':''}$${Math.abs(Number(v)||0).toLocaleString('en-CA',{minimumFractionDigits:digits,maximumFractionDigits:digits})}`;
 const cad=(v,digits=2)=>`CAD ${money(v,digits)}`;
 const usd=(v,digits=2)=>`USD ${money(v,digits)}`;
+// Position cards use USD first; CAD accounting stays authoritative.
+const dualPositionMoney=(u,c,digits=2)=>`<span class="pos-usd">${usd(u,digits)}</span> <span class="pos-cad">(${cad(c,digits)})</span>`;
 const formattedReturn=(value)=>{
  if(value===null||value===undefined||!Number.isFinite(Number(value)))return '----';
  const rounded=Math.round(Number(value)*10)/10;
@@ -58,6 +60,8 @@ let asOfOverride=null;
 let toastTimer=null;
 let plannerPrefill=null;
 const positionQuotes=new Map();
+const positionQuoteQueue=[];
+let positionQuoteActive=0;
 let selectedPreviewId=null;
 let optionPanelMode='analyze';
 let chainSide='Put';
@@ -185,6 +189,7 @@ function render(){const a=account();if(!a)return;
   renderSettings(a);
   for(const t of document.querySelectorAll('.tab')){t.classList.toggle('active',t.dataset.tab===activeTab);t.setAttribute('aria-current',t.dataset.tab===activeTab?'page':'false');}
   for(const v of document.querySelectorAll('.view'))v.hidden=v.id!==`view-${activeTab}`;
+  schedulePositionQuotes(m);
 }
 function renderOverview(m){
   const isOver=m.availableCad<-.005;
@@ -244,33 +249,69 @@ function renderOverview(m){
   const runway=budgetRunway(state,m.account.id,asOf(),10);
   $('runwayChart').innerHTML=runway.map((r,i)=>{const h=m.budgetCad>0?Math.max(4,Math.min(100,100*Math.max(0,r.available)/m.budgetCad)):4;return `<div class="runway-item"><div class="runway-number ${r.available<0?'neg':''}">${money(r.available,0)}</div><div class="runway-bar-box"><div class="runway-bar ${r.available<0?'negative':''}" style="height:${h}%"></div></div><div class="runway-date">${i===0?'NOW':fmtDate(r.date)}</div></div>`;}).join('');
 }
-function quoteForPosition(p,z){
- if(z.qty===0)return {value:0,detail:'No open contracts',refresh:false};
- if(analytics().asOf!==onOrBeforeSession(today(),state.customClosed||[]))return {value:null,detail:'Historical view · no quote',refresh:false};
- const symbol=buildOCCSymbol(draftContract(p)),q=positionQuotes.get(symbol);
- if(!symbol||Number(p.multiplier||100)!==100||p.expiry<today())return {value:null,detail:'Quote unavailable',refresh:false};
- return {value:q?.mid!=null?z.qty*Number(p.multiplier||100)*q.mid:null,detail:q?.loading?'Refreshing…':q?.error?'Quote unavailable · retry':q?.mid!=null?`Mid ${usd(q.mid,4)} · ${q.at?new Date(q.at).toLocaleString('en-CA',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZone:'America/Toronto'})+' ET':'time unknown'} · indicative`:'Refresh indicative quote',refresh:true};
+function currentPositionQuoteSymbol(p,z,m){
+ if(!z.qty||m.asOf!==onOrBeforeSession(today(),state.customClosed||[])||Number(p.multiplier||100)!==100||p.expiry<today())return null;
+ return buildOCCSymbol(draftContract(p));
 }
-async function refreshPositionQuote(id){
- const p=findPosition(id),symbol=buildOCCSymbol(draftContract(p));
- if(!symbol||positionQuotes.get(symbol)?.loading)return;
- positionQuotes.set(symbol,{loading:true});render();
+function quoteForPosition(p,z,m){
+ if(z.qty===0)return {value:0,detail:'No open contracts',refresh:false};
+ if(m.asOf!==onOrBeforeSession(today(),state.customClosed||[]))return {value:null,detail:'Historical view · no quote',refresh:false};
+ const symbol=currentPositionQuoteSymbol(p,z,m),q=positionQuotes.get(symbol);
+ if(!symbol)return {value:null,detail:'Quote unavailable',refresh:false};
+ return {value:q?.mid!=null?z.qty*Number(p.multiplier||100)*q.mid:null,detail:q?.loading?'Refreshing…':q?.error?'Quote unavailable · retry':q?.mid!=null?`Mid ${usd(q.mid,4)} · ${q.at?new Date(q.at).toLocaleString('en-CA',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZone:'America/Toronto'})+' ET':'time unknown'} · indicative`:'Loading indicative quote…',refresh:true,loading:!!q?.loading};
+}
+function positionMarketMarkup(p,z,m){
+ const quote=quoteForPosition(p,z,m);
+ return `<div class="pos-data-label">MARKET VALUE</div><strong>${quote.value===null?'—':dualPositionMoney(quote.value,quote.value*m.account.fx)}</strong><small>${esc(quote.detail)} ${quote.refresh?`<button class="fee-reset-mini" type="button" data-action="refresh-position-quote" data-id="${esc(p.id)}" title="Refresh indicative option midpoint" ${quote.loading?'disabled':''}>Refresh</button>`:''}</small>`;
+}
+// Update quote cells only, never re-render the planner or discard an in-progress edit.
+function updatePositionQuoteCells(){
+ const m=analytics(),byId=new Map(m.positions.map(x=>[x.position.id,x]));
+ for(const card of document.querySelectorAll('.position-card[data-position]')){
+  const x=byId.get(card.dataset.position),cell=card.querySelector('.pos-market-value');
+  if(x&&cell)cell.innerHTML=positionMarketMarkup(x.position,x.metrics,m);
+ }
+}
+function enqueuePositionQuote(symbol,manual=false){
+ if(!symbol||positionQuotes.get(symbol)?.loading||(!manual&&positionQuotes.has(symbol)))return;
+ positionQuotes.set(symbol,{loading:true});positionQuoteQueue.push({symbol,manual});
+}
+function schedulePositionQuotes(m){
+ if(!['dashboard','positions'].includes(activeTab))return;
+ for(const {position:p,metrics:z} of m.positions)enqueuePositionQuote(currentPositionQuoteSymbol(p,z,m));
+ pumpPositionQuotes();
+}
+function pumpPositionQuotes(){
+ // Bound concurrent requests and deduplicate by exact option symbol.
+ while(positionQuoteActive<3&&positionQuoteQueue.length){
+  const job=positionQuoteQueue.shift();positionQuoteActive++;
+  void fetchPositionQuote(job).finally(()=>{positionQuoteActive--;pumpPositionQuotes();});
+ }
+}
+async function fetchPositionQuote({symbol,manual}){
+ updatePositionQuoteCells();
  try{
   const response=await fetch(`/api/option-quote?symbol=${encodeURIComponent(symbol)}`,{cache:'no-store'});
   const data=await response.json().catch(()=>({}));
   const bid=Number(data.optionBidUsd),ask=Number(data.optionAskUsd);
   if(!response.ok||data.symbol!==symbol||data.optionBidUsd==null||data.optionAskUsd==null||!Number.isFinite(bid)||!Number.isFinite(ask)||bid<0||ask<=0||ask<bid)throw Error(data.error||'No valid indicative bid/ask');
   positionQuotes.set(symbol,{mid:(bid+ask)/2,at:data.quoteAt&&Number.isFinite(Date.parse(data.quoteAt))?data.quoteAt:null});
- }catch(err){positionQuotes.set(symbol,{error:true});showToast(String(err.message||'Quote unavailable').slice(0,180));}
- render();
+ }catch(err){positionQuotes.set(symbol,{error:true});if(manual)showToast(String(err.message||'Quote unavailable').slice(0,180));}
+ finally{updatePositionQuoteCells();}
+}
+function refreshPositionQuote(id){
+ const p=findPosition(id),m=analytics(),x=m.positions.find(x=>x.position.id===p.id);
+ const symbol=x&&currentPositionQuoteSymbol(p,x.metrics,m);
+ if(!symbol)return showToast('No current quote available for this position.');
+ enqueuePositionQuote(symbol,true);updatePositionQuoteCells();pumpPositionQuotes();
 }
 function positionCard(x,full){const p=x.position,z=x.metrics;const isOpen=z.qty>0;const days=p.expiry?Math.round((new Date(`${p.expiry}T12:00:00Z`)-new Date(`${analytics().asOf}T12:00:00Z`))/86400000):null;
  const fmt=days===null?'No expiry':days<0?`Expired ${-days}d ago`:days===0?'Expires today':`${days} calendar days to expiry`;
- const label=p.optionType==='Put'?'P':'C';const flag=!p.underlyingInvalidation?.trim();const quote=quoteForPosition(p,z);const duplicates=isOpen&&analytics().asOf===onOrBeforeSession(today(),state.customClosed||[])?openContractMatches(p,analytics().positions,p.accountId).length:0;
+ const label=p.optionType==='Put'?'P':'C';const flag=!p.underlyingInvalidation?.trim();const m=analytics(),fx=m.account.fx;const duplicates=isOpen&&m.asOf===onOrBeforeSession(today(),state.customClosed||[])?openContractMatches(p,m.positions,p.accountId).length:0;
  return `<article class="position-card" data-position="${esc(p.id)}">
   <div class="pos-top"><div><div class="pos-ticker">${esc(p.ticker)}</div><div class="pos-contract">${esc(p.expiry?fmtDate(p.expiry,true):'')} ${esc(p.strike||'?')}${label} <span style="color:#688e9a">/</span> ${esc(p.ideaId||'Single idea')}</div><div class="pos-meta">${esc(p.sector||'Sector not recorded')} &bull; ${esc(fmt)}</div></div><div class="pos-badge ${isOpen?'':'closed'}">${isOpen?`${z.qty} OPEN`:'CLOSED'}</div></div>
-  <div class="pos-data pos-performance"><div><div class="pos-data-label">TOTAL ENTRY COST</div><strong>${usd(z.totalEntryDebitUsd)}</strong><small>Avg ${z.averageEntryUsd===null?'—':usd(z.averageEntryUsd,4)} / share · fees in total</small></div><div><div class="pos-data-label">MARKET VALUE</div><strong>${quote.value===null?'—':usd(quote.value)}</strong><small>${esc(quote.detail)} ${quote.refresh?`<button class="fee-reset-mini" type="button" data-action="refresh-position-quote" data-id="${esc(p.id)}" title="Refresh indicative option midpoint">Refresh</button>`:''}</small></div><div><div class="pos-data-label">REALIZED NET</div><strong class="${z.realizedTotal<0?'neg':'pos'}">${cad(z.realizedTotal)}</strong><small>Recorded exits to date</small></div><div><div class="pos-data-label">REALIZED RETURN</div><strong class="${z.realizedReturnPct===null?'':z.realizedReturnPct<0?'neg':'pos'}">${formattedReturn(z.realizedReturnPct)}</strong><small>Closed contracts · net of fees</small></div></div>
-  <div class="pos-data pos-risk-row"><div><div class="pos-data-label">RISK RESERVE</div><strong>${cad(z.reserveCad,0)}</strong><small>${z.hasFixed?'Reserve floor applied':`${z.reservePct}% stress / cap`}</small></div><div><div class="pos-data-label">REMAINING DEBIT</div><strong>${cad(z.premiumCad,0)}</strong><small>CAD at current FX</small></div><div><div class="pos-data-label">PLANNED LOSS</div><strong>${z.planLoss===null?'Not set':cad(z.planLoss,0)}</strong><small>${z.planLoss===null?'Add option exit est.':'Estimated at stop mark'}</small></div><div><div class="pos-data-label">STRESS RATE</div><strong>${z.reservePct}%</strong><small>${z.stressPct===account().stressPct?'Default or same':'Custom'}</small></div></div>
+  <div class="pos-data pos-performance"><div><div class="pos-data-label">TOTAL ENTRY COST</div><strong>${dualPositionMoney(z.totalEntryDebitUsd,z.totalEntryDebitUsd*fx)}</strong><small>Avg ${z.averageEntryUsd===null?'—':usd(z.averageEntryUsd,4)} / share · fees in total</small></div><div class="pos-market-value">${positionMarketMarkup(p,z,m)}</div><div><div class="pos-data-label">REALIZED NET</div><strong class="${z.realizedTotal<0?'neg':'pos'}">${dualPositionMoney(z.realizedTotal/fx,z.realizedTotal)}</strong><small>USD equivalent at portfolio FX</small></div><div><div class="pos-data-label">REALIZED RETURN</div><strong class="${z.realizedReturnPct===null?'':z.realizedReturnPct<0?'neg':'pos'}">${formattedReturn(z.realizedReturnPct)}</strong><small>Closed contracts · net of fees</small></div></div>
+  <div class="pos-data pos-risk-row"><div><div class="pos-data-label">STRESS RISK (${z.reservePct}%)</div><strong>${dualPositionMoney(z.reserveCad/fx,z.reserveCad)}</strong><small>${z.hasFixed?'Reserve floor applied':m.account.mode==='strict'?'Full open cost · rounded':'Open cost × stress · rounded'}</small></div><div><div class="pos-data-label">OPEN COST BASIS</div><strong>${dualPositionMoney(z.remainingCostUsd,z.premiumCad)}</strong><small>Cost of contracts still held</small></div><div><div class="pos-data-label">PLANNED LOSS</div><strong>${z.planLossUsd===null?'Not set':dualPositionMoney(z.planLossUsd,z.planLoss)}</strong><small>${z.plannedLossPct!==null?`${z.plannedLossPct}% of total entry cost`:z.planLossUsd===null?'Set loss % at invalidation':'Legacy stop-premium estimate'} ${isOpen?`<button class="fee-reset-mini" type="button" data-action="edit-planned-loss" data-id="${esc(p.id)}">${z.plannedLossPct===null?'Set %':'Edit %'}</button>`:''}</small></div><div><div class="pos-data-label">$ BUDGET REMAINING</div><strong class="${m.availableCad<0?'neg':''}">${dualPositionMoney(m.availableCad/fx,m.availableCad)}</strong><small>Portfolio · ${m.account.window}-session rolling risk</small></div></div>
   <div class="pos-note"><span class="${flag?'warning':''}">${flag?'Needs an underlying invalidation / time stop':`Wrong if: ${esc(p.underlyingInvalidation).slice(0,125)}`}${p.targetLevels?`<br>Targets: ${esc(p.targetLevels).slice(0,200)}`:''}${p.thesis?`<br>Idea: ${esc(p.thesis).slice(0,160)}`:''}</span><span>${esc(p.reviewBy?`Review by ${fmtDate(p.reviewBy)}`:'')}</span></div>
   <div class="pos-actions">${isOpen?`<button type="button" class="btn-mini emph" data-action="close-position" data-id="${esc(p.id)}">Record exit</button><button type="button" class="btn-mini" data-action="add-fill" data-id="${esc(p.id)}">Add contracts</button>${duplicates>1?`<button type="button" class="btn-mini" data-action="merge-positions" data-id="${esc(p.id)}" title="Review matching open positions before merging">Merge duplicates (${duplicates})</button>`:''}`:''}<button type="button" class="btn-mini" data-action="edit-position" data-id="${esc(p.id)}">Edit plan</button><button type="button" class="btn-mini" data-action="add-note" data-id="${esc(p.id)}">+ Journal note</button>${full?`<button type="button" class="btn-mini" data-action="export-trade" data-id="${esc(p.id)}" title="Download only this position for GPT master review">Export trade</button>`:''}${full?`<button type="button" class="btn-mini" data-action="see-transactions" data-id="${esc(p.id)}">Fills / corrections</button><button type="button" class="btn-mini" data-action="delete-position" data-id="${esc(p.id)}">Delete</button>`:''}</div>
   ${full?`<details class="pos-details" id="detail-${esc(p.id)}"><summary>Original record and transactions</summary><p class="help-line">Source: ${esc(p.source||'Manual entry')} &bull; Master ID: ${esc(p.externalId||'Not linked')}</p><div class="plan-details"><div><strong>Thesis</strong><p>${esc(p.thesis||'Not recorded')}</p></div><div><strong>Catalyst / why now</strong><p>${esc(p.catalyst||'Not recorded')} ${esc(p.entryReason||'')}</p></div><div><strong>Management</strong><p>${esc(p.managementPlan||'Not recorded')}</p></div><div><strong>Other notes</strong><p>${esc(p.notes||'Not recorded')}</p></div></div><div class="journal-timeline">${renderTimeline(p)}</div><div class="modal-transaction-list">${transactionList(p)}</div></details>`:''}</article>`;
@@ -1036,7 +1077,7 @@ function addPosition(){const a=account(),pref=plannerPrefill;plannerPrefill=null
  ${field('SECTOR / THEME','sector','text','',{maxlength:65})}
  ${field('IDEA / CORRELATED TRADE GROUP','ideaId','text','',{maxlength:90})}
  ${field('UNDERLYING INVALIDATION','underlyingInvalidation','text','',{maxlength:200})}
- ${field('ESTIMATED STOP OPTION PRICE / SHARE USD','stopPremiumUsd','number','',{min:0,step:.01})}
+ ${field('PLANNED LOSS % OF TOTAL ENTRY COST','plannedLossPct','number','',{min:0,max:100,step:.1})}
  ${field('UNDERLYING TARGETS / TP LEVELS','targetLevels','text','',{maxlength:220})}
  ${field('REVIEW DATE / TIME STOP','reviewBy','date','')}
  <label class="span-2"><span>THESIS / TRADE IDEA</span><textarea name="thesis" rows="3" maxlength="4000" placeholder="Why this direction? What's the structure or fundamental idea?"></textarea></label>
@@ -1050,6 +1091,7 @@ function addPosition(){const a=account(),pref=plannerPrefill;plannerPrefill=null
  const qty=requireRange(getText(d,'qty'),1,99999,'Contracts');if(!Number.isInteger(qty))throw Error('Contracts must be a whole number.');const price=requireRange(getText(d,'price'),.0001,100000,'Price');const fee=requireRange(getText(d,'fee')||'0',0,100000,'Fees');const fx=requireRange(getText(d,'fx'),.01,100,'USD/CAD');const date=requireDate(getText(d,'date'),'entry date');validateSession(date);validateAsOf(date);
  const expiry=requireDate(getText(d,'expiry'),'expiry');if(expiry<date)throw new Error('Expiry cannot precede purchase date.');
  const strike=requireRange(getText(d,'strike'),0,1000000,'Strike');const stress=optional(getText(d,'stressPct'));if(stress!==null)requireRange(String(stress),0,100,'Stress percentage');
+ const plannedLoss=optional(getText(d,'plannedLossPct'));if(plannedLoss!==null)requireRange(String(plannedLoss),0,100,'Planned loss percentage');
  const contract={ticker,optionType:getText(d,'optionType'),strike,expiry};
   if(pref?.draftId&&draftContractKey(pref)!==draftContractKey(contract))throw Error('Contract changed. Edit the saved idea before recording.');
   const existing=fillTarget(contract,a);
@@ -1062,12 +1104,12 @@ function addPosition(){const a=account(),pref=plannerPrefill;plannerPrefill=null
   if(historical.length)throw Error('This contract was open on that historical date. Use IBKR reconciliation rather than creating an overlapping attempt.');
   const newReserve=roundUp((qty*price*100+fee)*a.fx*(a.mode==='strict'?100:(stress??a.stressPct))/100,a.roundStep);
  if(!maybeBreach(analytics(),newReserve))return false;
- const position={id:uid(),externalId:'',source:'Manual entry',accountId:a.id,ticker,optionType:getText(d,'optionType'),strike,expiry,sector:getText(d,'sector'),ideaId:getText(d,'ideaId')||`${ticker}-${date}`,underlyingInvalidation:getText(d,'underlyingInvalidation'),targetLevels:getText(d,'targetLevels'),stopPremiumUsd:optional(getText(d,'stopPremiumUsd')),stressPct:stress,fixedReserveCad:null,reviewBy:getText(d,'reviewBy'),thesis:getText(d,'thesis'),catalyst:getText(d,'catalyst'),entryReason:getText(d,'entryReason'),managementPlan:getText(d,'managementPlan'),notes:getText(d,'notes'),journalEntries:[],planHistory:[],fills:[{id:uid(),date,time:getText(d,'time'),timeUnverified:!getText(d,'time'),qty,price,fee,fx,feeEstimated:f.dataset.feeEstimated==='true'}],exits:[]};
- position.planHistory.push({id:uid(),date,createdAt:new Date().toISOString(),source:'Initial plan recorded in app (entry-time status not independently verified)',changes:Object.fromEntries(['underlyingInvalidation','targetLevels','thesis','catalyst','entryReason','managementPlan','notes'].filter(k=>position[k]).map(k=>[k,{before:'',after:position[k]}]))});state.positions.push(position);showToast(`Added ${qty} ${ticker} contract${qty!==1?'s':''}.`);return qty;
+ const position={id:uid(),externalId:'',source:'Manual entry',accountId:a.id,ticker,optionType:getText(d,'optionType'),strike,expiry,sector:getText(d,'sector'),ideaId:getText(d,'ideaId')||`${ticker}-${date}`,underlyingInvalidation:getText(d,'underlyingInvalidation'),targetLevels:getText(d,'targetLevels'),stopPremiumUsd:null,plannedLossPct:plannedLoss,...(plannedLoss!==null?{plannedLossEditedAt:new Date().toISOString()}:{}),stressPct:stress,fixedReserveCad:null,reviewBy:getText(d,'reviewBy'),thesis:getText(d,'thesis'),catalyst:getText(d,'catalyst'),entryReason:getText(d,'entryReason'),managementPlan:getText(d,'managementPlan'),notes:getText(d,'notes'),journalEntries:[],planHistory:[],fills:[{id:uid(),date,time:getText(d,'time'),timeUnverified:!getText(d,'time'),qty,price,fee,fx,feeEstimated:f.dataset.feeEstimated==='true'}],exits:[]};
+ position.planHistory.push({id:uid(),date,createdAt:new Date().toISOString(),source:'Initial plan recorded in app (entry-time status not independently verified)',changes:Object.fromEntries(['underlyingInvalidation','targetLevels','plannedLossPct','thesis','catalyst','entryReason','managementPlan','notes'].filter(k=>position[k]!==null&&position[k]!==undefined&&position[k]!=='').map(k=>[k,{before:'',after:position[k]}]))});state.positions.push(position);showToast(`Added ${qty} ${ticker} contract${qty!==1?'s':''}.`);return qty;
  },qty=>finishDraftRecord(pref,qty));
  const preview=()=>{const d=new FormData(f);const q=num(d.get('qty')),price=num(d.get('price')),fee=num(d.get('fee')),fx=num(d.get('fx'),a.fx),stress=optional(d.get('stressPct'))??a.stressPct;
- const cost=q*price*100+fee,raw=cost*a.fx*(a.mode==='strict'?1:stress/100),reserve=roundUp(raw,a.roundStep);
- const box=$('newPreview');if(q>0&&price>0&&fx>0)box.innerHTML=`<strong>${money(reserve)} reserved</strong><span>Cost ${usd(cost)} / ${money(cost*fx)} CAD at entry FX; reserve uses current ${a.fx.toFixed(4)} rate. Budget after entry: ${money(analytics().availableCad-reserve)}.</span>`;else box.innerHTML='<span>Enter a size and price to preview the reserve.</span>';
+ const cost=q*price*100+fee,raw=cost*a.fx*(a.mode==='strict'?1:stress/100),reserve=roundUp(raw,a.roundStep),pct=optional(d.get('plannedLossPct'));
+ const box=$('newPreview');if(q>0&&price>0&&fx>0)box.innerHTML=`<strong>${money(reserve)} reserved</strong><span>Cost ${usd(cost)} / ${money(cost*fx)} CAD at entry FX; reserve uses current ${a.fx.toFixed(4)} rate. Budget after entry: ${money(analytics().availableCad-reserve)} CAD.${pct!==null&&Number.isFinite(pct)&&pct>=0&&pct<=100?` Planned loss: ${dualPositionMoney(cost*pct/100,cost*pct/100*a.fx)} (${pct}% of entry cost).`:''}</span>`;else box.innerHTML='<span>Enter a size and price to preview the reserve.</span>';
  };attachFeeEstimate(f,a,'BUY',{automatic:!pref?.feeManual});f.addEventListener('input',preview);preview();
 }
 function findPosition(id){const p=state.positions.find(x=>x.id===id&&x.accountId===account().id);if(!p)throw new Error('Position not found in this account.');return p;}
@@ -1118,12 +1160,26 @@ function addFill(id,pref=null){const a=account(),p=findPosition(id),now=analytic
  $('fillPreview').innerHTML=`<strong>${old.qty} held → ${z.qty} combined · avg ${z.averageEntryUsd===null?'—':usd(z.averageEntryUsd,4)}</strong><span>Additional reserve ${cad(after.reserveCad-before.reserveCad)} · combined ${cad(z.reserveCad)} · available after add ${cad(after.availableCad)}.${cap!==null&&z.reserveCad>cap?' Above fixed idea guide.':''}</span>`;
  };attachFeeEstimate(f,a,'BUY',{automatic:!pref?.feeManual});f.addEventListener('input',preview);preview();
 }
+function editPlannedLoss(id){
+ const p=findPosition(id),a=account(),z=calculatePosition(p,a,analytics().asOf);
+ const body=`<p class="modal-intro">Enter the expected loss at your underlying invalidation, using Analyze % as a guide. Calculated from the entire recorded entry cost (including buy fees), not the remaining open cost. It does not change stress risk or the rolling budget. Blank uses the legacy stop estimate, if present.</p><form><div class="modal-grid">${field('PLANNED LOSS % OF TOTAL ENTRY COST','plannedLossPct','number',p.plannedLossPct??'',{min:0,max:100,step:.1})}</div><div id="plannedLossPreview" class="modal-summary"></div>${formEnd('Save planned loss')}</form>`;
+ const f=dialog(`Planned loss · ${p.ticker}`,'UNDERLYING INVALIDATION ESTIMATE',body,d=>{
+  const live=findPosition(id),pct=optional(getText(d,'plannedLossPct'));
+  if(pct!==null)requireRange(String(pct),0,100,'Planned loss percentage');
+  const n=recordPlanEdit(live,{plannedLossPct:pct},{date:today(),source:'Manual planned-loss percentage revision'});
+  if(n.includes('plannedLossPct'))live.plannedLossEditedAt=new Date().toISOString();
+  showToast('Planned loss updated. Stress risk and budget unchanged.');return true;
+ });
+ const preview=()=>{const pct=optional(new FormData(f).get('plannedLossPct'));$('plannedLossPreview').innerHTML=`<strong>Total entry: ${dualPositionMoney(z.totalEntryDebitUsd,z.totalEntryDebitUsd*a.fx)}</strong><span>${pct===null?'No percentage estimate set.':Number.isFinite(pct)&&pct>=0&&pct<=100?`Planned loss: ${dualPositionMoney(z.totalEntryDebitUsd*pct/100,z.totalEntryDebitUsd*pct/100*a.fx)}`:'Enter a percentage from 0 to 100.'}</span>`;};
+ f.addEventListener('input',preview);preview();
+}
 function editPosition(id){const p=findPosition(id);const body=`<p class="modal-intro">Update your forward-looking risk plan. Do not rewrite what you knew before entry. No existing fills or realized results are changed.</p><form><div class="modal-grid">
  ${field('TICKER','ticker','text',p.ticker,{required:'required',maxlength:12})}${selectField('OPTION TYPE','optionType',[['Put','Put'],['Call','Call']],p.optionType)}
  ${field('STRIKE','strike','number',p.strike,{min:0,step:.01})}${field('EXPIRY','expiry','date',p.expiry,{required:'required'})}
  ${field('CORRELATED IDEA / GROUP','ideaId','text',p.ideaId||'',{maxlength:90})}${field('SECTOR / THEME','sector','text',p.sector||'',{maxlength:65})}
  ${field('STRESS % (BLANK = DEFAULT)','stressPct','number',p.stressPct??'',{min:0,max:100,step:1})}${field('MINIMUM CAD RESERVE / OPTIONAL','fixedReserveCad','number',p.fixedReserveCad??'',{min:0,step:1})}
- ${field('EST. STOP OPTION PREMIUM USD','stopPremiumUsd','number',p.stopPremiumUsd??'',{min:0,step:.01})}${field('REVIEW / TIME-STOP DATE','reviewBy','date',p.reviewBy||'')}
+ ${field('PLANNED LOSS % OF TOTAL ENTRY COST','plannedLossPct','number',p.plannedLossPct??'',{min:0,max:100,step:.1})}${field('REVIEW / TIME-STOP DATE','reviewBy','date',p.reviewBy||'')}
+ ${field('LEGACY STOP OPTION PREMIUM USD (IF NO LOSS %)','stopPremiumUsd','number',p.stopPremiumUsd??'',{min:0,step:.01})}
  ${field('TARGETS / TP LEVELS ON UNDERLYING','targetLevels','text',p.targetLevels||'',{maxlength:220})}
  <label class="span-2"><span>UNDERLYING STRUCTURAL INVALIDATION</span><textarea name="underlyingInvalidation" rows="3" maxlength="1200">${esc(p.underlyingInvalidation||'')}</textarea></label>
  <label class="span-2"><span>THESIS / TRADE IDEA</span><textarea name="thesis" rows="4" maxlength="4000">${esc(p.thesis||'')}</textarea></label>
@@ -1135,12 +1191,14 @@ function editPosition(id){const p=findPosition(id);const body=`<p class="modal-i
  dialog(`Edit ${p.ticker}`,'PROSPECTIVE PLAN',body,(d)=>{
  const ticker=getText(d,'ticker').toUpperCase().replace(/[^A-Z0-9.\-]/g,'');if(!ticker)throw new Error('Ticker required.');
  const expiry=requireDate(getText(d,'expiry'),'expiry'),strike=requireRange(getText(d,'strike'),0,1e6,'Strike');
- const stress=optional(getText(d,'stressPct')),fixed=optional(getText(d,'fixedReserveCad')),stop=optional(getText(d,'stopPremiumUsd'));
+ const stress=optional(getText(d,'stressPct')),fixed=optional(getText(d,'fixedReserveCad')),stop=optional(getText(d,'stopPremiumUsd')),plannedLoss=optional(getText(d,'plannedLossPct'));
+ if(plannedLoss!==null)requireRange(String(plannedLoss),0,100,'Planned loss percentage');
  if(stress!==null)requireRange(String(stress),0,100,'Stress');if(fixed!==null)requireRange(String(fixed),0,1e8,'Fixed reserve');if(stop!==null)requireRange(String(stop),0,1e6,'Stop premium');
  const identity={ticker,strike,expiry,optionType:getText(d,'optionType')};
   if(p.fills.some(t=>t.broker)&&Object.entries(identity).some(([k,v])=>String(p[k])!==String(v)))throw new Error('Broker-verified contract identity cannot be changed here. Add a correction note, or reconcile the source.');
-  const changes={...identity,ideaId:getText(d,'ideaId'),sector:getText(d,'sector'),stressPct:stress,fixedReserveCad:fixed,stopPremiumUsd:stop,reviewBy:getText(d,'reviewBy'),targetLevels:getText(d,'targetLevels'),underlyingInvalidation:getText(d,'underlyingInvalidation'),thesis:getText(d,'thesis'),catalyst:getText(d,'catalyst'),entryReason:getText(d,'entryReason'),managementPlan:getText(d,'managementPlan'),notes:getText(d,'notes')};
+  const changes={...identity,ideaId:getText(d,'ideaId'),sector:getText(d,'sector'),stressPct:stress,fixedReserveCad:fixed,stopPremiumUsd:stop,plannedLossPct:plannedLoss,reviewBy:getText(d,'reviewBy'),targetLevels:getText(d,'targetLevels'),underlyingInvalidation:getText(d,'underlyingInvalidation'),thesis:getText(d,'thesis'),catalyst:getText(d,'catalyst'),entryReason:getText(d,'entryReason'),managementPlan:getText(d,'managementPlan'),notes:getText(d,'notes')};
   const n=recordPlanEdit(p,changes,{date:today(),source:'Manual plan revision'});
+  if(n.includes('plannedLossPct'))p.plannedLossEditedAt=new Date().toISOString();
   showToast(`${ticker} plan updated: ${n.length} change(s) preserved in timeline.`);return true;
  });
 }
@@ -1210,8 +1268,8 @@ function exportBackup(){
  showToast('Complete backup / ChatGPT handoff download started. Save the file to Google Drive.');
 }
 function csvEsc(value){const s=String(value??'');return /[",\n\r]/.test(s)?`"${s.replaceAll('"','""')}"`:s;}
-const CSV_COLUMNS=['account_id','position_id','external_id','idea_id','ticker','option_type','strike','expiry','sector','action','date','time','contracts','price_usd','fee_usd','fx_usdcad','stress_pct','underlying_invalidation','stop_premium_usd','notes','transaction_id','broker_pnl_cad'];
-function exportCsv(template=false){const rows=[CSV_COLUMNS];if(!template){for(const p of state.positions){const tx=[...p.fills.map(x=>({...x,action:'BUY'})),...p.exits.map(x=>({...x,action:'SELL'}))];for(const t of tx)rows.push([p.accountId,p.id,p.externalId||'',p.ideaId,p.ticker,p.optionType,p.strike,p.expiry,p.sector||'',t.action,t.date,t.time||'',t.qty,t.price??'',t.fee||0,t.fx||'',p.stressPct??'',p.underlyingInvalidation||'',p.stopPremiumUsd??'',p.notes||'',t.id,t.brokerPnlCad??'']);}}
+const CSV_COLUMNS=['account_id','position_id','external_id','idea_id','ticker','option_type','strike','expiry','sector','action','date','time','contracts','price_usd','fee_usd','fx_usdcad','stress_pct','underlying_invalidation','stop_premium_usd','notes','transaction_id','broker_pnl_cad','planned_loss_pct'];
+function exportCsv(template=false){const rows=[CSV_COLUMNS];if(!template){for(const p of state.positions){const tx=[...p.fills.map(x=>({...x,action:'BUY'})),...p.exits.map(x=>({...x,action:'SELL'}))];for(const t of tx)rows.push([p.accountId,p.id,p.externalId||'',p.ideaId,p.ticker,p.optionType,p.strike,p.expiry,p.sector||'',t.action,t.date,t.time||'',t.qty,t.price??'',t.fee||0,t.fx||'',p.stressPct??'',p.underlyingInvalidation||'',p.stopPremiumUsd??'',p.notes||'',t.id,t.brokerPnlCad??'',p.plannedLossPct??'']);}}
  download(template?'swing-risk-import-template.csv':`swing-risk-transactions-${today()}.csv`,rows.map(r=>r.map(csvEsc).join(',')).join('\r\n'),'text/csv;charset=utf-8');showToast(template?'CSV import template downloaded.':'Transactions CSV downloaded.');}
 function parseCSV(content){const rows=[],row=[];let cell='',quote=false;const str=content.replace(/^\uFEFF/,'');for(let i=0;i<str.length;i++){const c=str[i];if(quote){if(c==='"'&&str[i+1]==='"'){cell+='"';i++;}else if(c==='"'){quote=false;}else cell+=c;}else{if(c==='"'){quote=true;}else if(c===','){row.push(cell);cell='';}else if(c==='\n'){row.push(cell.replace(/\r$/,''));if(row.some(v=>v.trim()))rows.push([...row]);row.length=0;cell='';}else cell+=c;}}if(quote)throw new Error('Unclosed quote in CSV file.');row.push(cell.replace(/\r$/,''));if(row.some(v=>v.trim()))rows.push(row);return rows;}
 function mergeCSV(textData){const csv=parseCSV(textData);if(csv.length<2)throw new Error('CSV has no transactions.');const cols=csv[0].map(x=>x.trim().toLowerCase());for(const col of ['ticker','action','date','contracts','price_usd'])if(!cols.includes(col))throw new Error(`CSV missing ${col} column.`);
@@ -1220,7 +1278,7 @@ function mergeCSV(textData){const csv=parseCSV(textData);if(csv.length<2)throw n
  requireDate(r.date,'CSV execution date');if(!isSession(r.date,clone.customClosed||[]))throw new Error(`${r.date} is not a session.`);
  const qty=Math.floor(requireRange(r.contracts,1,99999,'CSV contracts'));const price=r.price_usd===''&&r.broker_pnl_cad!==''?null:requireRange(r.price_usd,0,100000,'CSV price');const fee=requireRange(r.fee_usd||'0',0,1e5,'CSV fees'),fx=requireRange(r.fx_usdcad||String(a.fx),.01,100,'CSV FX');
  let p=clone.positions.find(x=>(r.position_id&&x.id===r.position_id)||(r.external_id&&x.externalId===r.external_id));
- if(!p){if(action==='SELL')throw new Error(`No existing purchase found for ${ticker} SELL. Import the BUY rows first.`);if(!r.expiry||!r.strike)throw new Error(`New ${ticker} positions need expiry and strike.`);p={id:r.position_id||uid(),accountId:a.id,externalId:r.external_id||'',source:'Imported CSV journal',ideaId:r.idea_id||`${ticker}-${r.date}`,ticker,optionType:r.option_type||'Call',strike:num(r.strike),expiry:r.expiry,sector:r.sector||'',stressPct:optional(r.stress_pct),underlyingInvalidation:r.underlying_invalidation||'',stopPremiumUsd:optional(r.stop_premium_usd),fixedReserveCad:null,notes:r.notes||'',fills:[],exits:[]};clone.positions.push(p);}
+ if(!p){if(action==='SELL')throw new Error(`No existing purchase found for ${ticker} SELL. Import the BUY rows first.`);if(!r.expiry||!r.strike)throw new Error(`New ${ticker} positions need expiry and strike.`);p={id:r.position_id||uid(),accountId:a.id,externalId:r.external_id||'',source:'Imported CSV journal',ideaId:r.idea_id||`${ticker}-${r.date}`,ticker,optionType:r.option_type||'Call',strike:num(r.strike),expiry:r.expiry,sector:r.sector||'',stressPct:optional(r.stress_pct),underlyingInvalidation:r.underlying_invalidation||'',stopPremiumUsd:optional(r.stop_premium_usd),plannedLossPct:r.planned_loss_pct===undefined||r.planned_loss_pct===''?null:requireRange(r.planned_loss_pct,0,100,'CSV planned loss %'),fixedReserveCad:null,notes:r.notes||'',fills:[],exits:[]};clone.positions.push(p);}
  if(p.accountId!==a.id||p.ticker!==ticker)throw new Error(`Conflicting account/ticker for ${ticker}.`);
  const list=action==='BUY'?p.fills:p.exits;
  const id=r.transaction_id||`journal-${[p.id,action,r.date,r.time||'',qty,price??'',fee,fx].join('-')}`;
@@ -1372,6 +1430,7 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'add-position':addPosition();break;
  case 'close-position':closePosition(id);break;
  case 'edit-position':editPosition(id);break;
+ case 'edit-planned-loss':editPlannedLoss(id);break;
  case 'add-note':addNote(id);break;
  case 'archive-timeline':archiveTimeline(id,el.dataset.eventType,el.dataset.eventId);break;
  case 'edit-exit':editExit(id,el.dataset.tx);break;
