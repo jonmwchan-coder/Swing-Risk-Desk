@@ -209,12 +209,15 @@ function render(){const a=account();if(!a)return;
   for(const v of document.querySelectorAll('.view'))v.hidden=v.id!==`view-${activeTab}`;
   schedulePositionQuotes(m);
 }
+function availableRiskMarkup(m){
+ return `<span class="hero-available-cad">${cad(m.availableCad)}</span> <span class="hero-ceiling-cad">of ${cad(m.budgetCad)}</span>`;
+}
 function renderOverview(m){
   const fx=m.account.fx;
   const isOver=m.availableCad<-.005;
   const p=Math.max(0,m.budgetCad)>0?(m.usedCad/m.budgetCad)*100:100;
   const used=Number.isFinite(p)?p:100;
-  $('availableBig').innerHTML=cadWithUsd(m.availableCad,fx);
+  $('availableBig').innerHTML=availableRiskMarkup(m);
   $('availableBig').classList.toggle('negative',isOver);
   $('heroBadge').className=`pill ${isOver?'pill-alert':m.availableCad<25?'pill-warning':'pill-good'}`;
   $('heroBadge').textContent=isOver?'OVER BUDGET':m.availableCad<25?'CAPACITY FULL':'WITHIN PLAN';
@@ -233,11 +236,9 @@ function renderOverview(m){
   $('reservedHint').textContent=`${oc} open position${oc!==1?'s':''} across all ideas`;
   $('lossMetric').innerHTML=cadWithUsd(m.realizedLossCad,fx);
   $('lossHint').textContent=`Gross negative realized entries: ${usd(m.grossRealizedLossCad/fx)} (${cad(m.grossRealizedLossCad)}) (diagnostic). Net profitable attempts do not offset other trades.`;
-  $('capMetric').innerHTML=cadWithUsd(m.budgetCad,fx);
-  $('capHint').textContent=`${m.account.riskPct}% of ${cad(m.currentEquityCad)} tracked equity`;
   $('equityTracker').innerHTML=`<strong>TRACKED ACCOUNT EQUITY</strong> <span class="equity-tracker-value">${cadWithUsd(m.currentEquityCad,fx)}</span> <span class="equity-tracker-detail">${cadWithUsd(m.equityCheckpointCad,fx)} checkpoint · ${cadWithUsd(m.equityChangeCad,fx)} net realized since checkpoint · excludes unrealized P/L</span>`;
   $('costMetric').innerHTML=dualPositionMoney(m.positions.reduce((sum,x)=>sum+x.metrics.remainingCostUsd,0),m.fullPremiumCad);
-  $('costHint').textContent='Total acquisition cost of contracts still held, including buy fees';
+  $('costHint').textContent='Combined purchase cost of all remaining contracts, including buy fees';
   updateBackupBadge();
   const alerts=[];
   if(isOver)alerts.push({kind:'danger',title:`Budget exceeded by ${money(-m.availableCad)}.`,desc:'Stop opening positions. Reduce existing exposure or wait for eligible realized losses to roll out.'});
