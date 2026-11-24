@@ -3,7 +3,7 @@ import {isSession,torontoToday,onOrBeforeSession,parseDay,dayOffset} from './lib
 import {SCHEMA,normalizeLedger,importIbkrTrades,mergeFullBackup,makeJournalEntry,recordPlanEdit,backupSnapshot} from './lib/ledger.mjs';
 import {isIbkrCsv,parseIbkrTrades} from './lib/ibkr.mjs';
 import {createCloudController} from './lib/cloud.mjs';
-import {calculatePlanBasket,defaultPlanIdea,parsePlannedContract,MAX_PLAN_IDEAS,activeIdeaCapCad} from './lib/planner.mjs';
+import {calculatePlanBasket,defaultPlanIdea,parsePlannedContract,MAX_PLAN_IDEAS,activeIdeaCapCad,openContractMatches,remainingDraftQuantity} from './lib/planner.mjs';
 import {PLANNER_LOCAL_KEY,loadPlannerDrafts,savePlannerDrafts,clearPlannerDraftStorage} from './lib/planner-storage.mjs';
 import {DEFAULT_BUY_FEE_USD,DEFAULT_SELL_FEE_USD,estimateOrderFee,ratePerContract} from './lib/fees.mjs';
 import {buildSingleTradeHandoff,singleTradeExportFilename,TRADE_HANDOFF_SCHEMA} from './lib/trade-export.mjs';
@@ -111,10 +111,22 @@ function beginPlannedPosition(draftId){
  const draft=plannerIdeas().find(x=>x.id===draftId);
  if(!draft)return showToast('That draft is no longer present.');
  if(!draftContract(draft))return showToast('Enter a valid ticker, expiry, strike and call/put before recording.');
- const candidate=calculatePlanBasket([draft],account(),analytics().availableCad).rows[0];
- if(!candidate?.valid)return showToast(candidate?.reason||'Enter a valid size before recording.');
- plannerPrefill={...draft,draftId,...draftContract(draft)};
+ const m=analytics(),candidate=calculatePlanBasket([draft],m.account,m.availableCad,m.positions).rows[0];
+ if(!candidate?.valid||!candidate.qty)return showToast(candidate?.reason||'Set the number of additional contracts before recording.');
+ const pref={...draft,draftId,...draftContract(draft)};
+ if(candidate.positionId)return addFill(candidate.positionId,pref);
+ plannerPrefill=pref;
  addPosition();
+}
+// Called only after the ledger is successfully saved; keeping the idea is the safe default.
+function finishDraftRecord(pref,qty){
+ if(!pref?.draftId)return;
+ const draft=plannerIdeas().find(x=>x.id===pref.draftId);
+ if(!draft||draftContractKey(draft)!==draftContractKey(pref))return;
+ draft.qty=String(remainingDraftQuantity(draft.qty,qty));
+ draft.feeManual=false;draft.fee=estimateOrderFee(account(),'BUY',draft.qty).toFixed(2);
+ persistPlannerDrafts();renderPlanner(analytics());
+ dialog('Entry recorded','TRADE IDEA',`<p class="modal-intro"><strong>${qty} contract${qty===1?'':'s'} recorded.</strong> ${draft.qty} planned additional contracts remain. Keep this idea for later entries or close just the idea (your position stays open).</p><div class="modal-actions"><button type="button" class="btn btn-outline" data-action="close-recorded-idea" data-plan-id="${esc(draft.id)}">Close idea</button><button type="button" class="btn btn-primary" data-action="close-dialog" autofocus>Keep idea open</button></div>`);
 }
 function account(){return state.accounts.find(a=>a.id===activeAccountId)||state.accounts[0];}
 function asOf(){return asOfOverride||today();}
@@ -930,7 +942,7 @@ async function refreshOptionQuote(){
 function switchTab(tab){if(!['dashboard','positions','history','settings'].includes(tab))return;activeTab=tab;render();}
 function field(label,name,type='text',value='',opts={}){const attr=Object.entries(opts).map(([k,v])=>` ${k}="${esc(v)}"`).join('');return `<label class="${opts.full?'span-2':''}"><span>${esc(label)}</span><input name="${esc(name)}" type="${type}" value="${esc(value??'')}"${attr}></label>`;}
 function selectField(label,name,options,value){return `<label><span>${esc(label)}</span><select name="${esc(name)}">${options.map(([val,text])=>`<option value="${esc(val)}" ${String(val)===String(value)?'selected':''}>${esc(text)}</option>`).join('')}</select></label>`;}
-function dialog(title,eyebrow,body,submit){$('dialogTitle').textContent=title;$('dialogEyebrow').textContent=eyebrow;$('dialogBody').innerHTML=body;const d=$('editorDialog');d.showModal();const f=$('dialogBody').querySelector('form');if(f&&submit){f.addEventListener('submit',e=>{e.preventDefault();try{const ok=submit(new FormData(f),f);if(ok!==false){d.close();save();render();}}catch(err){showToast(err.message);const msg=f.querySelector('.modal-error');if(msg)msg.textContent=err.message;}});}return f;}
+function dialog(title,eyebrow,body,submit,afterSave){$('dialogTitle').textContent=title;$('dialogEyebrow').textContent=eyebrow;$('dialogBody').innerHTML=body;const d=$('editorDialog');d.showModal();const f=$('dialogBody').querySelector('form');if(f&&submit){f.addEventListener('submit',e=>{e.preventDefault();try{const ok=submit(new FormData(f),f);if(ok!==false){d.close();const saved=save();render();if(saved)afterSave?.(ok);}}catch(err){showToast(err.message);const msg=f.querySelector('.modal-error');if(msg)msg.textContent=err.message;}});}return f;}
 function attachFeeEstimate(form,portfolio,side,{automatic=true}={}){
   if(!form)return;
   const qty=form.elements.namedItem('qty'),fee=form.elements.namedItem('fee');
@@ -962,6 +974,24 @@ function validateAsOf(date){if(date>analytics().asOf)throw new Error('This execu
 function getText(d,k){return String(d.get(k)||'').trim();}
 function validateDeal(a,qty,price,fee,fx,date){requireRange(qty,1,99999,'Contracts');requireRange(price,0,100000,'Option price');requireRange(fee,0,100000,'Commission');requireRange(fx,.01,100,'USD/CAD rate');requireDate(date,'execution date');validateSession(date);}
 function maybeBreach(before,newReserve){if(newReserve>before.availableCad+0.01){return confirm(`This adds ${money(newReserve)} risk but only ${money(Math.max(0,before.availableCad))} is available. Record as an over-budget historical execution anyway?`);}return true;}
+// Only append to a unique currently-open continuous attempt.
+function fillTarget(contract,a){
+ const m=analytics(),matches=openContractMatches(contract,m.positions,a.id);
+ if(matches.length>1)throw Error('Multiple matching open positions. Review them in Positions before recording.');
+ return matches[0]?.position||null;
+}
+function addToExisting(p,a,fill){
+ const before=analytics(),current=calculatePosition(p,a,before.asOf),latest=calculatePosition(p,a,'9999-12-31');
+ if(!current.qty||!latest.qty||current.issues.length||latest.issues.length)throw Error('Position is closed or has execution conflicts. Reconcile in Positions.');
+ if(fill.date>p.expiry)throw Error('Entry cannot be after expiry.');
+ const stamp=`${fill.date}T${fill.time||'23:59'}`;
+ if([...p.fills,...p.exits].some(t=>`${t.date}T${t.time||(p.fills.includes(t)?'00:00':'23:59')}`>stamp)||p.exits.some(t=>t.date===fill.date&&(!fill.time||fill.timeUnverified||t.timeUnverified||!t.time||t.time===fill.time)))throw Error('Earlier or ambiguous fill time could change historical exits. Use IBKR reconciliation or enter verified execution times.');
+ const trial=structuredClone(state),target=trial.positions.find(z=>z.id===p.id);target.fills.push(fill);
+ if(calculatePosition(target,a,'9999-12-31').issues.length)throw Error('Fill conflicts with existing transactions.');
+ const after=calculateAccount(trial,a.id,asOf());
+ if(!maybeBreach(before,after.reserveCad-before.reserveCad))return false;
+ p.fills.push(fill);return true;
+}
 function addPosition(){const a=account(),pref=plannerPrefill;plannerPrefill=null;const now=onOrBeforeSession(asOf(),state.customClosed||[]);
  const body=`<p class="modal-intro">Entry date, exact premium and fees determine the cost. Your 70% assumption affects the reserve, not a broker stop order.</p><form><div class="modal-grid">
  ${field('TICKER','ticker','text',pref?.ticker||'',{required:'required',maxlength:12})}
@@ -989,14 +1019,24 @@ function addPosition(){const a=account(),pref=plannerPrefill;plannerPrefill=null
  </div><div id="newPreview" class="modal-summary"></div>${formEnd('Record position')}</form>`;
  const f=dialog('New swing position','ENTRY / QUOTE',body,(d)=>{
  const ticker=getText(d,'ticker').toUpperCase().replace(/[^A-Z0-9.\-]/g,'');if(!ticker)throw new Error('Enter a ticker.');
- const qty=Math.floor(requireRange(getText(d,'qty'),1,99999,'Contracts'));const price=requireRange(getText(d,'price'),.0001,100000,'Price');const fee=requireRange(getText(d,'fee')||'0',0,100000,'Fees');const fx=requireRange(getText(d,'fx'),.01,100,'USD/CAD');const date=requireDate(getText(d,'date'),'entry date');validateSession(date);validateAsOf(date);
+ const qty=requireRange(getText(d,'qty'),1,99999,'Contracts');if(!Number.isInteger(qty))throw Error('Contracts must be a whole number.');const price=requireRange(getText(d,'price'),.0001,100000,'Price');const fee=requireRange(getText(d,'fee')||'0',0,100000,'Fees');const fx=requireRange(getText(d,'fx'),.01,100,'USD/CAD');const date=requireDate(getText(d,'date'),'entry date');validateSession(date);validateAsOf(date);
  const expiry=requireDate(getText(d,'expiry'),'expiry');if(expiry<date)throw new Error('Expiry cannot precede purchase date.');
  const strike=requireRange(getText(d,'strike'),0,1000000,'Strike');const stress=optional(getText(d,'stressPct'));if(stress!==null)requireRange(String(stress),0,100,'Stress percentage');
- const newReserve=roundUp((qty*price*100+fee)*a.fx*(a.mode==='strict'?100:(stress??a.stressPct))/100,a.roundStep);
+ const contract={ticker,optionType:getText(d,'optionType'),strike,expiry};
+  if(pref?.draftId&&draftContractKey(pref)!==draftContractKey(contract))throw Error('Contract changed. Edit the saved idea before recording.');
+  const existing=fillTarget(contract,a);
+  if(existing){
+   if(!confirm('An open position matches this exact contract. Add this fill to it and keep its existing plan?'))return false;
+   if(!addToExisting(existing,a,{id:uid(),date,time:getText(d,'time')||'23:59',timeUnverified:!getText(d,'time'),qty,price,fee,fx,feeEstimated:f.dataset.feeEstimated==='true'}))return false;
+   showToast(`Added ${qty} ${ticker} to existing position.`);return qty;
+  }
+  const historical=openContractMatches(contract,calculateAccount(state,a.id,date).positions,a.id);
+  if(historical.length)throw Error('This contract was open on that historical date. Use IBKR reconciliation rather than creating an overlapping attempt.');
+  const newReserve=roundUp((qty*price*100+fee)*a.fx*(a.mode==='strict'?100:(stress??a.stressPct))/100,a.roundStep);
  if(!maybeBreach(analytics(),newReserve))return false;
  const position={id:uid(),externalId:'',source:'Manual entry',accountId:a.id,ticker,optionType:getText(d,'optionType'),strike,expiry,sector:getText(d,'sector'),ideaId:getText(d,'ideaId')||`${ticker}-${date}`,underlyingInvalidation:getText(d,'underlyingInvalidation'),targetLevels:getText(d,'targetLevels'),stopPremiumUsd:optional(getText(d,'stopPremiumUsd')),stressPct:stress,fixedReserveCad:null,reviewBy:getText(d,'reviewBy'),thesis:getText(d,'thesis'),catalyst:getText(d,'catalyst'),entryReason:getText(d,'entryReason'),managementPlan:getText(d,'managementPlan'),notes:getText(d,'notes'),journalEntries:[],planHistory:[],fills:[{id:uid(),date,time:getText(d,'time'),timeUnverified:!getText(d,'time'),qty,price,fee,fx,feeEstimated:f.dataset.feeEstimated==='true'}],exits:[]};
- position.planHistory.push({id:uid(),date,createdAt:new Date().toISOString(),source:'Initial plan recorded in app (entry-time status not independently verified)',changes:Object.fromEntries(['underlyingInvalidation','targetLevels','thesis','catalyst','entryReason','managementPlan','notes'].filter(k=>position[k]).map(k=>[k,{before:'',after:position[k]}]))});state.positions.push(position);if(pref?.draftId)dropPlannerIdea(pref.draftId,false);showToast(`Added ${qty} ${ticker} contract${qty!==1?'s':''}.`);return true;
- });
+ position.planHistory.push({id:uid(),date,createdAt:new Date().toISOString(),source:'Initial plan recorded in app (entry-time status not independently verified)',changes:Object.fromEntries(['underlyingInvalidation','targetLevels','thesis','catalyst','entryReason','managementPlan','notes'].filter(k=>position[k]).map(k=>[k,{before:'',after:position[k]}]))});state.positions.push(position);showToast(`Added ${qty} ${ticker} contract${qty!==1?'s':''}.`);return qty;
+ },qty=>finishDraftRecord(pref,qty));
  const preview=()=>{const d=new FormData(f);const q=num(d.get('qty')),price=num(d.get('price')),fee=num(d.get('fee')),fx=num(d.get('fx'),a.fx),stress=optional(d.get('stressPct'))??a.stressPct;
  const cost=q*price*100+fee,raw=cost*a.fx*(a.mode==='strict'?1:stress/100),reserve=roundUp(raw,a.roundStep);
  const box=$('newPreview');if(q>0&&price>0&&fx>0)box.innerHTML=`<strong>${money(reserve)} reserved</strong><span>Cost ${usd(cost)} / ${money(cost*fx)} CAD at entry FX; reserve uses current ${a.fx.toFixed(4)} rate. Budget after entry: ${money(analytics().availableCad-reserve)}.</span>`;else box.innerHTML='<span>Enter a size and price to preview the reserve.</span>';
@@ -1035,19 +1075,20 @@ function closePosition(id){const a=account(),p=findPosition(id),existing=calcula
  }catch(err){$('closePreview').textContent='Set an eligible sale date to preview.';}
  };attachFeeEstimate(f,a,'SELL');f.addEventListener('input',preview);preview();
 }
-function addFill(id){const a=account(),p=findPosition(id),now=analytics().asOf;
- const body=`<p class="modal-intro">Adding to the same idea increases its open cost and reserved risk. This is not a new risk allowance.</p><form><div class="modal-grid">${field('ADDITIONAL CONTRACTS','qty','number',1,{required:'required',min:1,step:1})}${field('PRICE / SHARE USD','price','number','',{required:'required',min:.0001,step:.0001})}${field('TOTAL BUY FEES USD','fee','number',estimateOrderFee(a,'BUY',1),{min:0,step:.0001})}${field('USD / CAD AT BUY','fx','number',a.fx,{min:.01,step:.0001})}${field('DATE','date','date',now,{required:'required'})}${field('TIME ET','time','time','',{step:1})}</div><div id="fillPreview" class="modal-summary"></div>${formEnd('Record added contracts')}</form>`;
+function addFill(id,pref=null){const a=account(),p=findPosition(id),now=analytics().asOf;
+ const body=`<p class="modal-intro">Adding to the same idea increases its open cost and reserved risk. This is not a new risk allowance.</p><form><div class="modal-grid">${field('ADDITIONAL CONTRACTS','qty','number',pref?.qty||1,{required:'required',min:1,step:1})}${field('PRICE / SHARE USD','price','number',pref?.price||'',{required:'required',min:.0001,step:.0001})}${field('TOTAL BUY FEES USD','fee','number',pref?.feeManual?pref.fee:estimateOrderFee(a,'BUY',pref?.qty||1),{min:0,step:.0001})}${field('USD / CAD AT BUY','fx','number',a.fx,{min:.01,step:.0001})}${field('DATE','date','date',now,{required:'required'})}${field('TIME ET','time','time','',{step:1})}</div><div id="fillPreview" class="modal-summary"></div>${formEnd('Record added contracts')}</form>`;
  const f=dialog(`Add to ${p.ticker}`,'SAME IDEA / EXTRA EXPOSURE',body,(d)=>{
- const qty=Math.floor(requireRange(getText(d,'qty'),1,99999,'Contracts')),price=requireRange(getText(d,'price'),.0001,100000,'Premium'),fee=requireRange(getText(d,'fee')||'0',0,100000,'Fees'),fx=requireRange(getText(d,'fx'),.01,100,'FX'),date=requireDate(getText(d,'date'),'entry date');validateSession(date);validateAsOf(date);
- const before=analytics(),copy=structuredClone(state);copy.positions.find(z=>z.id===p.id).fills.push({id:'__add__',date,time:getText(d,'time')||'23:59',qty,price,fee,fx});
- const newCalc=calculateAccount(copy,a.id,asOf()),addedRisk=newCalc.reserveCad-before.reserveCad;
- if(!maybeBreach(before,addedRisk))return false;
- p.fills.push({id:uid(),date,time:getText(d,'time')||'23:59',timeUnverified:!getText(d,'time'),qty,price,fee,fx,feeEstimated:f.dataset.feeEstimated==='true'});showToast(`Added ${qty} contract${qty===1?'':'s'} to ${p.ticker}.`);return true;
- });
- const preview=()=>{const d=new FormData(f),qty=num(d.get('qty')),price=num(d.get('price')),fee=num(d.get('fee'));if(qty<1||price<=0){$('fillPreview').innerHTML='<span>Enter contracts and premium to preview added risk.</span>';return;}
+ const qty=requireRange(getText(d,'qty'),1,99999,'Contracts'),price=requireRange(getText(d,'price'),.0001,100000,'Premium'),fee=requireRange(getText(d,'fee')||'0',0,100000,'Fees'),fx=requireRange(getText(d,'fx'),.01,100,'FX'),date=requireDate(getText(d,'date'),'entry date');validateSession(date);validateAsOf(date);
+ if(!Number.isInteger(qty))throw Error('Contracts must be a whole number.');
+ if(pref&&fillTarget(pref,a)?.id!==p.id)throw Error('Matching position changed. Reopen the idea.');
+ if(!addToExisting(p,a,{id:uid(),date,time:getText(d,'time')||'23:59',timeUnverified:!getText(d,'time'),qty,price,fee,fx,feeEstimated:f.dataset.feeEstimated==='true'}))return false;
+ showToast(`Added ${qty} contract${qty===1?'':'s'} to ${p.ticker}.`);return qty;
+ },qty=>finishDraftRecord(pref,qty));
+ const preview=()=>{const d=new FormData(f),qty=num(d.get('qty')),price=num(d.get('price')),fee=num(d.get('fee'));if(!Number.isInteger(qty)||qty<1||price<=0){$('fillPreview').innerHTML='<span>Enter contracts and premium to preview added risk.</span>';return;}
  const before=analytics(),clone=structuredClone(state);clone.positions.find(z=>z.id===p.id).fills.push({id:'__preview__',date:String(d.get('date')),time:String(d.get('time')||'23:59'),qty,price,fee,fx:num(d.get('fx'),a.fx)});
- const after=calculateAccount(clone,a.id,asOf());$('fillPreview').innerHTML=`<strong>Additional reserve: ${money(after.reserveCad-before.reserveCad)}</strong><span>Available after add: ${money(after.availableCad)}. Your per-idea allowance does not reset.</span>`;
- };attachFeeEstimate(f,a,'BUY');f.addEventListener('input',preview);preview();
+ const after=calculateAccount(clone,a.id,asOf()),z=after.positions.find(x=>x.position.id===p.id)?.metrics,old=before.positions.find(x=>x.position.id===p.id)?.metrics,cap=activeIdeaCapCad(a);
+ $('fillPreview').innerHTML=`<strong>${old.qty} held → ${z.qty} combined · avg ${z.averageEntryUsd===null?'—':usd(z.averageEntryUsd,4)}</strong><span>Additional reserve ${cad(after.reserveCad-before.reserveCad)} · combined ${cad(z.reserveCad)} · available after add ${cad(after.availableCad)}.${cap!==null&&z.reserveCad>cap?' Above fixed idea guide.':''}</span>`;
+ };attachFeeEstimate(f,a,'BUY',{automatic:!pref?.feeManual});f.addEventListener('input',preview);preview();
 }
 function editPosition(id){const p=findPosition(id);const body=`<p class="modal-intro">Update your forward-looking risk plan. Do not rewrite what you knew before entry. No existing fills or realized results are changed.</p><form><div class="modal-grid">
  ${field('TICKER','ticker','text',p.ticker,{required:'required',maxlength:12})}${selectField('OPTION TYPE','optionType',[['Put','Put'],['Call','Call']],p.optionType)}
@@ -1282,6 +1323,7 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'edit-exit':editExit(id,el.dataset.tx);break;
  case 'view-position':openPositionDetail(id);break;
  case 'add-fill':addFill(id);break;
+ case 'close-recorded-idea':$('editorDialog').close();dropPlannerIdea(el.dataset.planId);break;
  case 'manual-pnl':manualPnl();break;
  case 'add-account':addAccount();break;
  case 'close-dialog':$('editorDialog').close();break;
