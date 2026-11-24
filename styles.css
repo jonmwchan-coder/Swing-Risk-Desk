@@ -885,3 +885,10 @@ html,body{max-width:100%}
 .studio-expected-range[data-range-status="loading"]{color:#b1bdd4}
 @media(max-width:690px){.chain-date-range-row{align-items:flex-start;gap:7px}
  .chain-atm-range{min-height:25px;font-size:11px;padding:5px 7px}}
+
+/* v3.16: finance first, risk second; compact on smaller cards. */
+.position-card .pos-data.pos-performance,.position-card .pos-data.pos-risk-row{grid-template-columns:repeat(4,minmax(0,1fr));max-width:none;gap:8px 10px}
+.position-card .pos-data.pos-performance strong,.position-card .pos-data.pos-risk-row strong{font-size:clamp(13px,1.5vw,19px);white-space:normal;overflow-wrap:anywhere}
+.position-card .pos-data.pos-performance small,.position-card .pos-data.pos-risk-row small{overflow-wrap:anywhere;white-space:normal}
+.position-card .pos-data.pos-risk-row{margin-top:4px}
+@media(max-width:600px){.position-card .pos-data.pos-performance,.position-card .pos-data.pos-risk-row{grid-template-columns:repeat(2,minmax(0,1fr))}}

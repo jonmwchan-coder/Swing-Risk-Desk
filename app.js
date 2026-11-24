@@ -1,9 +1,9 @@
 import {calculateAccount,calculatePosition,simulateExit,budgetRunway,lossReleases,round2,roundUp} from './lib/risk.mjs';
 import {isSession,torontoToday,onOrBeforeSession,parseDay,dayOffset} from './lib/calendar.mjs';
-import {SCHEMA,normalizeLedger,importIbkrTrades,mergeFullBackup,makeJournalEntry,recordPlanEdit,backupSnapshot} from './lib/ledger.mjs';
+import {SCHEMA,normalizeLedger,importIbkrTrades,mergeFullBackup,makeJournalEntry,recordPlanEdit,backupSnapshot,planOpenPositionMerge} from './lib/ledger.mjs';
 import {isIbkrCsv,parseIbkrTrades} from './lib/ibkr.mjs';
 import {createCloudController} from './lib/cloud.mjs';
-import {calculatePlanBasket,defaultPlanIdea,parsePlannedContract,MAX_PLAN_IDEAS,activeIdeaCapCad} from './lib/planner.mjs';
+import {calculatePlanBasket,defaultPlanIdea,parsePlannedContract,MAX_PLAN_IDEAS,activeIdeaCapCad,openContractMatches,remainingDraftQuantity} from './lib/planner.mjs';
 import {PLANNER_LOCAL_KEY,loadPlannerDrafts,savePlannerDrafts,clearPlannerDraftStorage} from './lib/planner-storage.mjs';
 import {DEFAULT_BUY_FEE_USD,DEFAULT_SELL_FEE_USD,estimateOrderFee,ratePerContract} from './lib/fees.mjs';
 import {buildSingleTradeHandoff,singleTradeExportFilename,TRADE_HANDOFF_SCHEMA} from './lib/trade-export.mjs';
@@ -57,6 +57,7 @@ let positionFilter='open';
 let asOfOverride=null;
 let toastTimer=null;
 let plannerPrefill=null;
+const positionQuotes=new Map();
 let selectedPreviewId=null;
 let optionPanelMode='analyze';
 let chainSide='Put';
@@ -111,10 +112,22 @@ function beginPlannedPosition(draftId){
  const draft=plannerIdeas().find(x=>x.id===draftId);
  if(!draft)return showToast('That draft is no longer present.');
  if(!draftContract(draft))return showToast('Enter a valid ticker, expiry, strike and call/put before recording.');
- const candidate=calculatePlanBasket([draft],account(),analytics().availableCad).rows[0];
- if(!candidate?.valid)return showToast(candidate?.reason||'Enter a valid size before recording.');
- plannerPrefill={...draft,draftId,...draftContract(draft)};
+ const m=analytics(),candidate=calculatePlanBasket([draft],m.account,m.availableCad,m.positions).rows[0];
+ if(!candidate?.valid||!candidate.qty)return showToast(candidate?.reason||'Set the number of additional contracts before recording.');
+ const pref={...draft,draftId,...draftContract(draft)};
+ if(candidate.positionId)return addFill(candidate.positionId,pref);
+ plannerPrefill=pref;
  addPosition();
+}
+// Called only after the ledger is successfully saved; keeping the idea is the safe default.
+function finishDraftRecord(pref,qty){
+ if(!pref?.draftId)return;
+ const draft=plannerIdeas().find(x=>x.id===pref.draftId);
+ if(!draft||draftContractKey(draft)!==draftContractKey(pref))return;
+ draft.qty=String(remainingDraftQuantity(draft.qty,qty));
+ draft.feeManual=false;draft.fee=estimateOrderFee(account(),'BUY',draft.qty).toFixed(2);
+ persistPlannerDrafts();renderPlanner(analytics());
+ dialog('Entry recorded','TRADE IDEA',`<p class="modal-intro"><strong>${qty} contract${qty===1?'':'s'} recorded.</strong> ${draft.qty} planned additional contracts remain. Keep this idea for later entries or close just the idea (your position stays open).</p><div class="modal-actions"><button type="button" class="btn btn-outline" data-action="close-recorded-idea" data-plan-id="${esc(draft.id)}">Close idea</button><button type="button" class="btn btn-primary" data-action="close-dialog" autofocus>Keep idea open</button></div>`);
 }
 function account(){return state.accounts.find(a=>a.id===activeAccountId)||state.accounts[0];}
 function asOf(){return asOfOverride||today();}
@@ -231,14 +244,35 @@ function renderOverview(m){
   const runway=budgetRunway(state,m.account.id,asOf(),10);
   $('runwayChart').innerHTML=runway.map((r,i)=>{const h=m.budgetCad>0?Math.max(4,Math.min(100,100*Math.max(0,r.available)/m.budgetCad)):4;return `<div class="runway-item"><div class="runway-number ${r.available<0?'neg':''}">${money(r.available,0)}</div><div class="runway-bar-box"><div class="runway-bar ${r.available<0?'negative':''}" style="height:${h}%"></div></div><div class="runway-date">${i===0?'NOW':fmtDate(r.date)}</div></div>`;}).join('');
 }
+function quoteForPosition(p,z){
+ if(z.qty===0)return {value:0,detail:'No open contracts',refresh:false};
+ if(analytics().asOf!==onOrBeforeSession(today(),state.customClosed||[]))return {value:null,detail:'Historical view · no quote',refresh:false};
+ const symbol=buildOCCSymbol(draftContract(p)),q=positionQuotes.get(symbol);
+ if(!symbol||Number(p.multiplier||100)!==100||p.expiry<today())return {value:null,detail:'Quote unavailable',refresh:false};
+ return {value:q?.mid!=null?z.qty*Number(p.multiplier||100)*q.mid:null,detail:q?.loading?'Refreshing…':q?.error?'Quote unavailable · retry':q?.mid!=null?`Mid ${usd(q.mid,4)} · ${q.at?new Date(q.at).toLocaleString('en-CA',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZone:'America/Toronto'})+' ET':'time unknown'} · indicative`:'Refresh indicative quote',refresh:true};
+}
+async function refreshPositionQuote(id){
+ const p=findPosition(id),symbol=buildOCCSymbol(draftContract(p));
+ if(!symbol||positionQuotes.get(symbol)?.loading)return;
+ positionQuotes.set(symbol,{loading:true});render();
+ try{
+  const response=await fetch(`/api/option-quote?symbol=${encodeURIComponent(symbol)}`,{cache:'no-store'});
+  const data=await response.json().catch(()=>({}));
+  const bid=Number(data.optionBidUsd),ask=Number(data.optionAskUsd);
+  if(!response.ok||data.symbol!==symbol||data.optionBidUsd==null||data.optionAskUsd==null||!Number.isFinite(bid)||!Number.isFinite(ask)||bid<0||ask<=0||ask<bid)throw Error(data.error||'No valid indicative bid/ask');
+  positionQuotes.set(symbol,{mid:(bid+ask)/2,at:data.quoteAt&&Number.isFinite(Date.parse(data.quoteAt))?data.quoteAt:null});
+ }catch(err){positionQuotes.set(symbol,{error:true});showToast(String(err.message||'Quote unavailable').slice(0,180));}
+ render();
+}
 function positionCard(x,full){const p=x.position,z=x.metrics;const isOpen=z.qty>0;const days=p.expiry?Math.round((new Date(`${p.expiry}T12:00:00Z`)-new Date(`${analytics().asOf}T12:00:00Z`))/86400000):null;
  const fmt=days===null?'No expiry':days<0?`Expired ${-days}d ago`:days===0?'Expires today':`${days} calendar days to expiry`;
- const label=p.optionType==='Put'?'P':'C';const flag=!p.underlyingInvalidation?.trim();
+ const label=p.optionType==='Put'?'P':'C';const flag=!p.underlyingInvalidation?.trim();const quote=quoteForPosition(p,z);const duplicates=isOpen&&analytics().asOf===onOrBeforeSession(today(),state.customClosed||[])?openContractMatches(p,analytics().positions,p.accountId).length:0;
  return `<article class="position-card" data-position="${esc(p.id)}">
   <div class="pos-top"><div><div class="pos-ticker">${esc(p.ticker)}</div><div class="pos-contract">${esc(p.expiry?fmtDate(p.expiry,true):'')} ${esc(p.strike||'?')}${label} <span style="color:#688e9a">/</span> ${esc(p.ideaId||'Single idea')}</div><div class="pos-meta">${esc(p.sector||'Sector not recorded')} &bull; ${esc(fmt)}</div></div><div class="pos-badge ${isOpen?'':'closed'}">${isOpen?`${z.qty} OPEN`:'CLOSED'}</div></div>
-  <div class="pos-data"><div><div class="pos-data-label">RISK RESERVE</div><strong>${money(z.reserveCad,0)}</strong><small>${z.hasFixed?'Reserve floor applied':`${z.reservePct}% stress / cap`}</small></div><div><div class="pos-data-label">REMAINING DEBIT</div><strong>${money(z.premiumCad,0)}</strong><small>CAD at current FX</small></div><div><div class="pos-data-label">PLANNED LOSS</div><strong>${z.planLoss===null?'Not set':money(z.planLoss,0)}</strong><small>${z.planLoss===null?'Add option exit est.':'Estimated at stop mark'}</small></div>${full?`<div><div class="pos-data-label">REALIZED NET</div><strong class="${z.realizedTotal<0?'neg':'pos'}">${money(z.realizedTotal,0)}</strong><small>Recorded exits to date</small></div><div><div class="pos-data-label">REALIZED RETURN</div><strong class="${z.realizedReturnPct===null?'':z.realizedReturnPct<0?'neg':'pos'}">${formattedReturn(z.realizedReturnPct)}</strong><small>Closed contracts · net of fees</small></div><div><div class="pos-data-label">STRESS RATE</div><strong>${z.reservePct}%</strong><small>${z.stressPct===account().stressPct?'Default or same':'Custom'}</small></div>`:''}</div>
+  <div class="pos-data pos-performance"><div><div class="pos-data-label">TOTAL ENTRY COST</div><strong>${usd(z.totalEntryDebitUsd)}</strong><small>Avg ${z.averageEntryUsd===null?'—':usd(z.averageEntryUsd,4)} / share · fees in total</small></div><div><div class="pos-data-label">MARKET VALUE</div><strong>${quote.value===null?'—':usd(quote.value)}</strong><small>${esc(quote.detail)} ${quote.refresh?`<button class="fee-reset-mini" type="button" data-action="refresh-position-quote" data-id="${esc(p.id)}" title="Refresh indicative option midpoint">Refresh</button>`:''}</small></div><div><div class="pos-data-label">REALIZED NET</div><strong class="${z.realizedTotal<0?'neg':'pos'}">${cad(z.realizedTotal)}</strong><small>Recorded exits to date</small></div><div><div class="pos-data-label">REALIZED RETURN</div><strong class="${z.realizedReturnPct===null?'':z.realizedReturnPct<0?'neg':'pos'}">${formattedReturn(z.realizedReturnPct)}</strong><small>Closed contracts · net of fees</small></div></div>
+  <div class="pos-data pos-risk-row"><div><div class="pos-data-label">RISK RESERVE</div><strong>${cad(z.reserveCad,0)}</strong><small>${z.hasFixed?'Reserve floor applied':`${z.reservePct}% stress / cap`}</small></div><div><div class="pos-data-label">REMAINING DEBIT</div><strong>${cad(z.premiumCad,0)}</strong><small>CAD at current FX</small></div><div><div class="pos-data-label">PLANNED LOSS</div><strong>${z.planLoss===null?'Not set':cad(z.planLoss,0)}</strong><small>${z.planLoss===null?'Add option exit est.':'Estimated at stop mark'}</small></div><div><div class="pos-data-label">STRESS RATE</div><strong>${z.reservePct}%</strong><small>${z.stressPct===account().stressPct?'Default or same':'Custom'}</small></div></div>
   <div class="pos-note"><span class="${flag?'warning':''}">${flag?'Needs an underlying invalidation / time stop':`Wrong if: ${esc(p.underlyingInvalidation).slice(0,125)}`}${p.targetLevels?`<br>Targets: ${esc(p.targetLevels).slice(0,200)}`:''}${p.thesis?`<br>Idea: ${esc(p.thesis).slice(0,160)}`:''}</span><span>${esc(p.reviewBy?`Review by ${fmtDate(p.reviewBy)}`:'')}</span></div>
-  <div class="pos-actions">${isOpen?`<button type="button" class="btn-mini emph" data-action="close-position" data-id="${esc(p.id)}">Record exit</button><button type="button" class="btn-mini" data-action="add-fill" data-id="${esc(p.id)}">Add contracts</button>`:''}<button type="button" class="btn-mini" data-action="edit-position" data-id="${esc(p.id)}">Edit plan</button><button type="button" class="btn-mini" data-action="add-note" data-id="${esc(p.id)}">+ Journal note</button>${full?`<button type="button" class="btn-mini" data-action="export-trade" data-id="${esc(p.id)}" title="Download only this position for GPT master review">Export trade</button>`:''}${full?`<button type="button" class="btn-mini" data-action="see-transactions" data-id="${esc(p.id)}">Fills / corrections</button><button type="button" class="btn-mini" data-action="delete-position" data-id="${esc(p.id)}">Delete</button>`:''}</div>
+  <div class="pos-actions">${isOpen?`<button type="button" class="btn-mini emph" data-action="close-position" data-id="${esc(p.id)}">Record exit</button><button type="button" class="btn-mini" data-action="add-fill" data-id="${esc(p.id)}">Add contracts</button>${duplicates>1?`<button type="button" class="btn-mini" data-action="merge-positions" data-id="${esc(p.id)}" title="Review matching open positions before merging">Merge duplicates (${duplicates})</button>`:''}`:''}<button type="button" class="btn-mini" data-action="edit-position" data-id="${esc(p.id)}">Edit plan</button><button type="button" class="btn-mini" data-action="add-note" data-id="${esc(p.id)}">+ Journal note</button>${full?`<button type="button" class="btn-mini" data-action="export-trade" data-id="${esc(p.id)}" title="Download only this position for GPT master review">Export trade</button>`:''}${full?`<button type="button" class="btn-mini" data-action="see-transactions" data-id="${esc(p.id)}">Fills / corrections</button><button type="button" class="btn-mini" data-action="delete-position" data-id="${esc(p.id)}">Delete</button>`:''}</div>
   ${full?`<details class="pos-details" id="detail-${esc(p.id)}"><summary>Original record and transactions</summary><p class="help-line">Source: ${esc(p.source||'Manual entry')} &bull; Master ID: ${esc(p.externalId||'Not linked')}</p><div class="plan-details"><div><strong>Thesis</strong><p>${esc(p.thesis||'Not recorded')}</p></div><div><strong>Catalyst / why now</strong><p>${esc(p.catalyst||'Not recorded')} ${esc(p.entryReason||'')}</p></div><div><strong>Management</strong><p>${esc(p.managementPlan||'Not recorded')}</p></div><div><strong>Other notes</strong><p>${esc(p.notes||'Not recorded')}</p></div></div><div class="journal-timeline">${renderTimeline(p)}</div><div class="modal-transaction-list">${transactionList(p)}</div></details>`:''}</article>`;
 }
 function renderTimeline(p){
@@ -488,13 +522,13 @@ function renderPlanner(m){
  }
  if(changed)persistPlannerDrafts();
  const sortedIdeas=sortPlanIdeas(ideas,planSortMode);
- const basket=calculatePlanBasket(sortedIdeas,m.account,m.availableCad);
+ const basket=calculatePlanBasket(sortedIdeas,m.account,m.availableCad,m.positions);
  const byId=new Map(basket.rows.map(x=>[x.id,x]));
  const fixedIdeaCap=activeIdeaCapCad(m.account);
  $('quickPlanner').innerHTML=sortedIdeas.map((idea,index)=>{
   const editing=expandedPlanId===idea.id,active=editing||selectedPreviewId===idea.id;
   const riskRow=byId.get(idea.id),overCap=Boolean(riskRow?.overIdeaCap);
-  const capOverCad=overCap?riskRow.reserveCad-fixedIdeaCap:0;
+  const capOverCad=overCap?riskRow.totalReserveCad-fixedIdeaCap:0;
   const symbol=normalizeTicker(idea.ticker)||'NEW TICKER',name=idea.name||'Untitled idea';
 
   const moneyOrDash=v=>String(v??'').trim()&&Number.isFinite(Number(v))&&Number(v)>0?money(Number(v)):'—';
@@ -503,14 +537,14 @@ function renderPlanner(m){
   const quoteTone=idea.quoteStatus==='unavailable'?'warning':idea.priceManual?'manual':idea.quoteStatus==='indicative'?'indicative':idea.quoteStatus==='saved'?'warning':'empty';
   return `<article class="draft-idea ${active?'is-active':''} ${editing?'is-expanded':'is-collapsed'} ${overCap?'is-over-idea-cap':''}" data-draft-id="${esc(idea.id)}">
     <div class="draft-head"><div class="draft-identity"><strong class="draft-ticker" data-idea-ticker>${esc(symbol)}</strong><span class="draft-idea-name" data-idea-name>${esc(name)}</span><span class="draft-contract-hero" data-idea-contract aria-label="Selected expiration and strike">${compactContractMarkup(idea)}</span><span data-listing-badge class="draft-listing-indicator">${listingBadge(idea)}</span></div>
-      <div class="draft-actions"><button type="button" class="draft-edit-btn" data-action="toggle-plan-details" data-plan-id="${esc(idea.id)}" aria-expanded="${editing}">${editing?'Done':'Edit'}</button><button type="button" class="draft-preview-btn" data-action="analyze-idea" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id&&optionPanelMode==='analyze'}">${selectedPreviewId===idea.id&&optionPanelMode==='analyze'?'Hide %':'Analyze %'}</button><button type="button" class="draft-chain-btn" data-action="view-option-chain" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id&&optionPanelMode==='chain'}" title="Compare call and put volume, open interest and indicative quotes for this expiration">${selectedPreviewId===idea.id&&optionPanelMode==='chain'?'Hide chain':'View chain'}</button><button type="button" class="draft-record" data-action="plan-to-position" data-plan-id="${esc(idea.id)}">Record</button><button type="button" class="draft-remove" data-action="remove-plan-idea" data-plan-id="${esc(idea.id)}" aria-label="Remove ${esc(symbol)} ${esc(name)}">×</button></div></div>
-    <div class="draft-compact-line"><span class="draft-mini-field">Qty <strong data-idea-qty>${esc(idea.qty||'—')}</strong></span><span class="draft-mini-field">Premium <strong data-idea-premium>${esc(premium)}</strong><small>/share</small></span><span class="draft-mini-quote" data-tone="${quoteTone}" data-idea-quote>${idea.quoteStatus==='loading'?'<span class="mini-spin" aria-hidden="true"></span> ':''}${esc(quote)}</span></div>
-    <div class="draft-cap-alert" data-cap-warning="${esc(idea.id)}" role="status" ${overCap?'':'hidden'}>${overCap?`<strong>ABOVE FIXED IDEA CAP · +${cad(capOverCad)}</strong><span>This idea uses ${cad(riskRow.reserveCad)} vs your ${cad(fixedIdeaCap)} guide. Rolling pool is separate.</span><button type="button" data-action="focus-cap-policy" title="Review your fixed versus flexible risk allocation">Review policy</button>`:''}</div>
+      <div class="draft-actions"><button type="button" class="draft-edit-btn" data-action="toggle-plan-details" data-plan-id="${esc(idea.id)}" aria-expanded="${editing}">${editing?'Done':'Edit'}</button><button type="button" class="draft-preview-btn" data-action="analyze-idea" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id&&optionPanelMode==='analyze'}">${selectedPreviewId===idea.id&&optionPanelMode==='analyze'?'Hide %':'Analyze %'}</button><button type="button" class="draft-chain-btn" data-action="view-option-chain" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id&&optionPanelMode==='chain'}" title="Compare call and put volume, open interest and indicative quotes for this expiration">${selectedPreviewId===idea.id&&optionPanelMode==='chain'?'Hide chain':'View chain'}</button><button type="button" class="draft-record" data-action="plan-to-position" data-plan-id="${esc(idea.id)}" ${riskRow?.valid&&riskRow.qty>0&&draftContract(idea)?'':'disabled'}>${riskRow?.existingQty?'Record add':'Record'}</button><button type="button" class="draft-remove" data-action="remove-plan-idea" data-plan-id="${esc(idea.id)}" aria-label="Remove ${esc(symbol)} ${esc(name)}">×</button></div></div>
+    <div class="draft-compact-line"><span class="draft-mini-field"><strong data-idea-held></strong> Add <strong data-idea-qty>${esc(idea.qty||'—')}</strong></span><span class="draft-mini-field">Premium <strong data-idea-premium>${esc(premium)}</strong><small>/share</small></span><span class="draft-mini-quote" data-tone="${quoteTone}" data-idea-quote>${idea.quoteStatus==='loading'?'<span class="mini-spin" aria-hidden="true"></span> ':''}${esc(quote)}</span></div>
+    <div class="draft-cap-alert" data-cap-warning="${esc(idea.id)}" role="status" ${overCap?'':'hidden'}>${overCap?`<strong>ABOVE FIXED IDEA CAP · +${cad(capOverCad)}</strong><span>Combined position uses ${cad(riskRow.totalReserveCad)} vs your ${cad(fixedIdeaCap)} guide. Rolling pool is separate.</span><button type="button" data-action="focus-cap-policy" title="Review your fixed versus flexible risk allocation">Review policy</button>`:''}</div>
     ${editing?`<div class="draft-editor"><div class="draft-editor-heading"><strong>Contract setup</strong><span>Independent contract and assumptions per idea</span></div>
       <label class="draft-name-field"><span>IDEA NAME</span><input type="text" name="name" maxlength="80" value="${esc(idea.name||'')}" placeholder="Breakout continuation"></label>
       <div class="draft-contract-fields"><label><span>TICKER</span><input type="text" name="ticker" maxlength="12" value="${esc(idea.ticker||'')}" placeholder="IREN" autocomplete="off" spellcheck="false"></label><label><span>TYPE</span><select name="optionType"><option value="Call" ${idea.optionType!=='Put'?'selected':''}>Call</option><option value="Put" ${idea.optionType==='Put'?'selected':''}>Put</option></select></label>${expirationField(idea)}<label><span>STRIKE (USD)</span><input type="number" name="strike" min="0.001" step="0.001" value="${esc(idea.strike||'')}" placeholder="Choose in chain"></label></div>
       <div class="draft-editor-heading draft-editor-pricing"><strong>Entry &amp; risk</strong><span>Typing premium = manual override</span></div>
-      <div class="draft-fields"><label><span>QTY</span><input type="number" inputmode="numeric" name="qty" min="1" step="1" value="${esc(idea.qty)}" aria-label="Idea ${index+1} contract quantity"></label><label><span>BUY PREMIUM (USD/SHARE)</span><input type="number" inputmode="decimal" name="price" min="0.01" step="0.0001" value="${esc(idea.price)}" aria-label="Idea ${index+1} price per share in USD"></label><label><span>BUY FEES (USD) <button class="fee-reset-mini" type="button" data-action="reset-draft-fee" data-plan-id="${esc(idea.id)}">Auto</button></span><input type="number" inputmode="decimal" name="fee" min="0" step="0.01" value="${esc(idea.fee)}" aria-label="Idea ${index+1} total entry commissions in USD"></label><label><span>EST. LOSS %</span><input type="number" inputmode="numeric" name="stress" min="0" max="100" step="1" value="${esc(idea.stress)}" aria-label="Idea ${index+1} stress loss percent"></label></div></div>`:''}
+      <div class="draft-fields"><label><span>ADDITIONAL QTY</span><input type="number" inputmode="numeric" name="qty" min="0" step="1" value="${esc(idea.qty)}" aria-label="Idea ${index+1} contract quantity"></label><label><span>BUY PREMIUM (USD/SHARE)</span><input type="number" inputmode="decimal" name="price" min="0.01" step="0.0001" value="${esc(idea.price)}" aria-label="Idea ${index+1} price per share in USD"></label><label><span>BUY FEES (USD) <button class="fee-reset-mini" type="button" data-action="reset-draft-fee" data-plan-id="${esc(idea.id)}">Auto</button></span><input type="number" inputmode="decimal" name="fee" min="0" step="0.01" value="${esc(idea.fee)}" aria-label="Idea ${index+1} total entry commissions in USD"></label><label><span>EST. LOSS %</span><input type="number" inputmode="numeric" name="stress" min="0" max="100" step="1" value="${esc(riskRow?.positionId?riskRow.stress??idea.stress:idea.stress)}" ${riskRow?.positionId?'disabled title="Uses existing position stress; edit the position plan to change it"':''} aria-label="Idea ${index+1} stress loss percent"></label></div></div>`:''}
     <div class="draft-metrics" data-plan-status="${esc(idea.id)}"></div>
     <details class="draft-quote-detail"><summary>Quote details</summary><div class="draft-quote-body"><div><span>Source</span><strong>${esc(p.quoteSource||'Not requested')}</strong></div><div><span>Bid / ask</span><strong>${esc(moneyOrDash(p.bid))} / ${esc(moneyOrDash(p.ask))}</strong></div><div><span>Midpoint</span><strong>${esc(mid)}</strong></div><div><span>Quote time (UTC)</span><strong>${esc(p.quoteAt||'Not available')}</strong></div><p>${esc(idea.quoteMessage||'Select a contract to request a quote.')}</p><small>Indicative Alpaca Basic, not executable OPRA quotes. Verify your broker quote.</small></div></details>
    </article>`;
@@ -521,35 +555,40 @@ function renderPlanner(m){
  updatePlannerMetrics(m);renderOptionPreview();
 }
 function updatePlannerMetrics(m){
- const ideas=sortPlanIdeas(plannerIdeas(m.account.id),planSortMode);const result=calculatePlanBasket(ideas,m.account,m.availableCad);
+ const ideas=sortPlanIdeas(plannerIdeas(m.account.id),planSortMode);const result=calculatePlanBasket(ideas,m.account,m.availableCad,m.positions);
  const activeCap=activeIdeaCapCad(m.account);
  for(const r of result.rows){const el=[...document.querySelectorAll('[data-plan-status]')].find(x=>x.dataset.planStatus===r.id);if(!el)continue;
+   const card=el.closest?.('.draft-idea'),idea=ideas.find(i=>i.id===r.id);
+   const held=card?.querySelector('[data-idea-held]'),record=card?.querySelector('[data-action="plan-to-position"]'),stressInput=card?.querySelector('[name="stress"]');
+   if(held)held.textContent=r.existingQty?`${r.existingQty} held${r.valid?` / ${r.existingQty+r.qty} planned ·`:' ·'}`:'';
+   if(record){record.disabled=!r.valid||!r.qty||!draftContract(idea);record.textContent=r.existingQty?'Record add':'Record';}
+   if(stressInput){stressInput.disabled=!!r.positionId;if(r.positionId&&r.stress!=null)stressInput.value=String(r.stress);else if(document.activeElement!==stressInput)stressInput.value=idea.stress;}
   const warnEl=[...document.querySelectorAll('[data-cap-warning]')].find(x=>x.dataset.capWarning===r.id);
   if(warnEl){
    warnEl.hidden=!r.valid||!r.overIdeaCap;
-   const overCad=r.valid&&r.overIdeaCap?r.reserveCad-activeCap:0;
-   if(!warnEl.hidden)warnEl.innerHTML=`<strong>ABOVE FIXED IDEA CAP · +${cad(overCad)}</strong><span>This idea uses ${cad(r.reserveCad)} vs your ${cad(activeCap)} guide. Rolling pool is separate.</span><button type="button" data-action="focus-cap-policy">Review policy</button>`;
+   const overCad=r.valid&&r.overIdeaCap?r.totalReserveCad-activeCap:0;
+   if(!warnEl.hidden)warnEl.innerHTML=`<strong>ABOVE FIXED IDEA CAP · +${cad(overCad)}</strong><span>Combined position uses ${cad(r.totalReserveCad)} vs your ${cad(activeCap)} guide. Rolling pool is separate.</span><button type="button" data-action="focus-cap-policy">Review policy</button>`;
    warnEl.closest?.('.draft-idea')?.classList?.toggle('is-over-idea-cap',!warnEl.hidden);
   }
   if(!r.valid){el.className='draft-metrics draft-incomplete';el.textContent=r.reason;continue;}
-  const warning=r.overIdeaCap?`<small class="draft-cap-warning">Fixed guide exceeded by ${cad(r.reserveCad-activeCap)} (limit ${cad(activeCap)})</small>`:'';
+  const warning=r.overIdeaCap?`<small class="draft-cap-warning">Fixed guide exceeded by ${cad(r.totalReserveCad-activeCap)} (limit ${cad(activeCap)})</small>`:'';
   el.className=`draft-metrics ${r.overBudget?'draft-breach':''}`;
   el.innerHTML=`<div class="draft-metric draft-premium-total"><span>Option premiums (USD)</span><strong>${usd(r.premiumTotalUsd)}</strong><small>${r.qty} contracts × ${usd(r.price)} per share × 100</small></div>
     <div class="draft-metric"><span>Estimated buy fees (USD)</span><strong>${usd(r.fee)}</strong><small>Additional to option premiums · estimated entry fees</small></div>
-    <div class="draft-metric"><span>5-day risk budget used (CAD)</span><strong>${cad(r.reserveCad)}</strong><small>${m.account.mode==='strict'?'100% of estimated buy cost':`${r.stress}% assumed loss`} · not cash paid to IBKR</small>${warning}</div>
-    <div class="draft-metric"><span>Remaining Risk Budget (CAD)</span><strong>${cad(r.remainingCad)}</strong><small>After this and preceding draft ideas</small></div>`;
+    <div class="draft-metric"><span>Additional risk (CAD)</span><strong>${cad(r.reserveCad)}</strong><small>${r.existingQty?`Held ${cad(r.existingReserveCad)} → combined ${cad(r.totalReserveCad)}`:m.account.mode==='strict'?'100% of estimated buy cost':`${r.stress}% assumed loss`}</small>${warning}</div>
+    <div class="draft-metric"><span>Remaining Risk Budget (CAD)</span><strong>${cad(r.remainingCad)}</strong><small>After open positions, rolling losses and preceding drafts</small></div>`;
  }
 
  const capMode=$('plannerCapMode'),capHelp=$('plannerCapPolicyHelp');
  if(capMode)capMode.value=activeCap===null?'pool':'fixed';
  if(capHelp)capHelp.textContent=activeCap===null
   ?`Flexible: share ${cad(Math.max(0,result.availableCad))} currently available across one or several ideas. No individual cap warning; the combined rolling budget still applies. ${m.account.mode==='strict'?'Strict mode reserves the full option debit.':'Stress-loss reserves are estimates, not worst-case losses; an option can lose its full debit.'}`
-  :`Fixed: each idea is compared with ${cad(activeCap)}. A warning is advisory; the combined rolling risk ceiling still applies.`;
+  :`Fixed: each combined position or new idea is compared with ${cad(activeCap)}. A warning is advisory; the combined rolling risk ceiling still applies.`;
  const flags=$('plannerCapFlagSummary'),offenders=result.rows.filter(r=>r.valid&&r.overIdeaCap);
  if(flags){
   flags.hidden=!offenders.length;
   flags.innerHTML=offenders.length?`<strong>${offenders.length} idea${offenders.length===1?'':'s'} above your ${cad(activeCap)} fixed guide:</strong>
-    <div class="planner-cap-offenders">${offenders.map(r=>{const idea=ideas.find(i=>i.id===r.id);const name=[normalizeTicker(idea?.ticker)||'UNTITLED',idea?.name].filter(Boolean).join(' · ');return `<button type="button" data-action="jump-to-cap-idea" data-plan-id="${esc(r.id)}">${esc(name)} · +${cad(r.reserveCad-activeCap)} over <span>Review idea</span></button>`;}).join('')}</div>
+    <div class="planner-cap-offenders">${offenders.map(r=>{const idea=ideas.find(i=>i.id===r.id);const name=[normalizeTicker(idea?.ticker)||'UNTITLED',idea?.name].filter(Boolean).join(' · ');return `<button type="button" data-action="jump-to-cap-idea" data-plan-id="${esc(r.id)}">${esc(name)} · +${cad(r.totalReserveCad-activeCap)} over <span>Review idea</span></button>`;}).join('')}</div>
     <small>Use the risk policy selector to switch to Flexible rolling pool if you're intentionally concentrating risk. This does not increase the rolling ceiling.</small>`:''; 
  }
  const strip=$('plannerSummaryStrip');
@@ -565,7 +604,7 @@ function updatePlannerMetrics(m){
   <div class="result-line"><span>Combined option premiums · qty × price × 100 (USD)</span><strong>${usd(result.plannedPremiumUsd)}</strong></div>
   <div class="result-line"><span>Combined estimated buy fees (USD)</span><strong>${usd(result.plannedBuyFeesUsd)}</strong></div>
   <div class="result-line planner-purchase-total"><span>Total cash to buy all ideas · premiums + fees (USD)</span><strong>${usd(result.plannedDebitUsd)}</strong></div>
-  <div class="result-line"><span>5-day risk budget used by these ideas (CAD)</span><strong>${cad(result.plannedReserveCad)}</strong></div>
+  <div class="result-line"><span>Additional risk from unrecorded ideas (CAD)</span><strong>${cad(result.plannedReserveCad)}</strong></div>
   <div class="result-line result-main ${result.overBudget?'negative':''}"><span>5-day risk budget left after all ideas (CAD)</span><strong>${cad(result.remainingCad)}</strong></div>
   <div class="result-line"><span>${!result.complete?'Enter USD premiums for remaining drafts':result.overBudget?'Combined draft entries breach your CAD rolling risk limit':result.overIdeaCap?'Combined CAD budget fits; check per-idea CAD risk caps':'All priced drafts fit the CAD rolling risk budget'}</span><strong class="${result.overBudget?'neg':result.complete&&!result.overIdeaCap?'pos':'risk-warning'}">${result.overBudget?'OVER BUDGET':!result.complete?'INCOMPLETE':result.overIdeaCap?'CAP REVIEW':'FITS'}</strong></div>
   <div class="planner-fx-note">FX used for estimated CAD risk: 1 USD = ${Number(m.account.fx).toFixed(4)} CAD (portfolio setting).</div>`;
@@ -930,7 +969,7 @@ async function refreshOptionQuote(){
 function switchTab(tab){if(!['dashboard','positions','history','settings'].includes(tab))return;activeTab=tab;render();}
 function field(label,name,type='text',value='',opts={}){const attr=Object.entries(opts).map(([k,v])=>` ${k}="${esc(v)}"`).join('');return `<label class="${opts.full?'span-2':''}"><span>${esc(label)}</span><input name="${esc(name)}" type="${type}" value="${esc(value??'')}"${attr}></label>`;}
 function selectField(label,name,options,value){return `<label><span>${esc(label)}</span><select name="${esc(name)}">${options.map(([val,text])=>`<option value="${esc(val)}" ${String(val)===String(value)?'selected':''}>${esc(text)}</option>`).join('')}</select></label>`;}
-function dialog(title,eyebrow,body,submit){$('dialogTitle').textContent=title;$('dialogEyebrow').textContent=eyebrow;$('dialogBody').innerHTML=body;const d=$('editorDialog');d.showModal();const f=$('dialogBody').querySelector('form');if(f&&submit){f.addEventListener('submit',e=>{e.preventDefault();try{const ok=submit(new FormData(f),f);if(ok!==false){d.close();save();render();}}catch(err){showToast(err.message);const msg=f.querySelector('.modal-error');if(msg)msg.textContent=err.message;}});}return f;}
+function dialog(title,eyebrow,body,submit,afterSave){$('dialogTitle').textContent=title;$('dialogEyebrow').textContent=eyebrow;$('dialogBody').innerHTML=body;const d=$('editorDialog');d.showModal();const f=$('dialogBody').querySelector('form');if(f&&submit){f.addEventListener('submit',e=>{e.preventDefault();try{const ok=submit(new FormData(f),f);if(ok!==false){d.close();const saved=save();render();if(saved)afterSave?.(ok);}}catch(err){showToast(err.message);const msg=f.querySelector('.modal-error');if(msg)msg.textContent=err.message;}});}return f;}
 function attachFeeEstimate(form,portfolio,side,{automatic=true}={}){
   if(!form)return;
   const qty=form.elements.namedItem('qty'),fee=form.elements.namedItem('fee');
@@ -962,6 +1001,25 @@ function validateAsOf(date){if(date>analytics().asOf)throw new Error('This execu
 function getText(d,k){return String(d.get(k)||'').trim();}
 function validateDeal(a,qty,price,fee,fx,date){requireRange(qty,1,99999,'Contracts');requireRange(price,0,100000,'Option price');requireRange(fee,0,100000,'Commission');requireRange(fx,.01,100,'USD/CAD rate');requireDate(date,'execution date');validateSession(date);}
 function maybeBreach(before,newReserve){if(newReserve>before.availableCad+0.01){return confirm(`This adds ${money(newReserve)} risk but only ${money(Math.max(0,before.availableCad))} is available. Record as an over-budget historical execution anyway?`);}return true;}
+// Only append to a unique currently-open continuous attempt.
+function fillTarget(contract,a){
+ const m=analytics(),matches=openContractMatches(contract,m.positions,a.id);
+ if(matches.length>1)throw Error('Multiple matching open positions. Review them in Positions before recording.');
+ return matches[0]?.position||null;
+}
+function addToExisting(p,a,fill){
+ const live=state.positions.find(x=>x.id===p.id&&x.accountId===a.id);if(!live||draftContractKey(live)!==draftContractKey(p))throw Error('Position changed; reopen the recording dialog.');p=live;
+ const before=analytics(),current=calculatePosition(p,a,before.asOf),latest=calculatePosition(p,a,'9999-12-31');
+ if(!current.qty||!latest.qty||current.issues.length||latest.issues.length)throw Error('Position is closed or has execution conflicts. Reconcile in Positions.');
+ if(fill.date>p.expiry)throw Error('Entry cannot be after expiry.');
+ const stamp=`${fill.date}T${fill.time||'23:59'}`;
+ if([...p.fills,...p.exits].some(t=>`${t.date}T${t.time||(p.fills.includes(t)?'00:00':'23:59')}`>stamp)||p.exits.some(t=>t.date===fill.date&&(!fill.time||fill.timeUnverified||t.timeUnverified||!t.time||t.time===fill.time)))throw Error('Earlier or ambiguous fill time could change historical exits. Use IBKR reconciliation or enter verified execution times.');
+ const trial=structuredClone(state),target=trial.positions.find(z=>z.id===p.id);target.fills.push(fill);
+ if(calculatePosition(target,a,'9999-12-31').issues.length)throw Error('Fill conflicts with existing transactions.');
+ const after=calculateAccount(trial,a.id,asOf());
+ if(!maybeBreach(before,after.reserveCad-before.reserveCad))return false;
+ p.fills.push(fill);return true;
+}
 function addPosition(){const a=account(),pref=plannerPrefill;plannerPrefill=null;const now=onOrBeforeSession(asOf(),state.customClosed||[]);
  const body=`<p class="modal-intro">Entry date, exact premium and fees determine the cost. Your 70% assumption affects the reserve, not a broker stop order.</p><form><div class="modal-grid">
  ${field('TICKER','ticker','text',pref?.ticker||'',{required:'required',maxlength:12})}
@@ -989,14 +1047,24 @@ function addPosition(){const a=account(),pref=plannerPrefill;plannerPrefill=null
  </div><div id="newPreview" class="modal-summary"></div>${formEnd('Record position')}</form>`;
  const f=dialog('New swing position','ENTRY / QUOTE',body,(d)=>{
  const ticker=getText(d,'ticker').toUpperCase().replace(/[^A-Z0-9.\-]/g,'');if(!ticker)throw new Error('Enter a ticker.');
- const qty=Math.floor(requireRange(getText(d,'qty'),1,99999,'Contracts'));const price=requireRange(getText(d,'price'),.0001,100000,'Price');const fee=requireRange(getText(d,'fee')||'0',0,100000,'Fees');const fx=requireRange(getText(d,'fx'),.01,100,'USD/CAD');const date=requireDate(getText(d,'date'),'entry date');validateSession(date);validateAsOf(date);
+ const qty=requireRange(getText(d,'qty'),1,99999,'Contracts');if(!Number.isInteger(qty))throw Error('Contracts must be a whole number.');const price=requireRange(getText(d,'price'),.0001,100000,'Price');const fee=requireRange(getText(d,'fee')||'0',0,100000,'Fees');const fx=requireRange(getText(d,'fx'),.01,100,'USD/CAD');const date=requireDate(getText(d,'date'),'entry date');validateSession(date);validateAsOf(date);
  const expiry=requireDate(getText(d,'expiry'),'expiry');if(expiry<date)throw new Error('Expiry cannot precede purchase date.');
  const strike=requireRange(getText(d,'strike'),0,1000000,'Strike');const stress=optional(getText(d,'stressPct'));if(stress!==null)requireRange(String(stress),0,100,'Stress percentage');
- const newReserve=roundUp((qty*price*100+fee)*a.fx*(a.mode==='strict'?100:(stress??a.stressPct))/100,a.roundStep);
+ const contract={ticker,optionType:getText(d,'optionType'),strike,expiry};
+  if(pref?.draftId&&draftContractKey(pref)!==draftContractKey(contract))throw Error('Contract changed. Edit the saved idea before recording.');
+  const existing=fillTarget(contract,a);
+  if(existing){
+   if(!confirm('An open position matches this exact contract. Add this fill to it and keep its existing plan?'))return false;
+   if(!addToExisting(existing,a,{id:uid(),date,time:getText(d,'time')||'23:59',timeUnverified:!getText(d,'time'),qty,price,fee,fx,feeEstimated:f.dataset.feeEstimated==='true'}))return false;
+   showToast(`Added ${qty} ${ticker} to existing position.`);return qty;
+  }
+  const historical=openContractMatches(contract,calculateAccount(state,a.id,date).positions,a.id);
+  if(historical.length)throw Error('This contract was open on that historical date. Use IBKR reconciliation rather than creating an overlapping attempt.');
+  const newReserve=roundUp((qty*price*100+fee)*a.fx*(a.mode==='strict'?100:(stress??a.stressPct))/100,a.roundStep);
  if(!maybeBreach(analytics(),newReserve))return false;
  const position={id:uid(),externalId:'',source:'Manual entry',accountId:a.id,ticker,optionType:getText(d,'optionType'),strike,expiry,sector:getText(d,'sector'),ideaId:getText(d,'ideaId')||`${ticker}-${date}`,underlyingInvalidation:getText(d,'underlyingInvalidation'),targetLevels:getText(d,'targetLevels'),stopPremiumUsd:optional(getText(d,'stopPremiumUsd')),stressPct:stress,fixedReserveCad:null,reviewBy:getText(d,'reviewBy'),thesis:getText(d,'thesis'),catalyst:getText(d,'catalyst'),entryReason:getText(d,'entryReason'),managementPlan:getText(d,'managementPlan'),notes:getText(d,'notes'),journalEntries:[],planHistory:[],fills:[{id:uid(),date,time:getText(d,'time'),timeUnverified:!getText(d,'time'),qty,price,fee,fx,feeEstimated:f.dataset.feeEstimated==='true'}],exits:[]};
- position.planHistory.push({id:uid(),date,createdAt:new Date().toISOString(),source:'Initial plan recorded in app (entry-time status not independently verified)',changes:Object.fromEntries(['underlyingInvalidation','targetLevels','thesis','catalyst','entryReason','managementPlan','notes'].filter(k=>position[k]).map(k=>[k,{before:'',after:position[k]}]))});state.positions.push(position);if(pref?.draftId)dropPlannerIdea(pref.draftId,false);showToast(`Added ${qty} ${ticker} contract${qty!==1?'s':''}.`);return true;
- });
+ position.planHistory.push({id:uid(),date,createdAt:new Date().toISOString(),source:'Initial plan recorded in app (entry-time status not independently verified)',changes:Object.fromEntries(['underlyingInvalidation','targetLevels','thesis','catalyst','entryReason','managementPlan','notes'].filter(k=>position[k]).map(k=>[k,{before:'',after:position[k]}]))});state.positions.push(position);showToast(`Added ${qty} ${ticker} contract${qty!==1?'s':''}.`);return qty;
+ },qty=>finishDraftRecord(pref,qty));
  const preview=()=>{const d=new FormData(f);const q=num(d.get('qty')),price=num(d.get('price')),fee=num(d.get('fee')),fx=num(d.get('fx'),a.fx),stress=optional(d.get('stressPct'))??a.stressPct;
  const cost=q*price*100+fee,raw=cost*a.fx*(a.mode==='strict'?1:stress/100),reserve=roundUp(raw,a.roundStep);
  const box=$('newPreview');if(q>0&&price>0&&fx>0)box.innerHTML=`<strong>${money(reserve)} reserved</strong><span>Cost ${usd(cost)} / ${money(cost*fx)} CAD at entry FX; reserve uses current ${a.fx.toFixed(4)} rate. Budget after entry: ${money(analytics().availableCad-reserve)}.</span>`;else box.innerHTML='<span>Enter a size and price to preview the reserve.</span>';
@@ -1035,19 +1103,20 @@ function closePosition(id){const a=account(),p=findPosition(id),existing=calcula
  }catch(err){$('closePreview').textContent='Set an eligible sale date to preview.';}
  };attachFeeEstimate(f,a,'SELL');f.addEventListener('input',preview);preview();
 }
-function addFill(id){const a=account(),p=findPosition(id),now=analytics().asOf;
- const body=`<p class="modal-intro">Adding to the same idea increases its open cost and reserved risk. This is not a new risk allowance.</p><form><div class="modal-grid">${field('ADDITIONAL CONTRACTS','qty','number',1,{required:'required',min:1,step:1})}${field('PRICE / SHARE USD','price','number','',{required:'required',min:.0001,step:.0001})}${field('TOTAL BUY FEES USD','fee','number',estimateOrderFee(a,'BUY',1),{min:0,step:.0001})}${field('USD / CAD AT BUY','fx','number',a.fx,{min:.01,step:.0001})}${field('DATE','date','date',now,{required:'required'})}${field('TIME ET','time','time','',{step:1})}</div><div id="fillPreview" class="modal-summary"></div>${formEnd('Record added contracts')}</form>`;
+function addFill(id,pref=null){const a=account(),p=findPosition(id),now=analytics().asOf;
+ const body=`<p class="modal-intro">Adding to the same idea increases its open cost and reserved risk. This is not a new risk allowance.</p><form><div class="modal-grid">${field('ADDITIONAL CONTRACTS','qty','number',pref?.qty||1,{required:'required',min:1,step:1})}${field('PRICE / SHARE USD','price','number',pref?.price||'',{required:'required',min:.0001,step:.0001})}${field('TOTAL BUY FEES USD','fee','number',pref?.feeManual?pref.fee:estimateOrderFee(a,'BUY',pref?.qty||1),{min:0,step:.0001})}${field('USD / CAD AT BUY','fx','number',a.fx,{min:.01,step:.0001})}${field('DATE','date','date',now,{required:'required'})}${field('TIME ET','time','time','',{step:1})}</div><div id="fillPreview" class="modal-summary"></div>${formEnd('Record added contracts')}</form>`;
  const f=dialog(`Add to ${p.ticker}`,'SAME IDEA / EXTRA EXPOSURE',body,(d)=>{
- const qty=Math.floor(requireRange(getText(d,'qty'),1,99999,'Contracts')),price=requireRange(getText(d,'price'),.0001,100000,'Premium'),fee=requireRange(getText(d,'fee')||'0',0,100000,'Fees'),fx=requireRange(getText(d,'fx'),.01,100,'FX'),date=requireDate(getText(d,'date'),'entry date');validateSession(date);validateAsOf(date);
- const before=analytics(),copy=structuredClone(state);copy.positions.find(z=>z.id===p.id).fills.push({id:'__add__',date,time:getText(d,'time')||'23:59',qty,price,fee,fx});
- const newCalc=calculateAccount(copy,a.id,asOf()),addedRisk=newCalc.reserveCad-before.reserveCad;
- if(!maybeBreach(before,addedRisk))return false;
- p.fills.push({id:uid(),date,time:getText(d,'time')||'23:59',timeUnverified:!getText(d,'time'),qty,price,fee,fx,feeEstimated:f.dataset.feeEstimated==='true'});showToast(`Added ${qty} contract${qty===1?'':'s'} to ${p.ticker}.`);return true;
- });
- const preview=()=>{const d=new FormData(f),qty=num(d.get('qty')),price=num(d.get('price')),fee=num(d.get('fee'));if(qty<1||price<=0){$('fillPreview').innerHTML='<span>Enter contracts and premium to preview added risk.</span>';return;}
+ const qty=requireRange(getText(d,'qty'),1,99999,'Contracts'),price=requireRange(getText(d,'price'),.0001,100000,'Premium'),fee=requireRange(getText(d,'fee')||'0',0,100000,'Fees'),fx=requireRange(getText(d,'fx'),.01,100,'FX'),date=requireDate(getText(d,'date'),'entry date');validateSession(date);validateAsOf(date);
+ if(!Number.isInteger(qty))throw Error('Contracts must be a whole number.');
+ if(pref&&fillTarget(pref,a)?.id!==p.id)throw Error('Matching position changed. Reopen the idea.');
+ if(!addToExisting(p,a,{id:uid(),date,time:getText(d,'time')||'23:59',timeUnverified:!getText(d,'time'),qty,price,fee,fx,feeEstimated:f.dataset.feeEstimated==='true'}))return false;
+ showToast(`Added ${qty} contract${qty===1?'':'s'} to ${p.ticker}.`);return qty;
+ },qty=>finishDraftRecord(pref,qty));
+ const preview=()=>{const d=new FormData(f),qty=num(d.get('qty')),price=num(d.get('price')),fee=num(d.get('fee'));if(!Number.isInteger(qty)||qty<1||price<=0){$('fillPreview').innerHTML='<span>Enter contracts and premium to preview added risk.</span>';return;}
  const before=analytics(),clone=structuredClone(state);clone.positions.find(z=>z.id===p.id).fills.push({id:'__preview__',date:String(d.get('date')),time:String(d.get('time')||'23:59'),qty,price,fee,fx:num(d.get('fx'),a.fx)});
- const after=calculateAccount(clone,a.id,asOf());$('fillPreview').innerHTML=`<strong>Additional reserve: ${money(after.reserveCad-before.reserveCad)}</strong><span>Available after add: ${money(after.availableCad)}. Your per-idea allowance does not reset.</span>`;
- };attachFeeEstimate(f,a,'BUY');f.addEventListener('input',preview);preview();
+ const after=calculateAccount(clone,a.id,asOf()),z=after.positions.find(x=>x.position.id===p.id)?.metrics,old=before.positions.find(x=>x.position.id===p.id)?.metrics,cap=activeIdeaCapCad(a);
+ $('fillPreview').innerHTML=`<strong>${old.qty} held → ${z.qty} combined · avg ${z.averageEntryUsd===null?'—':usd(z.averageEntryUsd,4)}</strong><span>Additional reserve ${cad(after.reserveCad-before.reserveCad)} · combined ${cad(z.reserveCad)} · available after add ${cad(after.availableCad)}.${cap!==null&&z.reserveCad>cap?' Above fixed idea guide.':''}</span>`;
+ };attachFeeEstimate(f,a,'BUY',{automatic:!pref?.feeManual});f.addEventListener('input',preview);preview();
 }
 function editPosition(id){const p=findPosition(id);const body=`<p class="modal-intro">Update your forward-looking risk plan. Do not rewrite what you knew before entry. No existing fills or realized results are changed.</p><form><div class="modal-grid">
  ${field('TICKER','ticker','text',p.ticker,{required:'required',maxlength:12})}${selectField('OPTION TYPE','optionType',[['Put','Put'],['Call','Call']],p.optionType)}
@@ -1094,7 +1163,7 @@ function renderInbox(){const pending=state.brokerInbox||[],conflicts=state.confl
  $('importInbox').innerHTML=`<div class="inbox-head"><strong>Import exceptions: ${pending.length} pending · ${conflicts.length} conflicting · ${archive.length} archived</strong><span>All retained in full JSON backup</span></div>`+
  (pending.length?`<details class="issue-details"><summary>Review ${pending.length} unreconciled IBKR row(s)</summary>${pending.slice(-50).map(x=>`<div class="issue-row"><strong>${esc(x.ticker)} ${esc(x.tradeDate)}</strong> ${esc(x.side)}: ${esc(x.reason)}<div class="history-subnote">${esc(x.raw?.Symbol||'')} / ${esc(x.raw?.['Date/Time']||'')}</div></div>`).join('')}</details>`:'')+
  (conflicts.length?`<details class="issue-details"><summary>Review ${conflicts.length} saved conflict(s)</summary>${conflicts.slice(-50).map(x=>`<div class="issue-row">${esc(x.reason||x.kind||'Import conflict')}<div class="history-subnote">${esc(x.positionId||'')}</div></div>`).join('')}</details>`:'')+
- (archive.length?`<details class="issue-details"><summary>Archived corrections (${archive.length})</summary>${archive.slice(-50).reverse().map(x=>`<div class="issue-row">${esc(x.kind||'record')} · ${esc(x.date)} · ${esc(x.label||'')} <button class="tiny-btn" type="button" data-action="restore-archive" data-id="${esc(x.id)}">Restore</button></div>`).join('')}</details>`:'');
+ (archive.length?`<details class="issue-details"><summary>Archived corrections (${archive.length})</summary>${archive.slice(-50).reverse().map(x=>`<div class="issue-row">${esc(x.kind||'record')} · ${esc(x.date)} · ${esc(x.label||'')} ${x.kind==='position-merge'||x.mergedIntoPositionId?'<small>Merge audit · backup only</small>':`<button class="tiny-btn" type="button" data-action="restore-archive" data-id="${esc(x.id)}">Restore</button>`}</div>`).join('')}</details>`:'');
 }
 function manualPnl(){const now=analytics().asOf;const body=`<p class="modal-intro">For a previously closed trade whose executions are not imported. Enter a signed <strong>NET CAD result</strong>: negative for loss, positive for profit. This is not a new position.</p><form><div class="modal-grid">${field('TRADE DATE','date','date',now,{required:'required'})}${field('REALIZED NET CAD (+/-)','pnlCad','number','',{required:'required',step:.01})}<label class="span-2"><span>LABEL / SOURCE</span><input name="note" type="text" placeholder="e.g. historical AXP runner loss" maxlength="120" required></label></div>${formEnd('Record realized result')}</form>`;
  dialog('Record prior realized P/L','HISTORICAL ADJUSTMENT',body,(d)=>{const date=requireDate(getText(d,'date'),'trade date');validateSession(date);validateAsOf(date);const pnlCad=requireRange(getText(d,'pnlCad'),-1e9,1e9,'P/L'),note=getText(d,'note');if(!note)throw new Error('Label required.');state.adjustments.push({id:uid(),accountId:account().id,date,pnlCad,note});showToast(`Saved ${money(pnlCad)} in realized CAD P/L.`);return true;});
@@ -1230,11 +1299,37 @@ async function importFile(file){
  }
  const data=JSON.parse(raw);return previewJSON(data,file.name);
 }
+function mergePositions(id){
+ const target=findPosition(id),m=analytics();
+ if(m.asOf!==onOrBeforeSession(today(),state.customClosed||[]))return showToast('Return to Today before merging positions.');
+ const candidates=openContractMatches(target,m.positions,m.account.id).filter(x=>x.position.id!==id);
+ if(!candidates.length)return showToast('No matching open positions to merge.');
+ const body=`<p class="modal-intro">Keep <strong>${esc(target.ticker)} · ${esc(target.ideaId||target.id)}</strong> as the primary position. Only merge records of the same continuous trade. Its plan stays active; source plans, notes and all executions stay in the audit trail.</p><form><div class="modal-grid">${candidates.map(x=>`<label class="span-2"><span><input type="checkbox" name="sourceId" value="${esc(x.position.id)}" checked style="width:auto;min-height:0"> ${esc(x.position.ideaId||x.position.id)} · ${x.metrics.qty} open · avg ${usd(x.metrics.averageEntryUsd,4)} · reserve ${cad(x.metrics.reserveCad)}</span></label>`).join('')}</div><div id="mergePreview" class="modal-summary"></div><label style="display:block;margin:12px 0"><input type="checkbox" name="confirmed" required style="width:auto;min-height:0"> These are the same continuous trade. I accept the previewed recalculation of risk and cost basis.</label>${formEnd('Merge selected positions')}</form>`;
+ const f=dialog('Merge matching open positions','LEDGER CORRECTION',body);
+ const preview=()=>{
+  try{
+   const d=new FormData(f),plan=planOpenPositionMerge(state,m.account.id,id,d.getAll('sourceId'),asOf()),z=plan.metrics;
+   $('mergePreview').innerHTML=`<strong>${plan.sourceCount} positions → 1 · ${z.qty} open · avg ${usd(z.averageEntryUsd,4)}</strong><span>Entry cost ${usd(z.totalEntryDebitUsd)} · open reserve ${cad(plan.oldReserveCad)} → ${cad(z.reserveCad)} · stress ${z.stressPct}% · rolling losses ${cad(plan.before.realizedLossCad)} → ${cad(plan.after.realizedLossCad)} · available ${cad(plan.before.availableCad)} → ${cad(plan.after.availableCad)} · account realized P/L ${cad(plan.before.realizedAllTime)} → ${cad(plan.after.realizedAllTime)}. ${plan.recalculatedExits?plan.recalculatedExits+' existing exit basis/P&L calculation(s) change; verified broker P&L overrides remain intact.':'Existing exit basis/P&L unchanged.'}</span>`;
+   f.querySelector('[type="submit"]').disabled=false;return plan;
+  }catch(err){$('mergePreview').textContent=err.message;f.querySelector('[type="submit"]').disabled=true;return null;}
+ };
+ f.addEventListener('change',preview);
+ f.addEventListener('submit',e=>{e.preventDefault();try{
+  if(account().id!==m.account.id||analytics().asOf!==onOrBeforeSession(today(),state.customClosed||[]))throw Error('Portfolio or date changed; reopen merge.');
+  const plan=preview();if(!plan||!new FormData(f).has('confirmed'))return;
+  if(!confirm(`Merge ${plan.sourceCount} open records into one? Available risk changes from ${cad(plan.before.availableCad)} to ${cad(plan.after.availableCad)}. ${plan.recalculatedExits?plan.recalculatedExits+' exit calculation(s) change. ':''}A pre-merge backup will download first. Source records cannot be restored individually without double counting.`))return;
+  download(`swing-risk-desk-BEFORE-POSITION-MERGE-${today()}.json`,JSON.stringify(backupSnapshot(state),null,2));
+  const previous=state;state=plan.next;
+  if(!save()){state=previous;render();throw Error('Could not save merged ledger; original records retained.');}
+  $('editorDialog').close();render();showToast(`Merged ${plan.sourceCount} records into one position. Pre-merge backup initiated.`);
+ }catch(err){showToast(err.message);const error=f.querySelector('.modal-error');if(error)error.textContent=err.message;}});
+ preview();
+}
 function archiveRecord(kind,label,record,positionId=''){
  state.archive??=[];
  state.archive.push({id:uid(),kind,label,positionId,date:new Date().toISOString(),record:structuredClone(record)});
 }
-function restoreArchive(id){const item=(state.archive||[]).find(x=>x.id===id);if(!item)return showToast('Archived item was not found.');if(item.restoredAt)return showToast('This record was already restored.');const snapshot=structuredClone(state);
+function restoreArchive(id){const item=(state.archive||[]).find(x=>x.id===id);if(!item)return showToast('Archived item was not found.');if(item.restoredAt)return showToast('This record was already restored.');if(item.kind==='position-merge'||item.mergedIntoPositionId)return showToast('Merged originals are retained for audit. Restoring one would duplicate fills; use the pre-merge backup or reconcile manually.');const snapshot=structuredClone(state);
  try{
   if(item.kind==='journal-entry'||item.kind==='plan-revision'){
     const p=state.positions.find(x=>x.id===item.positionId);if(!p)throw new Error('Restore the parent position first.');
@@ -1282,6 +1377,9 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'edit-exit':editExit(id,el.dataset.tx);break;
  case 'view-position':openPositionDetail(id);break;
  case 'add-fill':addFill(id);break;
+ case 'merge-positions':mergePositions(id);break;
+ case 'refresh-position-quote':void refreshPositionQuote(id);break;
+ case 'close-recorded-idea':$('editorDialog').close();dropPlannerIdea(el.dataset.planId);break;
  case 'manual-pnl':manualPnl();break;
  case 'add-account':addAccount();break;
  case 'close-dialog':$('editorDialog').close();break;
