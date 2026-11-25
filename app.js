@@ -1,4 +1,4 @@
-import {calculateAccount,calculatePosition,simulateExit,budgetRunway,lossReleases,round2,roundUp} from './lib/risk.mjs';
+import {calculateAccount,calculatePosition,simulateExit,budgetRunway,lossReleases,round2,roundUp,sortPositions,POSITION_SORT_MODES} from './lib/risk.mjs';
 import {isSession,torontoToday,onOrBeforeSession,parseDay,dayOffset} from './lib/calendar.mjs';
 import {SCHEMA,normalizeLedger,importIbkrTrades,mergeFullBackup,makeJournalEntry,recordPlanEdit,backupSnapshot,planOpenPositionMerge} from './lib/ledger.mjs';
 import {isIbkrCsv,parseIbkrTrades} from './lib/ibkr.mjs';
@@ -59,6 +59,8 @@ function rememberAccount(){try{globalThis.localStorage.setItem(LAST_ACCOUNT_KEY,
 
 let activeTab='dashboard';
 let positionFilter='open';
+const POSITION_SORT_KEY='swing-risk-desk:position-sort:v1';
+let positionSortMode=(()=>{try{const value=localStorage.getItem(POSITION_SORT_KEY);return POSITION_SORT_MODES.includes(value)?value:'recent';}catch{return 'recent';}})();
 let asOfOverride=null;
 let toastTimer=null;
 let plannerPrefill=null;
@@ -404,9 +406,10 @@ function positionsBudgetMarkup(m){
  const a=m.account;
  return `<div><div class="pos-data-label">$ BUDGET REMAINING</div><strong class="${m.availableCad<0?'neg':''}">${dualPositionMoney(m.availableCad/a.fx,m.availableCad)}</strong></div><small>${esc(a.name)} · ${a.window}-session rolling risk · ${esc(fmtDate(m.asOf))}</small>`;
 }
-function renderPositions(m){const arr=m.positions.filter(x=>positionFilter==='all'||(positionFilter==='open'?x.metrics.qty>0:x.metrics.qty===0));$('openCount').textContent=m.positions.filter(x=>x.metrics.qty>0).length;
+function renderPositions(m){const arr=sortPositions(m.positions.filter(x=>positionFilter==='all'||(positionFilter==='open'?x.metrics.qty>0:x.metrics.qty===0)),positionSortMode,m.asOf);$('openCount').textContent=m.positions.filter(x=>x.metrics.qty>0).length;
   for(const f of document.querySelectorAll('.filter'))f.classList.toggle('active',f.dataset.filter===positionFilter);
   $('positionsBudget').innerHTML=positionsBudgetMarkup(m);
+  if($('positionSortSelect'))$('positionSortSelect').value=positionSortMode;
   $('positionsFull').innerHTML=arr.length?arr.map(x=>positionCard(x,true)).join(''):'<div class="empty-state">No matching positions for this date.</div>';
 }
 function renderHistory(m){
@@ -2017,6 +2020,11 @@ $('plannerCapMode')?.addEventListener('change',e=>{
  if(!save()){a.ideaCapMode=previous;e.target.value=previous;showToast('Could not save this policy change.');return;}
  render();
  showToast(mode==='pool'?'Flexible rolling pool enabled. Fixed cap saved for later.':'Fixed per-idea guide restored. Rolling ceiling unchanged.');
+});
+$('positionSortSelect')?.addEventListener('change',e=>{
+ positionSortMode=POSITION_SORT_MODES.includes(e.target.value)?e.target.value:'recent';
+ try{localStorage.setItem(POSITION_SORT_KEY,positionSortMode);}catch{}
+ renderPositions(analytics());
 });
 $('planSortSelect')?.addEventListener('change',e=>{
  planSortMode=PLAN_SORT_MODES.includes(e.target.value)?e.target.value:'created';
