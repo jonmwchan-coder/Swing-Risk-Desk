@@ -953,3 +953,13 @@ html,body{max-width:100%}
 .hero-number{display:flex;flex-wrap:wrap;align-items:baseline;gap:7px 12px;line-height:1.14}
 @media(max-width:690px){#view-dashboard .metric-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}#view-dashboard .metric-card{padding:10px 8px}#view-dashboard .metric-card strong{font-size:clamp(13px,3.8vw,20px)}#view-dashboard .metric-card .pos-cad{display:block}.hero-number .hero-ceiling-cad{font-size:.5em}}
 @media(max-width:370px){#view-dashboard .metric-grid{grid-template-columns:1fr}#view-dashboard .metric-card .pos-cad{display:inline}}
+
+/* v3.23: reuse the existing date section for automatic intraday scenarios. */
+.preview-0dte-tag{font-size:11px;font-weight:750;color:#80ddbf;letter-spacing:.02em}
+.preview-intraday-controls{display:flex;align-items:center;gap:8px 16px;flex-wrap:wrap;margin:8px 0 12px}
+.preview-intraday-controls label{flex:0 1 330px;display:grid;gap:5px;min-width:0}
+.preview-intraday-controls label>span,.preview-intraday-controls>small{font-size:11px;color:#a9bfcd;line-height:1.45}
+.preview-intraday-controls input{width:100%;min-width:0;padding:8px 10px;border:1px solid #465b73;border-radius:8px;background:#17283b;color:#e1ebfa;font-variant-numeric:tabular-nums}
+.preview-intraday-controls>small{flex:1 1 240px}
+.preview-intraday-theta{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:3px}
+.preview-intraday-theta strong{font-size:13px;white-space:nowrap}
