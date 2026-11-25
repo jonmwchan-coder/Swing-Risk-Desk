@@ -963,3 +963,15 @@ html,body{max-width:100%}
 .preview-intraday-controls>small{flex:1 1 240px}
 .preview-intraday-theta{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:3px}
 .preview-intraday-theta strong{font-size:13px;white-space:nowrap}
+
+/* v3.24: a compact parking action, independent saved-ideas list. */
+.draft-saved-btn,.draft-park-btn{border-color:#466b65;color:#a9e4cc}
+.saved-ideas-list{display:grid;gap:8px;max-height:min(56vh,480px);overflow:auto;overscroll-behavior:contain}
+.saved-idea-row{display:flex;align-items:flex-start;justify-content:space-between;gap:8px 12px;padding:11px 12px;border:1px solid #304856;border-radius:10px;background:#142833}
+.saved-idea-content{min-width:0;display:grid;gap:5px;overflow-wrap:anywhere}
+.saved-idea-content>small{font-size:11px;color:#aac0cb}
+.saved-idea-levels{display:flex;flex-wrap:wrap;gap:5px 12px;font-size:11px;color:#abc4d0}
+.saved-idea-levels strong{font-size:12px;color:#dceee7;font-variant-numeric:tabular-nums}
+.saved-idea-actions{display:flex;flex:0 0 auto;gap:5px;align-items:center}
+.saved-idea-actions .btn{padding:7px 11px;min-height:32px}
+@media(max-width:540px){.saved-idea-row{flex-wrap:wrap}.saved-idea-actions{margin-left:auto}.saved-ideas-list{max-height:50vh}}

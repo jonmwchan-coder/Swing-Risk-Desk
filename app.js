@@ -13,7 +13,7 @@ import {captureDraftAnalysis,positionAnalysisEvents,currentAnalysisBasis,working
 import {draftContract,draftContractKey,normalizeTicker,sortPlanIdeas,PLAN_SORT_MODES} from './lib/planner-contract.mjs';
 import {expirationLookupKey,normalizeListedDates,expirationListingStatus,nearestListedExpirations,regularExpirationKind} from './lib/expiry-listings.mjs';
 import {renderChainPanel} from './lib/chain-view.mjs';
-import {copyPlannerIdea,isEmptyPlannerPlaceholder,isUneditedTickerScenario,tickerScenarioKey,hydrateTickerScenario,broadcastTickerScenario,visibleTickerDates} from './lib/planner-workflows.mjs';
+import {copyPlannerIdea,isEmptyPlannerPlaceholder,isUneditedTickerScenario,tickerScenarioKey,hydrateTickerScenario,broadcastTickerScenario,visibleTickerDates,parkPlannerIdea,restorePlannerIdea,deleteSavedPlannerIdea} from './lib/planner-workflows.mjs';
 
 const STORAGE_KEY='swing-risk-desk:data:v1';
 const $=id=>document.getElementById(id);
@@ -81,6 +81,7 @@ const PLAN_SORT_KEY='swing-risk-desk:idea-sort:v1';
 let planSortMode=(()=>{try{const v=localStorage.getItem(PLAN_SORT_KEY);return PLAN_SORT_MODES.includes(v)?v:'created';}catch{return 'created';}})();
 const restoredPlanner=loadPlannerDrafts(globalThis.localStorage,globalThis.sessionStorage);
 let plannerDrafts=restoredPlanner.drafts;
+let plannerSavedIdeas=restoredPlanner.savedIdeas;
 let plannerDraftSavedAt=restoredPlanner.savedAt;
 let plannerStorageHealthy=restoredPlanner.persisted;
 function plannerSavedStatus(){
@@ -92,18 +93,72 @@ function plannerSavedStatus(){
 }
 function persistPlannerDrafts(){
  const at=new Date().toISOString();
- plannerStorageHealthy=savePlannerDrafts(globalThis.localStorage,plannerDrafts,at);
+ plannerStorageHealthy=savePlannerDrafts(globalThis.localStorage,plannerDrafts,at,plannerSavedIdeas);
  if(plannerStorageHealthy)plannerDraftSavedAt=at;
  plannerSavedStatus();
 }
 function plannerIdeas(accountId=account().id){
  let ideas=plannerDrafts[accountId];
+ // A portfolio with parked ideas may have a genuinely empty active board.
+ if((!Array.isArray(ideas)||!ideas.length)&&(plannerSavedIdeas[accountId]||[]).length){plannerDrafts[accountId]=[];return plannerDrafts[accountId];}
  if(!Array.isArray(ideas)||!ideas.length){ideas=[defaultPlanIdea(uid(),account().stressPct,true)];plannerDrafts[accountId]=ideas;persistPlannerDrafts();}
  const normalized=ideas.filter(x=>x&&typeof x==='object'&&typeof x.id==='string').slice(0,MAX_PLAN_IDEAS);
  for(const idea of normalized)if(idea.feeManual===undefined)idea.feeManual=false;
  if(!normalized.length){normalized.push(defaultPlanIdea(uid(),account().stressPct,true));}
  if(normalized.length!==ideas.length){plannerDrafts[accountId]=normalized;persistPlannerDrafts();}
  return plannerDrafts[accountId];
+}
+// Commit both collections together before changing the displayed board.
+function applyPlannerMove(result){
+ if(!result.ok){showToast(result.reason);return false;}
+ const at=new Date().toISOString();
+ if(!savePlannerDrafts(globalThis.localStorage,result.drafts,at,result.savedIdeas)){
+  plannerStorageHealthy=false;plannerSavedStatus();showToast('Could not save the idea in this browser. Nothing moved.');return false;
+ }
+ plannerDrafts=result.drafts;plannerSavedIdeas=result.savedIdeas;plannerDraftSavedAt=at;plannerStorageHealthy=true;
+ plannerSavedStatus();return true;
+}
+function saveIdeaForLater(id,closeRecordDialog=false){
+ const a=account(),result=parkPlannerIdea(plannerDrafts,plannerSavedIdeas,a.id,id);
+ if(!applyPlannerMove(result))return;
+ tickerInputOrigins.delete(id);manualExpiryIds.delete(id);
+ if(selectedPreviewId===id){selectedPreviewId=null;quoteRefreshToken++;chainFetchToken++;quoteRefreshBusy=false;quoteRefreshMessage='';}
+ if(expandedPlanId===id)expandedPlanId=null;
+ if(closeRecordDialog)$('editorDialog').close();
+ renderPlanner(analytics());showToast('Idea saved for later. Active sizing risk recalculated.');
+}
+function savedIdeasMarkup(a){
+ const list=plannerSavedIdeas[a.id]||[],active=(plannerDrafts[a.id]||[]).filter(i=>!isEmptyPlannerPlaceholder(i)),full=active.length>=MAX_PLAN_IDEAS;
+ return `<p class="modal-intro">Saved for later · <strong>${esc(a.name)}</strong>. These ideas do not use active slots or hypothetical risk. Restore one to edit the strike/expiry and refresh pricing; underlying levels stay saved.</p><p class="help-line">${active.length} / ${MAX_PLAN_IDEAS} active slots · ${list.length} saved on this device.${full?' Save an active idea for later to make room.':''}</p><div class="saved-ideas-list">${list.length?list.map(idea=>{
+  const targets=(idea.preview?.targets||[]).filter(t=>String(t.price??'').trim()!==''),date=idea.savedForLaterAt?analysisTime(idea.savedForLaterAt):'';
+  const identity=[normalizeTicker(idea.ticker)||'Untitled',idea.name].filter(Boolean).join(' · ');
+  return `<article class="saved-idea-row"><div class="saved-idea-content"><strong>${esc(identity)}</strong><small>${esc(idea.optionType||'Call')} · ${esc(idea.expiry||'No expiry')} · ${idea.strike?esc(usd(Number(idea.strike))):'No strike'}${date?' · Saved '+esc(date):''}</small><div class="saved-idea-levels">${targets.length?targets.map(t=>`<span>${esc(t.name)} <strong>${esc(usd(Number(t.price)))}</strong></span>`).join(''):'<small>No underlying targets entered yet</small>'}</div></div><div class="saved-idea-actions"><button type="button" class="btn btn-primary" data-action="restore-saved-idea" data-plan-id="${esc(idea.id)}" data-account-id="${esc(a.id)}" ${full?'disabled':''}>Restore</button><button type="button" class="draft-remove" data-action="delete-saved-idea" data-plan-id="${esc(idea.id)}" data-account-id="${esc(a.id)}" title="Permanently delete this saved idea" aria-label="Delete ${esc(identity)}">×</button></div></article>`;
+ }).join(''):'<p class="preview-prompt">No saved ideas yet. Use Save for later on any active idea.</p>'}</div><div class="modal-actions"><button type="button" class="btn btn-outline" data-action="close-dialog">Done</button></div>`;
+}
+function openSavedIdeas(){
+ dialog('Saved ideas','QUICK SIZE CHECK',savedIdeasMarkup(account()));
+}
+function restoreSavedIdea(id,accountId){
+ if(account().id!==accountId)return showToast('Portfolio changed. Reopen Saved ideas.');
+ const result=restorePlannerIdea(plannerDrafts,plannerSavedIdeas,accountId,id);
+ if(!applyPlannerMove(result))return;
+ $('editorDialog').close();expandedPlanId=id;selectedPreviewId=null;quoteRefreshToken++;chainFetchToken++;quoteRefreshBusy=false;
+ renderPlanner(analytics());
+ const idea=plannerIdeas().find(x=>x.id===id);
+ if(idea){
+  queueListedExpirations(idea,true);
+  const timing=intradayTiming(idea,new Date(),state.customClosed||[]);
+  if(draftContract(idea)&&idea.expiry>=today()&&(!timing||timing.session&&!timing.expired))void refreshDraftPremium(idea);
+  [...document.querySelectorAll('.draft-idea')].find(x=>x.dataset.draftId===id)?.scrollIntoView?.({block:'center',behavior:'smooth'});
+ }
+ showToast('Idea restored with saved targets. Review the contract and fresh pricing.');
+}
+function removeSavedIdea(id,accountId){
+ if(account().id!==accountId)return showToast('Portfolio changed. Reopen Saved ideas.');
+ const idea=(plannerSavedIdeas[accountId]||[]).find(x=>x.id===id);
+ if(!idea||!confirm('Permanently delete this saved idea and its scenario? Recorded positions are unaffected.'))return;
+ if(!applyPlannerMove(deleteSavedPlannerIdea(plannerDrafts,plannerSavedIdeas,accountId,id)))return;
+ $('dialogBody').innerHTML=savedIdeasMarkup(account());renderPlanner(analytics());
 }
 function dropPlannerIdea(draftId,renderAfter=true){
  const ideas=plannerIdeas();const index=ideas.findIndex(x=>x.id===draftId);
@@ -112,7 +167,7 @@ function dropPlannerIdea(draftId,renderAfter=true){
  tickerInputOrigins.delete(draftId);
  if(selectedPreviewId===draftId)selectedPreviewId=null;
   if(expandedPlanId===draftId)expandedPlanId=null;
- if(!ideas.length)ideas.push(defaultPlanIdea(uid(),account().stressPct,false));
+ if(!ideas.length&&!(plannerSavedIdeas[account().id]||[]).length)ideas.push(defaultPlanIdea(uid(),account().stressPct,false));
  persistPlannerDrafts();if(renderAfter)renderPlanner(analytics());
 }
 function beginPlannedPosition(draftId){
@@ -136,7 +191,7 @@ function finishDraftRecord(pref,qty){
  draft.qty=String(remainingDraftQuantity(draft.qty,qty));
  draft.feeManual=false;draft.fee=estimateOrderFee(account(),'BUY',draft.qty).toFixed(2);
  persistPlannerDrafts();renderPlanner(analytics());
- dialog('Entry recorded','TRADE IDEA',`<p class="modal-intro"><strong>${qty} contract${qty===1?'':'s'} recorded.</strong> ${draft.qty} planned additional contracts remain. Keep this idea for later entries or close just the idea (your position stays open).</p><div class="modal-actions"><button type="button" class="btn btn-outline" data-action="close-recorded-idea" data-plan-id="${esc(draft.id)}">Close idea</button><button type="button" class="btn btn-primary" data-action="close-dialog" autofocus>Keep idea open</button></div>`);
+ dialog('Entry recorded','TRADE IDEA',`<p class="modal-intro"><strong>${qty} contract${qty===1?'':'s'} recorded.</strong> ${draft.qty} planned additional contracts remain. Keep the idea active, save it for later, or close just the idea (your position stays open).</p><div class="modal-actions"><button type="button" class="btn btn-outline" data-action="close-recorded-idea" data-plan-id="${esc(draft.id)}">Close idea</button><button type="button" class="btn btn-outline" data-action="park-recorded-idea" data-plan-id="${esc(draft.id)}">Save for later</button><button type="button" class="btn btn-primary" data-action="close-dialog" autofocus>Keep idea open</button></div>`);
 }
 // Synchronize the user-confirmed estimate back to matching local drafts only.
 function syncPositionLossToDrafts(id){
@@ -603,7 +658,7 @@ function renderPlanner(m){
   const quoteTone=idea.quoteStatus==='unavailable'?'warning':idea.priceManual?'manual':idea.quoteStatus==='indicative'?'indicative':idea.quoteStatus==='saved'?'warning':'empty';
   return `<article class="draft-idea ${active?'is-active':''} ${editing?'is-expanded':'is-collapsed'} ${overCap?'is-over-idea-cap':''}" data-draft-id="${esc(idea.id)}">
     <div class="draft-head"><div class="draft-identity"><strong class="draft-ticker" data-idea-ticker>${esc(symbol)}</strong><span class="draft-idea-name" data-idea-name>${esc(name)}</span><span class="draft-contract-hero" data-idea-contract aria-label="Selected expiration and strike">${compactContractMarkup(idea)}</span><span data-listing-badge class="draft-listing-indicator">${listingBadge(idea)}</span></div>
-      <div class="draft-actions"><button type="button" class="draft-edit-btn" data-action="toggle-plan-details" data-plan-id="${esc(idea.id)}" aria-expanded="${editing}">${editing?'Done':'Edit'}</button><button type="button" class="draft-preview-btn" data-action="analyze-idea" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id&&optionPanelMode==='analyze'}">${selectedPreviewId===idea.id&&optionPanelMode==='analyze'?'Hide %':'Analyze %'}</button><button type="button" class="draft-chain-btn" data-action="view-option-chain" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id&&optionPanelMode==='chain'}" title="Compare call and put volume, open interest and indicative quotes for this expiration">${selectedPreviewId===idea.id&&optionPanelMode==='chain'?'Hide chain':'View chain'}</button><button type="button" class="draft-edit-btn" data-action="copy-planner-idea" data-plan-id="${esc(idea.id)}" title="Copy only this idea to another portfolio" ${state.accounts.length<2||isEmptyPlannerPlaceholder(idea)?'disabled':''}>Copy to portfolio…</button><button type="button" class="draft-record" data-action="plan-to-position" data-plan-id="${esc(idea.id)}" ${riskRow?.valid&&riskRow.qty>0&&draftContract(idea)?'':'disabled'}>${riskRow?.existingQty?'Record add':'Record'}</button><button type="button" class="draft-remove" data-action="remove-plan-idea" data-plan-id="${esc(idea.id)}" aria-label="Remove ${esc(symbol)} ${esc(name)}">×</button></div></div>
+      <div class="draft-actions"><button type="button" class="draft-edit-btn" data-action="toggle-plan-details" data-plan-id="${esc(idea.id)}" aria-expanded="${editing}">${editing?'Done':'Edit'}</button><button type="button" class="draft-preview-btn" data-action="analyze-idea" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id&&optionPanelMode==='analyze'}">${selectedPreviewId===idea.id&&optionPanelMode==='analyze'?'Hide %':'Analyze %'}</button><button type="button" class="draft-chain-btn" data-action="view-option-chain" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id&&optionPanelMode==='chain'}" title="Compare call and put volume, open interest and indicative quotes for this expiration">${selectedPreviewId===idea.id&&optionPanelMode==='chain'?'Hide chain':'View chain'}</button><button type="button" class="draft-edit-btn" data-action="copy-planner-idea" data-plan-id="${esc(idea.id)}" title="Copy only this idea to another portfolio" ${state.accounts.length<2||isEmptyPlannerPlaceholder(idea)?'disabled':''}>Copy to portfolio…</button><button type="button" class="draft-edit-btn draft-park-btn" data-action="park-plan-idea" data-plan-id="${esc(idea.id)}" title="Save the idea and all its targets for later" ${isEmptyPlannerPlaceholder(idea)?'disabled':''}>Save for later</button><button type="button" class="draft-record" data-action="plan-to-position" data-plan-id="${esc(idea.id)}" ${riskRow?.valid&&riskRow.qty>0&&draftContract(idea)?'':'disabled'}>${riskRow?.existingQty?'Record add':'Record'}</button><button type="button" class="draft-remove" data-action="remove-plan-idea" data-plan-id="${esc(idea.id)}" aria-label="Remove ${esc(symbol)} ${esc(name)}">×</button></div></div>
     <div class="draft-compact-line"><span class="draft-mini-field"><strong data-idea-held></strong> Add <strong data-idea-qty>${esc(idea.qty||'—')}</strong></span><span class="draft-mini-field">Premium <strong data-idea-premium>${Number(idea.price)>0&&Number.isFinite(Number(idea.price))?usdWithCad(Number(idea.price),m.account.fx):"—"}</strong><small>/share</small></span><span class="draft-mini-field" data-idea-loss></span><span class="draft-mini-quote" data-tone="${quoteTone}" data-idea-quote>${idea.quoteStatus==='loading'?'<span class="mini-spin" aria-hidden="true"></span> ':''}${esc(quote)}</span></div>
     <div class="draft-cap-alert" data-cap-warning="${esc(idea.id)}" role="status" ${overCap?'':'hidden'}>${overCap?`<strong>ABOVE FIXED IDEA CAP · +${cad(capOverCad)}</strong><span>Combined position uses ${cad(riskRow.totalReserveCad)} vs your ${cad(fixedIdeaCap)} guide. Rolling pool is separate.</span><button type="button" data-action="focus-cap-policy" title="Review your fixed versus flexible risk allocation">Review policy</button>`:''}</div>
     ${editing?`<div class="draft-editor"><div class="draft-editor-heading"><strong>Contract setup</strong><span>Independent contract and assumptions per idea</span></div>
@@ -614,9 +669,10 @@ function renderPlanner(m){
     <div class="draft-metrics" data-plan-status="${esc(idea.id)}"></div>
     <details class="draft-quote-detail"><summary>Quote details</summary><div class="draft-quote-body"><div><span>Source</span><strong>${esc(p.quoteSource||'Not requested')}</strong></div><div><span>Bid / ask</span><strong>${esc(moneyOrDash(p.bid))} / ${esc(moneyOrDash(p.ask))}</strong></div><div><span>Midpoint</span><strong>${esc(mid)}</strong></div><div><span>Quote time (UTC)</span><strong>${esc(p.quoteAt||'Not available')}</strong></div><p>${esc(idea.quoteMessage||'Select a contract to request a quote.')}</p><small>Indicative Alpaca Basic, not executable OPRA quotes. Verify your broker quote.</small></div></details>
    </article>`;
- }).join('');
+ }).join('')||'<p class="preview-prompt">No active ideas. Add an idea or restore one from Saved ideas.</p>';
  const addBtn=document.querySelector('[data-action="add-plan-idea"]');
  if(addBtn)addBtn.disabled=ideas.length>=MAX_PLAN_IDEAS;
+ const savedBtn=$('savedIdeasButton');if(savedBtn)savedBtn.textContent='Saved ideas ('+(plannerSavedIdeas[m.account.id]||[]).length+')';
 
  updatePlannerMetrics(m);renderOptionPreview();
 }
@@ -627,6 +683,7 @@ function updatePlannerMetrics(m){
    const card=el.closest?.('.draft-idea'),idea=ideas.find(i=>i.id===r.id);
    const held=card?.querySelector('[data-idea-held]'),record=card?.querySelector('[data-action="plan-to-position"]'),stressInput=card?.querySelector('[name="stress"]'),lossInput=card?.querySelector('[name="plannedLossPct"]'),copyBtn=card?.querySelector('[data-action="copy-planner-idea"]');
    if(copyBtn)copyBtn.disabled=state.accounts.length<2||isEmptyPlannerPlaceholder(idea);
+   const parkBtn=card?.querySelector('[data-action="park-plan-idea"]');if(parkBtn)parkBtn.disabled=isEmptyPlannerPlaceholder(idea);
    if(lossInput)lossInput.placeholder=r.positionId&&r.plannedLossPct!=null?String(r.plannedLossPct):'Not set';
    const lossLabel=card?.querySelector('[data-idea-loss]');if(lossLabel){lossLabel.hidden=!r.valid||r.plannedLossPct==null;lossLabel.innerHTML=r.valid&&r.plannedLossPct!=null?`Planned loss ${r.plannedLossPct}% · ${usdWithCad(r.plannedLossUsd,m.account.fx)}`:'';}
    if(held)held.textContent=r.existingQty?`${r.existingQty} held${r.valid?` / ${r.existingQty+r.qty} planned ·`:' ·'}`:'';
@@ -997,7 +1054,7 @@ async function refreshDraftPremium(idea){
   const data=await response.json().catch(()=>({}));
   if(!response.ok)throw Error(data.error||'Indicative quote unavailable.');
   const draft=plannerIdeas().find(i=>i.id===id);
-  if(!draft||draftContractKey(draft)!==key)return;
+  if(!draft||draft!==idea||draftContractKey(draft)!==key)return;
   const bid=Number(data.optionBidUsd),ask=Number(data.optionAskUsd);
   if(data.optionBidUsd===null||data.optionAskUsd===null||!(bid>0&&ask>=bid))throw Error('No valid bid/ask for selected contract.');
   draft.marketMid=String(Math.round((bid+ask)*5000)/10000);
@@ -1008,7 +1065,7 @@ async function refreshDraftPremium(idea){
   persistPlannerDrafts();renderPlanner(analytics());
  }catch(err){
   const draft=plannerIdeas().find(i=>i.id===id);
-  if(!draft||draftContractKey(draft)!==key)return;
+  if(!draft||draft!==idea||draftContractKey(draft)!==key)return;
   draft.quoteStatus='unavailable';draft.quoteMessage=String(err.message||'Quote unavailable').slice(0,200);
   persistPlannerDrafts();renderPlanner(analytics());
  }
@@ -1666,6 +1723,11 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'plan-to-position':beginPlannedPosition(el.dataset.planId);break;
  case 'add-plan-idea':{const ideas=plannerIdeas();if(ideas.length>=MAX_PLAN_IDEAS){showToast(`Maximum ${MAX_PLAN_IDEAS} draft ideas.`);break;}const idea=defaultPlanIdea(uid(),account().stressPct,false);ideas.push(idea);expandedPlanId=idea.id;selectedPreviewId=null;quoteRefreshToken++;persistPlannerDrafts();renderPlanner(analytics());[...document.querySelectorAll('.draft-idea')].find(x=>x.dataset.draftId===idea.id)?.querySelector('[name="ticker"]')?.focus();break;}
  case 'remove-plan-idea':dropPlannerIdea(el.dataset.planId);break;
+ case 'open-saved-ideas':openSavedIdeas();break;
+ case 'park-plan-idea':saveIdeaForLater(el.dataset.planId);break;
+ case 'park-recorded-idea':saveIdeaForLater(el.dataset.planId,true);break;
+ case 'restore-saved-idea':restoreSavedIdea(el.dataset.planId,el.dataset.accountId);break;
+ case 'delete-saved-idea':removeSavedIdea(el.dataset.planId,el.dataset.accountId);break;
  case 'focus-cap-policy':{const select=$('plannerCapMode');select?.scrollIntoView?.({block:'center',behavior:'smooth'});select?.focus?.();break;}
  case 'open-cap-settings':{switchTab('settings');$('settingsForm')?.elements?.namedItem?.('ideaCapCad')?.focus?.();break;}
  case 'jump-to-cap-idea':{
@@ -1681,7 +1743,7 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'refresh-listed-expirations':{const idea=plannerIdeas().find(x=>x.id===el.dataset.planId);el.blur();if(idea)void ensureListedExpirations(idea,true);break;}
  case 'enter-manual-expiry':{manualExpiryIds.add(el.dataset.planId);el.blur();const idea=plannerIdeas().find(x=>x.id===el.dataset.planId);if(idea){updateListingCard(idea);const card=[...document.querySelectorAll('[data-draft-id]')].find(x=>x.dataset.draftId===el.dataset.planId);card?.querySelector('input[type="date"][name="expiry"]')?.focus();}break;}
  case 'use-listed-expirations':{manualExpiryIds.delete(el.dataset.planId);el.blur();const idea=plannerIdeas().find(x=>x.id===el.dataset.planId);if(idea){updateListingCard(idea);const card=[...document.querySelectorAll('[data-draft-id]')].find(x=>x.dataset.draftId===el.dataset.planId);card?.querySelector('[name="listedExpiry"]')?.focus();}break;}
- case 'clear-plan-ideas':{if(!confirm('Clear all saved Quick size check ideas for this portfolio? Recorded positions will not be affected.'))break;expandedPlanId=null;selectedPreviewId=null;quoteRefreshToken++;plannerDrafts[account().id]=[defaultPlanIdea(uid(),account().stressPct,false)];persistPlannerDrafts();renderPlanner(analytics());showToast('Saved size-check ideas cleared for this portfolio.');break;}
+ case 'clear-plan-ideas':{if(!confirm('Clear all ACTIVE Quick Size Check ideas for this portfolio? Saved-for-later ideas and recorded positions will not be affected.'))break;expandedPlanId=null;selectedPreviewId=null;quoteRefreshToken++;plannerDrafts[account().id]=(plannerSavedIdeas[account().id]||[]).length?[]:[defaultPlanIdea(uid(),account().stressPct,false)];persistPlannerDrafts();renderPlanner(analytics());showToast('Active ideas cleared. Saved ideas are unchanged.');break;}
  case 'analyze-idea':{const opening=selectedPreviewId!==el.dataset.planId||optionPanelMode!=='analyze';optionPanelMode='analyze';chainFetchToken++;selectedPreviewId=opening?el.dataset.planId:null;if(opening)adoptTickerLevels(currentPreviewIdea());expandedPlanId=null;quoteRefreshToken++;quoteRefreshMessage='';quoteConnectionState='unknown';renderPlanner(analytics());if(opening)$('optionPreview')?.scrollIntoView({block:'start',behavior:'smooth'});if(opening){void ensureAtmRange(currentPreviewIdea());void refreshOptionQuote();}break;}
  case 'view-option-chain':{
   const opening=selectedPreviewId!==el.dataset.planId||optionPanelMode!=='chain';
@@ -1726,8 +1788,8 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'import-open':$('importFile').click();break;
  case 'import-ibkr':$('ibkrFile').click();break;
  case 'refresh-fx':refreshFx();break;
- case 'reset-data':if(confirm('Reset every locally stored account, position, note and transaction? A full safety backup will download first. Proceed ONLY after saving that file securely.')){download(`swing-risk-desk-BEFORE-RESET-${today()}.json`,JSON.stringify(backupSnapshot(state),null,2));state=seed();activeAccountId='bdi';asOfOverride=null;plannerDrafts=Object.create(null);clearPlannerDraftStorage(globalThis.localStorage,globalThis.sessionStorage);plannerDraftSavedAt='';plannerStorageHealthy=true;try{globalThis.localStorage.removeItem(LAST_ACCOUNT_KEY);}catch{}save();render();showToast('Local data reset. Safety backup download was initiated.');}break;
- case 'delete-account':{const a=account();if(state.accounts.length<=1){showToast('At least one account must remain.');break;}if(state.positions.some(p=>p.accountId===a.id)||state.adjustments.some(x=>x.accountId===a.id)){showToast('This account contains records. Export and remove its records first.');break;}if(confirm(`Delete empty account ${a.name}?`)){state.accounts=state.accounts.filter(x=>x.id!==a.id);delete plannerDrafts[a.id];persistPlannerDrafts();activeAccountId=state.accounts[0].id;rememberAccount();save();render();}break;}
+ case 'reset-data':if(confirm('Reset every locally stored account, position, note, transaction and all active/saved sizing ideas? A ledger safety backup will download first (it does not include sizing ideas). Proceed ONLY after saving that file securely.')){download(`swing-risk-desk-BEFORE-RESET-${today()}.json`,JSON.stringify(backupSnapshot(state),null,2));state=seed();activeAccountId='bdi';asOfOverride=null;plannerDrafts=Object.create(null);plannerSavedIdeas=Object.create(null);clearPlannerDraftStorage(globalThis.localStorage,globalThis.sessionStorage);plannerDraftSavedAt='';plannerStorageHealthy=true;try{globalThis.localStorage.removeItem(LAST_ACCOUNT_KEY);}catch{}save();render();showToast('Local data reset. Safety backup download was initiated.');}break;
+ case 'delete-account':{const a=account();if(state.accounts.length<=1){showToast('At least one account must remain.');break;}if(state.positions.some(p=>p.accountId===a.id)||state.adjustments.some(x=>x.accountId===a.id)){showToast('This account contains records. Export and remove its records first.');break;}if(confirm(`Delete empty account ${a.name}? Its active and saved sizing ideas will also be deleted.`)){state.accounts=state.accounts.filter(x=>x.id!==a.id);delete plannerDrafts[a.id];delete plannerSavedIdeas[a.id];persistPlannerDrafts();activeAccountId=state.accounts[0].id;rememberAccount();save();render();}break;}
  case 'delete-position':{const p=findPosition(id);if(confirm(`Archive ${p.ticker} and all its executions? They will leave active calculations but remain in your full backup and can be restored.`)){archiveRecord('position',p.ticker,p);state.positions=state.positions.filter(x=>x.id!==id);save();render();showToast('Position archived; restorable in Rules & data.');}break;}
  case 'delete-tx':deleteTransaction(id,el.dataset.tx,el.dataset.side);break;
  case 'restore-archive':restoreArchive(id);break;
@@ -1746,7 +1808,8 @@ $('asOfDate').addEventListener('change',e=>{const d=e.target.value;if(parseDay(d
 if(typeof globalThis.addEventListener==='function')globalThis.addEventListener('storage',event=>{
  if(event.key!==PLANNER_LOCAL_KEY)return;
  const current=loadPlannerDrafts(globalThis.localStorage);
- plannerDrafts=current.drafts;plannerDraftSavedAt=current.savedAt;plannerStorageHealthy=current.persisted;
+ if(!current.persisted){plannerStorageHealthy=false;plannerSavedStatus();return;}
+ plannerDrafts=current.drafts;plannerSavedIdeas=current.savedIdeas;plannerDraftSavedAt=current.savedAt;plannerStorageHealthy=current.persisted;
  if(activeTab==='dashboard')renderPlanner(analytics());
 });
 $('optionPreview').addEventListener('change',e=>{

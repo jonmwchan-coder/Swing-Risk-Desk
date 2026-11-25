@@ -82,9 +82,9 @@
           <div id="plannerCapFlagSummary" class="planner-cap-flag-summary" aria-live="polite" hidden></div>
           <div class="draft-toolbar">
             <div class="draft-sort-bar"><label for="planSortSelect">SORT IDEAS</label><select id="planSortSelect" aria-label="Sort saved ideas"><option value="created">Original order</option><option value="ticker">Ticker A-Z</option><option value="name">Idea name A-Z</option><option value="expiry">Expiration earliest first</option></select></div>
-            <div class="draft-add-bar"><button type="button" class="btn btn-outline draft-add-btn" data-action="add-plan-idea">+ Add idea</button><button type="button" class="draft-collapse-all" data-action="collapse-plan-ideas">Collapse all</button><span id="planIdeaCount" class="draft-count"></span><button type="button" class="draft-clear-btn" data-action="clear-plan-ideas" title="Remove only this portfolio's saved hypothetical sizing ideas">Clear ideas</button></div>
+            <div class="draft-add-bar"><button type="button" class="btn btn-outline draft-add-btn" data-action="add-plan-idea">+ Add idea</button><button type="button" id="savedIdeasButton" class="btn btn-outline draft-saved-btn" data-action="open-saved-ideas" aria-haspopup="dialog">Saved ideas (0)</button><button type="button" class="draft-collapse-all" data-action="collapse-plan-ideas">Collapse all</button><span id="planIdeaCount" class="draft-count"></span><button type="button" class="draft-clear-btn" data-action="clear-plan-ideas" title="Clear only this portfolio's active hypothetical ideas; saved-for-later ideas remain">Clear active</button></div>
           </div>
-          <div id="quickPlanner" class="draft-ideas" role="group" aria-label="Saved, individually expandable planned option entries"></div>
+          <div id="quickPlanner" class="draft-ideas" role="group" aria-label="Active individually expandable planned option entries"></div>
           <div class="draft-saved-status" id="plannerSavedStatus" aria-live="polite">Auto-saved on this device</div>
           <details id="plannerImpactDetails" class="planner-impact-details">
             <summary><strong>Portfolio impact details</strong><span>Full USD costs, CAD risk calculation and assumptions</span></summary>
@@ -176,7 +176,7 @@
       <div class="bottom-danger"><button type="button" class="text-link text-delete" data-action="reset-data">Reset all locally saved data</button><small>Does not change anything in Google Sheets or IBKR.</small></div>
     </section>
   </main>
-  <footer><span>SWING RISK DESK / v3.23 automatic 0DTE</span><span>Process over P&amp;L. USD/CAD display at portfolio FX; risk accounting in CAD.</span></footer>
+  <footer><span>SWING RISK DESK / v3.24 saved ideas</span><span>Process over P&amp;L. USD/CAD display at portfolio FX; risk accounting in CAD.</span></footer>
 </div>
 <dialog id="editorDialog" class="editor-dialog"><div class="dialog-content"><div class="dialog-header"><div><div class="overline" id="dialogEyebrow">POSITION</div><h2 id="dialogTitle">New position</h2></div><button type="button" class="icon-button" data-action="close-dialog" aria-label="Close dialog">&#10005;</button></div><div id="dialogBody"></div></div></dialog>
 <dialog id="positionAnalysisDialog" class="editor-dialog position-analysis-dialog" aria-labelledby="positionAnalysisTitle"><div class="dialog-content"><div class="dialog-header"><div><div class="overline">POSITION SCENARIO STUDIO</div><h2 id="positionAnalysisTitle">Analyze %</h2></div><button type="button" class="icon-button" data-pa-action="close" aria-label="Close position analysis">&#10005;</button></div><div id="positionAnalysisBody" class="position-analysis-body"></div></div></dialog>
