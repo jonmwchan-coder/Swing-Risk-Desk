@@ -33,9 +33,9 @@ test('date-aware model includes fee-inclusive % and calendar-time theta across F
 test('fixed IV does NOT drift to a guess as dates change; user-added TP and dates are arbitrary',()=>{
  const out=withPreview({ivPct:'31.9',dates:['2026-11-23','2026-12-07','2027-01-15'],targets:[{id:'custom',name:'TP3',price:'88'}]});
  assert.equal(out.valid,true);assert.equal(out.ivPct,31.9);assert.equal(out.rows.length,2);
- assert.equal(out.rows[1].values.length,3);
- assert.equal(out.rows[1].values[2].dateAtExpiry,true);
- assert.ok(Math.abs(out.rows[1].values[2].modelPremium-18)<.01);
+ assert.equal(out.rows[1].values.length,6);
+ assert.equal(out.rows[1].values.at(-1).dateAtExpiry,true);
+ assert.ok(Math.abs(out.rows[1].values.at(-1).modelPremium-18)<.01);
 });
 test('invalid contract, old exit, no premium, bad spot or missing IV never generate fabricated returns',()=>{
  assert.match(withPreview({ivPct:''}).reason,/IV/);
