@@ -1,3 +1,9 @@
+## v3.28 — Sort Analyze % take-profit rows (2026-11-25)
+
+- Both Quick Size Check and recorded-position Analyze % tables display take-profit rows in ascending numerical underlying-price order, including daily, future expiration-day and same-day 0DTE projections. No move and Stop stay in their original pinned positions; missing/invalid target prices appear last; equal prices retain their original order. The same sorting applies to calls and puts.
+- Display only: target IDs, TP names, saved input order, pricing cells, historical scenarios, risk formulas and trading records are unchanged. Adding a lower TP later immediately moves its projection row into ascending order without moving the input field while editing.
+- Rollback: v3.27 commit `100a1b4a057ccc61729379ea010aa400e11beaa0`, production deployment `dpl_Hej115MSqAmLjyRKURDdysax7gEV`. No storage migration needed.
+
 ## v3.27 — Separate daily and expiration-day projections (2026-11-25)
 
 - In both existing Analyze % views, ordinary selected trading dates appear in a compact Daily projections table. Future expiration-day horizons are in a separate native expandable **Expiration day · date** section, available for standard stock/ETF options even when the expiration date is not selected in the daily date list. It opens by default when the expiry date was selected or no daily dates remain; otherwise starts collapsed. Open/closed state is remembered during the page session per idea/position/view/expiry. Closed and after-expiry dates are omitted from the displayed daily table without changing the saved dates. Existing same-day 0DTE mode shows only its editable minute-offset matrix.
