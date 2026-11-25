@@ -7,7 +7,7 @@ import {calculatePlanBasket,defaultPlanIdea,parsePlannedContract,MAX_PLAN_IDEAS,
 import {PLANNER_LOCAL_KEY,loadPlannerDrafts,savePlannerDrafts,clearPlannerDraftStorage} from './lib/planner-storage.mjs';
 import {DEFAULT_BUY_FEE_USD,DEFAULT_SELL_FEE_USD,estimateOrderFee,ratePerContract} from './lib/fees.mjs';
 import {buildSingleTradeHandoff,singleTradeExportFilename,TRADE_HANDOFF_SCHEMA} from './lib/trade-export.mjs';
-import {emptyPreview,normalizePreview,projectOptionReturns,buildOCCSymbol,MAX_PREVIEW_DATES,MAX_PREVIEW_TARGETS,easternCloseMs,sessionCloseLabel,intradayTiming,intradayMinutes,parseIntradayMinutes} from './lib/option-preview.mjs';
+import {emptyPreview,normalizePreview,projectOptionReturns,buildOCCSymbol,MAX_PREVIEW_DATES,MAX_PREVIEW_TARGETS,easternCloseMs,sessionCloseLabel,intradayTiming,intradayMinutes,parseIntradayMinutes,parseExpiryDayTimes,expiryDayTimeSelection,scenarioProjectionGroups} from './lib/option-preview.mjs';
 import {nextSession} from './lib/calendar.mjs';
 import {captureDraftAnalysis,positionAnalysisEvents,currentAnalysisBasis,workingAnalysisPreview,appendAnalysisRevision,modelPositionAnalysis} from './lib/position-analysis.mjs';
 import {draftContract,draftContractKey,normalizeTicker,sortPlanIdeas,PLAN_SORT_MODES} from './lib/planner-contract.mjs';
@@ -899,9 +899,49 @@ function intradayControlsMarkup(p,timing,name,editable=true){
  return `<div class="preview-grid-head"><strong><span class="preview-step-number">03</span> 0DTE · Exit intervals</strong><small class="preview-0dte-tag">${esc(timing.cutoffLabel)} model cutoff</small></div>
  <div class="preview-intraday-controls"><label><span>Minutes from model time (comma separated)</span><input type="text" inputmode="text" name="${name}" value="${esc(intradayMinutes(p.intradayMinutes).join(', '))}" ${editable?'':'disabled'} aria-label="Minutes from model time, comma separated"></label><small>${editable?'Enter up to 6 distinct whole-minute intervals (1–1440).':'Read-only intervals; older snapshots without intervals use defaults.'} Close is added automatically. Longer-expiry date plans are kept unchanged.</small></div>`;
 }
-function scenarioColumnHeadings(result,contract){
- if(!result.intraday)return result.columns.map(c=>`<th>${esc(fmtDate(c.sessionDate,true))}<small>${c.kind==='expiry-time'?esc(scenarioClock(c.t)):c.kind==='expiry-close'||c.sessionDate===contract.expiry?'Expiry · '+esc(sessionCloseLabel(c.sessionDate)):esc(sessionCloseLabel(c.sessionDate))}</small></th>`).join('');
- return result.columns.map(c=>`<th>${esc(c.label)}<small>${c.afterExpiry?'After cutoff':esc(scenarioClock(c.t))+(c.beforeOpen?' · pre-open':'')}</small></th>`).join('');
+function scenarioColumnHeadings(result,contract,indexes=result.columns.map((_,i)=>i),kind='daily'){
+ return indexes.map(i=>{
+  const c=result.columns[i];
+  if(result.intraday)return `<th>${esc(c.label)}<small>${c.afterExpiry?'After cutoff':esc(scenarioClock(c.t))+(c.beforeOpen?' · pre-open':'')}</small></th>`;
+  if(kind==='expiry')return `<th>${esc(scenarioClock(c.t))}${c.kind==='expiry-close'?'<small>Close · intrinsic</small>':''}</th>`;
+  return `<th>${esc(fmtDate(c.sessionDate,true))}<small>${c.sessionDate===contract.expiry?'Expiry · ':''}${esc(sessionCloseLabel(c.sessionDate))}</small></th>`;
+ }).join('');
+}
+// A native details element keeps the future-expiry section compact. Remember
+// its open state across quote refreshes and input-driven rerenders by view key.
+const expirySectionOpen=new Map();
+function rememberExpirySection(container){
+ const detail=container?.querySelector('details[data-expiry-section]');
+ if(detail)expirySectionOpen.set(detail.dataset.expirySection,detail.open);
+}
+function scenarioMatrixMarkup(result,contract,indexes,kind){
+ const heading=scenarioColumnHeadings(result,contract,indexes,kind);
+ const rows=result.rows.map(r=>`<tr><th>${esc(r.name)}<small>${r.spotPrice>0?usd(r.spotPrice):'Set target price'}</small></th>${indexes.map(i=>{const x=r.values[i];return `<td class="${!x.valid?'preview-empty-cell':x.returnPct>=0?'preview-profit-cell':'preview-loss-cell'}">${percentCell(x)}</td>`;}).join('')}</tr>`).join('');
+ const label=kind==='expiry'?'Expiration-day projections':kind==='intraday'?'0DTE intraday projections':'Daily projections';
+ return `<div class="preview-matrix-scroll" role="region" aria-label="${label}" tabindex="0"><table class="preview-matrix"><thead><tr><th>Underlying target</th>${heading}</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+function scenarioSectionsMarkup(result,contract,{key,name,editable=true}){
+ const groups=scenarioProjectionGroups(result,contract);
+ if(result.intraday)return `<section class="preview-projection-section"><div class="preview-projection-title"><strong>0DTE intraday projections</strong><small>${esc(fmtDate(contract.expiry,true))} · ${esc(result.expiryCutoffLabel)} cutoff</small></div>${scenarioMatrixMarkup(result,contract,groups.intraday,'intraday')}</section>`;
+ const daily=groups.daily.length?`<section class="preview-projection-section"><div class="preview-projection-title"><strong>Daily projections</strong><small>Selected session closes</small></div>${scenarioMatrixMarkup(result,contract,groups.daily,'daily')}</section>`:'';
+ const omitted=groups.excluded.length?`<p class="help-line">${groups.excluded.length} closed or after-expiry date${groups.excluded.length===1?'':'s'} omitted from projections. Saved dates are unchanged.</p>`:'';
+ if(!groups.expiry.length)return daily+omitted+(!daily?'<div class="preview-prompt">No valid selected exit sessions on or before expiration.</div>':'');
+ const selection=result.expiryTimeSelection;
+ const opened=expirySectionOpen.get(key)??(!groups.daily.length||result.expiryDaySelected);
+ return daily+omitted+`<details class="preview-expiry-section" data-expiry-section="${esc(key)}" ${opened?'open':''}><summary><span><strong>Expiration day · ${esc(fmtDate(contract.expiry,true))}</strong><small>${esc(result.expiryCutoffLabel)} model cutoff · ${groups.expiry.length} time projections</small></span></summary><div class="preview-expiry-content">
+ <div class="preview-intraday-controls"><label><span>Projection times (ET, 24-hour)</span><input type="text" name="${esc(name)}" value="${esc(selection.times.join(', '))}" ${editable?'':'disabled'} aria-label="Expiration-day projection times in Eastern Time"></label><small>${editable?'Enter 1–6 distinct HH:MM times from 09:30 to before '+selection.cutoff+'. Clear to reset defaults.':'Saved or default times; read-only scenario.'} Close is included automatically.</small></div>
+ ${selection.excluded.length?`<p class="help-line">Saved times ${esc(selection.excluded.join(', '))} are outside this early-close session and omitted.${selection.usesDefaults?' Session defaults used.':''}</p>`:''}
+ ${scenarioMatrixMarkup(result,contract,groups.expiry,'expiry')}
+ <p class="preview-expiry-note">Intraday estimates retain time value. At the modeled cash-session close, the gross premium is intrinsic value; net estimates include sale costs. Verify your broker's cutoff.</p></div></details>`;
+}
+function applyExpiryDayTimesInput(input,preview,contract){
+ const raw=input.value.trim(),times=raw?parseExpiryDayTimes(raw,contract.expiry):[];
+ if(times===null){
+  input.value=expiryDayTimeSelection(contract.expiry,preview.expiryDayTimes).times.join(', ');
+  showToast('Enter 1–6 distinct HH:MM times from 09:30 to before '+expiryDayTimeSelection(contract.expiry,[]).cutoff+' ET.');
+  return false;
+ }
+ preview.expiryDayTimes=times;input.value=expiryDayTimeSelection(contract.expiry,times).times.join(', ');return true;
 }
 function scenarioThetaMarkup(result,position=false){
  if(!result.intraday){
@@ -911,14 +951,14 @@ function scenarioThetaMarkup(result,position=false){
  return `<div><span>Modeled decay · unchanged underlying / IV · per contract</span><div class="preview-intraday-theta">${result.thetaIntraday.map(t=>`<strong class="${t.usdPerContract===null?'':t.usdPerContract<0?'preview-negative':'preview-positive'}">${t.minutes}m: ${t.usdPerContract===null?'—':usd(t.usdPerContract)}</strong>`).join('')}</div></div>`;
 }
 function intradayResultNotice(result){
- if(!result.intraday)return result.hasExpiryDayTimes?`<p class="preview-expiry-note" role="note"><strong>Expiration day expanded:</strong> Morning and midday estimates retain remaining time value. The final expiry column uses intrinsic value at the modeled ${esc(result.expiryCutoffLabel)} cash-session close. The model estimates a sale after spread/fees, not guaranteed proceeds from exercise or settlement. Check broker cutoffs.</p>`:'';
+ if(!result.intraday)return '';
  const t=result.intraday,age=result.quoteAgeMinutes;
  const quote=age===null?'Quote time unverified/manual.':age<-.5?'Quote timestamp is later than model time; verify inputs.':age>2?'Option quote is '+Math.round(age)+' min old; refresh or enter current broker values.':'Option quote age: '+Math.max(0,age).toFixed(1)+' min.';
  return `<p class="preview-expiry-note" role="note"><strong>0DTE · Model time ${esc(scenarioClock(t.asOfMs))} · ${Math.floor(t.remainingMinutes)} min to ${esc(t.cutoffLabel)} cutoff.</strong> ${esc(quote)} Indicative option prices and underlying/IV may be stale or asynchronous; fixed IV is assumed. ${t.beforeOpen?'Pre-open estimates are theoretical, not executable during the regular-session closure. ':''}Close is the modeled underlying cash-close horizon, not a guaranteed execution or settlement; verify contract-specific and broker cutoffs.</p>`;
 }
 function previewViewModel(idea){
  const contract=draftContract(idea);
- const result=projectOptionReturns({contract,preview:{...idea.preview,dates:visibleTickerDates(idea).visible.map(x=>x.date),ratePct:'4',dividendPct:'0'},qty:Number(idea.qty),entryPremium:Number(idea.price),entryFeeUsd:Number(idea.fee||0),sellFeePerContractUsd:ratePerContract(account(),'SELL'),asOf:new Date(),closed:state.customClosed||[]});
+ const result=projectOptionReturns({contract,preview:{...idea.preview,dates:visibleTickerDates(idea).visible.map(x=>x.date),ratePct:'4',dividendPct:'0'},qty:Number(idea.qty),entryPremium:Number(idea.price),entryFeeUsd:Number(idea.fee||0),sellFeePerContractUsd:ratePerContract(account(),'SELL'),asOf:new Date(),closed:state.customClosed||[],includeExpiryDay:true});
  return {contract,result};
 }
 function percentCell(cell){
@@ -1008,6 +1048,7 @@ async function ensureAtmRange(idea,force=false){
 }
 function renderOptionPreview(){
  const el=$('optionPreview');if(!el)return;
+ rememberExpirySection(el);
  const idea=currentPreviewIdea();if(!idea){el.hidden=true;el.innerHTML='';return;}
  if(optionPanelMode==='chain'){renderChainPreview(idea);return;}
  el.hidden=false;
@@ -1045,8 +1086,8 @@ function renderOptionPreview(){
   <div class="preview-grid-head"><strong><span class="preview-step-number">02</span> Underlying price targets (USD)</strong><button type="button" class="btn btn-outline preview-add-btn" data-action="preview-add-target" ${p.targets.length>=MAX_PREVIEW_TARGETS?'disabled':''}>+ TP</button></div>
   <div class="preview-targets">${p.targets.map(t=>`<label class="preview-target-row" data-target-id="${esc(t.id)}"><strong>${esc(t.name)}</strong><input type="number" name="target-price" inputmode="decimal" min="0.01" step="0.01" value="${esc(t.price)}" placeholder="Underlying USD price">${!['stop','tp1','tp2'].includes(t.id)?`<button type="button" class="preview-remove-mini" data-action="preview-remove-target" data-target-id="${esc(t.id)}" aria-label="Remove ${esc(t.name)}">×</button>`:''}</label>`).join('')}</div>
   ${timing?intradayControlsMarkup(p,timing,'intraday-minutes'):`  <div class="preview-grid-head"><strong><span class="preview-step-number">03</span> Exit dates · session close</strong><button type="button" class="btn btn-outline preview-add-btn" data-action="preview-add-date" ${!canAddExitDate?'disabled':''}>+ Date</button></div>
-  <p class="help-line">Select the expiration date to automatically see morning, midday and close estimates for standard stock/ETF options. Other dates use the regular cash-session close, including early closes.</p>
-  <div class="preview-dates">${shownExitDates.map(({date,index},i)=>`<label class="preview-date-row"><span>${i===0?'Next session':i===1?'Second session':`Date ${i+1}`}</span><input type="date" name="exit-date" data-date-index="${index}" value="${esc(date)}" min="${esc(today())}" max="${esc(parsed.expiry||'2100-01-01')}">${p.dates.length>1?`<button type="button" class="preview-remove-mini" data-action="preview-remove-date" data-date-index="${index}" aria-label="Remove exit date">×</button>`:''}</label>`).join('')}</div>
+  <p class="help-line">Choose dates for daily estimates. Expiration-day times are in a separate expandable section below, available even if you do not select the expiry date here.</p>
+  <div class="preview-dates">${shownExitDates.map(({date,index},i)=>`<label class="preview-date-row"><span>${date===parsed.expiry?'Expiration (separate)':i===0?'Next session':i===1?'Second session':`Date ${i+1}`}</span><input type="date" name="exit-date" data-date-index="${index}" value="${esc(date)}" min="${esc(today())}" max="${esc(parsed.expiry||'2100-01-01')}">${p.dates.length>1?`<button type="button" class="preview-remove-mini" data-action="preview-remove-date" data-date-index="${index}" aria-label="Remove exit date">×</button>`:''}</label>`).join('')}</div>
   ${unavailableExitDates.length?`<p class="preview-expiry-note" role="note">${unavailableExitDates.length} ticker-plan exit date${unavailableExitDates.length===1?'':'s'} after ${esc(fmtDate(parsed.expiry,true))} excluded for this contract. The dates remain saved for longer-expiring ${esc(normalizeTicker(idea.ticker))} options.</p>`:''}`}
   <div class="preview-output-title"><span class="preview-step-number">04</span><div><strong>Scenario return matrix</strong><small>Price × ${timing?'time':'date / time'} · net projected percentage after fees</small></div><span class="preview-output-tag">MODEL, NOT FORECAST</span></div>
   <div id="optionPreviewResults" aria-live="polite"></div>
@@ -1056,14 +1097,14 @@ function renderOptionPreview(){
 }
 function updateOptionPreviewResults(){
  const container=$('optionPreviewResults'),idea=currentPreviewIdea();if(!container||!idea)return;
+ rememberExpirySection(container);
  const {result,contract}=previewViewModel(idea);
  if(!result.valid){container.innerHTML=`<div class="preview-prompt">${esc(result.reason)}</div>`;return;}
  if(!result.dateHeaders.length){container.innerHTML='<div class="preview-prompt">No exit dates occur on or before this contract expiration. Adjust the shared plan, or use an independent plan for this option.</div>';return;}
- const heading=scenarioColumnHeadings(result,contract);
- const rows=result.rows.map(r=>`<tr><th>${esc(r.name)}<small>${r.spotPrice>0?usd(r.spotPrice):'Set target price'}</small></th>${r.values.map(x=>`<td class="${!x.valid?'preview-empty-cell':x.returnPct>=0?'preview-profit-cell':'preview-loss-cell'}">${percentCell(x)}</td>`).join('')}</tr>`).join('');
+ const sections=scenarioSectionsMarkup(result,contract,{key:JSON.stringify(['draft',account().id,idea.id,contract.expiry]),name:'expiry-day-times'});
  container.innerHTML=`${intradayResultNotice(result)}<div class="preview-result-summary">${scenarioThetaMarkup(result)}<div><span>Entry cost incl. fees</span><strong>${usd(result.baseCostUsd)}</strong></div><div><span>IV assumed at every ${result.intraday||result.hasExpiryDayTimes?'time':'date'}</span><strong>${result.ivPct.toFixed(1)}%</strong></div></div>
   <div class="preview-matrix-legend"><span class="preview-legend-gain">Positive modeled net return</span><span class="preview-legend-loss">Negative modeled net return</span></div>
-  <div class="preview-matrix-scroll" role="region" aria-label="Modeled option returns by exit ${result.intraday||result.hasExpiryDayTimes?'time':'date'}" tabindex="0"><table class="preview-matrix"><thead><tr><th>Underlying target</th>${heading}</tr></thead><tbody>${rows}</tbody></table></div>
+  ${sections}
   <small class="preview-footnote">Valuation anchored to ${esc(result.anchorLabel)} at current spot; that anchor mismatch is reduced toward expiration. Percent = net modeled USD P/L ÷ actual proposed USD purchase cost (quantity × buy premium × 100 + buy fees). Estimated sell fees are deducted. ${result.spread>0?`Assumes half the current indicative ${usd(result.spread)} bid/ask spread is lost on exit.`:'No spread discount: enter a bid and ask to model half-spread exit slippage.'} These are scenario estimates, not statistical expectancy or guaranteed proceeds.</small>`;
 }
 // One-time quote on contract selection for any draft, without opening the analysis panel.
@@ -1368,9 +1409,9 @@ function openPositionAnalysis(id){
  if(session.mode==='current')void refreshPositionAnalysisQuote();
 }
 function positionAnalysisSelection(session,ctx){
- if(session.mode==='current')return {preview:session.working,basis:ctx.basis,contract:draftContract(ctx.x.position),asOf:new Date(),closed:state.customClosed||[],multiplier:Number(ctx.x.position.multiplier||100),editable:true,event:null};
+ if(session.mode==='current')return {preview:session.working,basis:ctx.basis,contract:draftContract(ctx.x.position),asOf:new Date(),closed:state.customClosed||[],includeExpiryDay:true,multiplier:Number(ctx.x.position.multiplier||100),editable:true,event:null};
  const event=positionAnalysisEvents(ctx.x.position).find(e=>e.id===session.mode);
- return event?{preview:event.preview,basis:event.basis,contract:event.contract,asOf:event.capturedAt,multiplier:event.multiplier,editable:false,event}:null;
+ return event?{preview:event.preview,basis:event.basis,contract:event.contract,asOf:event.capturedAt,includeExpiryDay:true,multiplier:event.multiplier,editable:false,event}:null;
 }
 function analysisTime(value){
  const d=new Date(value);
@@ -1378,6 +1419,7 @@ function analysisTime(value){
 }
 function renderPositionAnalysis(){
  const session=positionAnalysisSession,root=$('positionAnalysisBody');if(!session||!root)return;
+ rememberExpirySection(root);
  const ctx=positionAnalysisContext(session);
  if(!ctx){root.innerHTML='<p class="preview-warning">The position or portfolio changed. Close and reopen Analyze %.</p>';return;}
  const p=ctx.x.position,events=positionAnalysisEvents(p),selection=positionAnalysisSelection(session,ctx);
@@ -1410,8 +1452,8 @@ function renderPositionAnalysis(){
   <div class="preview-grid-head"><strong><span class="preview-step-number">02</span> Underlying price targets (USD)</strong>${editable?`<button type="button" class="btn btn-outline preview-add-btn" data-pa-action="add-target" ${targets.length>=MAX_PREVIEW_TARGETS?'disabled':''}>+ TP</button>`:''}</div>
   <div class="preview-targets">${targets.map((t,i)=>`<label class="preview-target-row"><strong>${esc(t.name)}</strong><input type="number" name="pa-target" data-index="${i}" min="0.01" step=".01" value="${esc(t.price)}" placeholder="Underlying USD price" ${disable}>${editable&&!['stop','tp1','tp2'].includes(t.id)?`<button type="button" class="preview-remove-mini" data-pa-action="remove-target" data-index="${i}" aria-label="Remove ${esc(t.name)}">×</button>`:''}</label>`).join('')}</div>
   ${timing?intradayControlsMarkup(v,timing,'pa-intraday-minutes',editable):`  <div class="preview-grid-head"><strong><span class="preview-step-number">03</span> Exit dates · session close</strong>${editable?`<div class="position-analysis-date-actions"><button type="button" class="btn btn-outline preview-add-btn" data-pa-action="reset-dates">Next sessions</button><button type="button" class="btn btn-outline preview-add-btn" data-pa-action="add-date" ${canAddDate?'':'disabled'}>+ Date</button></div>`:''}</div>
-  <p class="help-line">Expiration dates include morning, midday and close estimates for standard stock/ETF options. Saved dates and targets remain unchanged.</p>
-  <div class="preview-dates">${dates.map((date,i)=>`<label class="preview-date-row"><span>Date ${i+1}${editable&&easternCloseMs(date)<Date.now()?' · past':''}</span><input type="date" name="pa-date" data-index="${i}" value="${esc(date)}" max="${esc(contract?.expiry||'2100-01-01')}" ${disable}>${editable&&dates.length>1?`<button type="button" class="preview-remove-mini" data-pa-action="remove-date" data-index="${i}">×</button>`:''}</label>`).join('')}</div>`}
+  <p class="help-line">Expiration-day times are in a separate expandable section below. Selecting the expiry date is optional. Saved dates and targets remain unchanged.</p>
+  <div class="preview-dates">${dates.map((date,i)=>`<label class="preview-date-row"><span>${date===contract.expiry?'Expiration (separate)':'Date '+(i+1)}${editable&&easternCloseMs(date)<Date.now()?' · past':''}</span><input type="date" name="pa-date" data-index="${i}" value="${esc(date)}" max="${esc(contract?.expiry||'2100-01-01')}" ${disable}>${editable&&dates.length>1?`<button type="button" class="preview-remove-mini" data-pa-action="remove-date" data-index="${i}">×</button>`:''}</label>`).join('')}</div>`}
   <div class="preview-output-title"><span class="preview-step-number">04</span><div><strong>Scenario return matrix</strong><small>Price × ${timing?'time':'date / time'} · net projected percentage after fees</small></div><span class="preview-output-tag">MODEL, NOT FORECAST</span></div>
   <div id="positionAnalysisResults" aria-live="polite"></div>
   <p class="preview-caution">Same European-style model as Quick Size Check; fixed assumed IV, rates and dividends. Quotes are indicative, not guaranteed fills. The current view never treats old entry premium as today's market value.</p>
@@ -1421,11 +1463,11 @@ function renderPositionAnalysis(){
 function updatePositionAnalysisResults(){
  const session=positionAnalysisSession,container=$('positionAnalysisResults');if(!session||!container)return;
  const ctx=positionAnalysisContext(session),selection=ctx&&positionAnalysisSelection(session,ctx);if(!selection)return;
+ rememberExpirySection(container);
  const result=modelPositionAnalysis(selection);
  if(!result.valid){container.innerHTML=`<div class="preview-prompt">${esc(result.reason)}</div>`;return;}
- const heading=scenarioColumnHeadings(result,selection.contract);
- const rows=result.rows.map(r=>`<tr><th>${esc(r.name)}<small>${r.spotPrice>0?usd(r.spotPrice):'Set target price'}</small></th>${r.values.map(x=>`<td class="${!x.valid?'preview-empty-cell':x.returnPct>=0?'preview-profit-cell':'preview-loss-cell'}">${percentCell(x)}</td>`).join('')}</tr>`).join('');
- container.innerHTML=`${intradayResultNotice(result)}<div class="preview-result-summary">${scenarioThetaMarkup(result,true)}<div><span>Actual analyzed acquisition cost</span><strong>${usd(result.baseCostUsd)}</strong></div><div><span>IV assumed at every ${result.intraday||result.hasExpiryDayTimes?'time':'date'}</span><strong>${result.ivPct.toFixed(1)}%</strong></div></div><div class="preview-matrix-scroll" role="region" aria-label="Modeled position returns by ${result.intraday||result.hasExpiryDayTimes?'time':'date'}" tabindex="0"><table class="preview-matrix"><thead><tr><th>Underlying target</th>${heading}</tr></thead><tbody>${rows}</tbody></table></div><small class="preview-footnote">Valuation anchored to ${esc(result.anchorLabel)}. Return = modeled net USD P/L divided by this view's actual acquisition cost, including buy fees. Estimated sell fees and half the indicative spread (when available) are deducted. ${result.intraday?'Times after the model cutoff are unavailable.':'Past/after-expiry dates are unavailable; use Next sessions in the current view.'}</small>`;
+ const sections=scenarioSectionsMarkup(result,selection.contract,{key:JSON.stringify(['position',session.accountId,session.positionId,session.mode,selection.contract.expiry]),name:'pa-expiry-day-times',editable:selection.editable});
+ container.innerHTML=`${intradayResultNotice(result)}<div class="preview-result-summary">${scenarioThetaMarkup(result,true)}<div><span>Actual analyzed acquisition cost</span><strong>${usd(result.baseCostUsd)}</strong></div><div><span>IV assumed at every ${result.intraday||result.hasExpiryDayTimes?'time':'date'}</span><strong>${result.ivPct.toFixed(1)}%</strong></div></div>${sections}<small class="preview-footnote">Valuation anchored to ${esc(result.anchorLabel)}. Return = modeled net USD P/L divided by this view's actual acquisition cost, including buy fees. Estimated sell fees and half the indicative spread (when available) are deducted. ${result.intraday?'Times after the model cutoff are unavailable.':'Past/after-expiry dates are unavailable; use Next sessions in the current view.'}</small>`;
 }
 function markPositionAnalysisDirty(session){
  session.dirty=true;const hint=$('positionAnalysisSaveHint');if(hint)hint.textContent='Unsaved scenario edits.';
@@ -1504,6 +1546,9 @@ function initPositionAnalysis(){
   if(e.target.name==='position-analysis-mode'){
    session.mode=e.target.value;renderPositionAnalysis();
    if(session.mode==='current'&&!session.working.spot&&!session.busy)void refreshPositionAnalysisQuote();
+  }else if(e.target.name==='pa-expiry-day-times'&&session.mode==='current'){
+   const ctx=positionAnalysisContext(session);if(!ctx?.live||!ctx.basis)return;
+   if(applyExpiryDayTimesInput(e.target,session.working,ctx.x.position)){markPositionAnalysisDirty(session);updatePositionAnalysisResults();}
   }else if(e.target.name==='pa-intraday-minutes'&&session.mode==='current'){
    const minutes=parseIntradayMinutes(e.target.value);if(!minutes){e.target.value=intradayMinutes(session.working.intradayMinutes).join(', ');showToast('Enter 1–6 distinct whole-minute intervals, from 1 to 1440.');return;}
    session.working.intradayMinutes=minutes;e.target.value=minutes.join(', ');markPositionAnalysisDirty(session);updatePositionAnalysisResults();
@@ -1514,7 +1559,7 @@ function initPositionAnalysis(){
   if(el.dataset.paAction==='close'){dialog.close();return;}
   try{positionAnalysisAction(el.dataset.paAction,el);}catch(err){showToast(err.message);const status=root.querySelector('[data-pa-status]');if(status)status.textContent=err.message;}
  });
- dialog.addEventListener('close',()=>{const session=positionAnalysisSession;positionAnalysisSession=null;session?.controller?.abort();root.innerHTML='';});
+ dialog.addEventListener('close',()=>{rememberExpirySection(root);const session=positionAnalysisSession;positionAnalysisSession=null;session?.controller?.abort();root.innerHTML='';});
 }
 
 function openPositionDetail(id){positionFilter='all';activeTab='positions';render();const item=$('positionsFull').querySelectorAll('[data-position]');for(const el of item)if(el.dataset.position===id){const details=el.querySelector('details');if(details)details.open=true;el.scrollIntoView({block:'center',behavior:'smooth'});break;}}
@@ -1839,7 +1884,10 @@ if(typeof globalThis.addEventListener==='function')globalThis.addEventListener('
  if(activeTab==='dashboard')renderPlanner(analytics());
 });
 $('optionPreview').addEventListener('change',e=>{
- if(e.target.name!=='intraday-minutes')return;const idea=currentPreviewIdea(),p=ensurePreview(idea);if(!p)return;
+ if(!['intraday-minutes','expiry-day-times'].includes(e.target.name))return;const idea=currentPreviewIdea(),p=ensurePreview(idea);if(!p)return;
+ if(e.target.name==='expiry-day-times'){
+  const contract=draftContract(idea);if(contract&&applyExpiryDayTimesInput(e.target,p,contract)){persistPlannerDrafts();updateOptionPreviewResults();}return;
+ }
  const minutes=parseIntradayMinutes(e.target.value);if(!minutes){e.target.value=intradayMinutes(p.intradayMinutes).join(', ');showToast('Enter 1–6 distinct whole-minute intervals, from 1 to 1440.');return;}
  p.intradayMinutes=minutes;e.target.value=minutes.join(', ');persistPlannerDrafts();updateOptionPreviewResults();
 });
