@@ -7,7 +7,7 @@ import {calculatePlanBasket,defaultPlanIdea,parsePlannedContract,MAX_PLAN_IDEAS,
 import {PLANNER_LOCAL_KEY,loadPlannerDrafts,savePlannerDrafts,clearPlannerDraftStorage} from './lib/planner-storage.mjs';
 import {DEFAULT_BUY_FEE_USD,DEFAULT_SELL_FEE_USD,estimateOrderFee,ratePerContract} from './lib/fees.mjs';
 import {buildSingleTradeHandoff,singleTradeExportFilename,TRADE_HANDOFF_SCHEMA} from './lib/trade-export.mjs';
-import {emptyPreview,normalizePreview,projectOptionReturns,buildOCCSymbol,MAX_PREVIEW_DATES,MAX_PREVIEW_TARGETS,easternCloseMs,sessionCloseLabel,intradayTiming,intradayMinutes,parseIntradayMinutes,parseExpiryDayTimes,expiryDayTimeSelection,scenarioProjectionGroups} from './lib/option-preview.mjs';
+import {emptyPreview,normalizePreview,projectOptionReturns,buildOCCSymbol,MAX_PREVIEW_DATES,MAX_PREVIEW_TARGETS,easternCloseMs,sessionCloseLabel,intradayTiming,intradayMinutes,parseIntradayMinutes,parseExpiryDayTimes,expiryDayTimeSelection,scenarioProjectionGroups,sortScenarioRows} from './lib/option-preview.mjs';
 import {nextSession} from './lib/calendar.mjs';
 import {captureDraftAnalysis,positionAnalysisEvents,currentAnalysisBasis,workingAnalysisPreview,appendAnalysisRevision,modelPositionAnalysis} from './lib/position-analysis.mjs';
 import {draftContract,draftContractKey,normalizeTicker,sortPlanIdeas,PLAN_SORT_MODES} from './lib/planner-contract.mjs';
@@ -916,7 +916,7 @@ function rememberExpirySection(container){
 }
 function scenarioMatrixMarkup(result,contract,indexes,kind){
  const heading=scenarioColumnHeadings(result,contract,indexes,kind);
- const rows=result.rows.map(r=>`<tr><th>${esc(r.name)}<small>${r.spotPrice>0?usd(r.spotPrice):'Set target price'}</small></th>${indexes.map(i=>{const x=r.values[i];return `<td class="${!x.valid?'preview-empty-cell':x.returnPct>=0?'preview-profit-cell':'preview-loss-cell'}">${percentCell(x)}</td>`;}).join('')}</tr>`).join('');
+ const rows=sortScenarioRows(result.rows).map(r=>`<tr><th>${esc(r.name)}<small>${r.spotPrice>0?usd(r.spotPrice):'Set target price'}</small></th>${indexes.map(i=>{const x=r.values[i];return `<td class="${!x.valid?'preview-empty-cell':x.returnPct>=0?'preview-profit-cell':'preview-loss-cell'}">${percentCell(x)}</td>`;}).join('')}</tr>`).join('');
  const label=kind==='expiry'?'Expiration-day projections':kind==='intraday'?'0DTE intraday projections':'Daily projections';
  return `<div class="preview-matrix-scroll" role="region" aria-label="${label}" tabindex="0"><table class="preview-matrix"><thead><tr><th>Underlying target</th>${heading}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
