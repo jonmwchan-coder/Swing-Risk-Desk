@@ -1,3 +1,8 @@
+## v3.29 — Sort Positions & Partial Exits (2026-11-25)
+
+- Right-aligned Sort dropdown beside Open / All / Closed. Default Most recent sorts by the latest recorded buy or accepted exit at the selected as-of date (not journal edits or quote refreshes). Options: realized net P/L CAD high-to-low or low-to-high; first recorded entry date/time newest/oldest; final exit date/time newest/oldest for fully closed positions. Open positions and missing dates sort last in close-date modes. Realized zero remains zero, as on the position card. Ties fall back to latest trade activity, then original display order. Sort applies after the filter and remembers the last valid selection on the same device; a new browser starts with Most recent.
+- Presentation only: no ledger edits, risk calculations, dashboard sort changes or historical record reordering. Existing as-of view and transaction ordering are respected. Rollback: v3.28 commit `ce6083b1e6971700833192ec3e114dfb381be0bf`, production deployment `dpl_7fCc9rGqBdN7Wni4uw9WbfDe5cTz`.
+
 ## v3.28 — Sort Analyze % take-profit rows (2026-11-25)
 
 - Both Quick Size Check and recorded-position Analyze % tables display take-profit rows in ascending numerical underlying-price order, including daily, future expiration-day and same-day 0DTE projections. No move and Stop stay in their original pinned positions; missing/invalid target prices appear last; equal prices retain their original order. The same sorting applies to calls and puts.

@@ -995,3 +995,11 @@ html,body{max-width:100%}
 .preview-expiry-content .preview-matrix-scroll{max-width:100%}
 .preview-expiry-content .preview-expiry-note{margin:10px 0 0}
 @media(max-width:540px){.preview-expiry-content{padding:0 8px 8px}.preview-expiry-section>summary{padding:9px}.preview-expiry-section>summary>span{align-items:flex-start;flex-direction:column;gap:3px}}
+
+/* v3.29: position filters stay left and sorting aligns with the right edge. */
+.position-filter-bar{align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 12px}
+.position-filter-buttons{display:flex;flex-wrap:wrap;gap:8px}
+.position-sort-control{margin-left:auto;display:flex;align-items:center;gap:8px;max-width:100%}
+.position-sort-control label{font-size:11px;font-weight:800;color:#a3bac1}
+.position-sort-control select{width:auto;max-width:100%;min-width:0;min-height:38px;padding:7px 10px;border:1px solid #456271;border-radius:9px;background:#102c38;color:#e0f5f0;font-weight:650;font-size:12px}
+@media(max-width:540px){.position-filter-bar{gap:8px}.position-filter-buttons{gap:5px}.position-filter-buttons .filter{padding:8px 12px}.position-sort-control{justify-content:flex-end}.position-sort-control select{max-width:calc(100vw - 95px)}}
