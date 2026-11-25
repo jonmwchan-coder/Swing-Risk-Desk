@@ -60,7 +60,7 @@ test('premarket columns explicitly identified; unsupported index roots fail clos
  assert.equal(o.intraday.beforeOpen,true);assert.equal(o.columns[0].beforeOpen,true);assert.equal(o.columns[1].beforeOpen,false);
  for(const ticker of ['SPX','SPXW','NDX','VIX'])assert.match(calc({contract:{...contract,ticker}}).reason,/index option settlement/);
 });
-test('future expiration preserves ordinary swing date columns and original cutoff',()=>{
+test('non-expiration swing dates retain one column each, with the correct session close',()=>{
  const future={...contract,expiry:'2026-12-04'};
  const dates=['2026-11-27','2026-12-01'];
  const o=calc({contract:future,preview:{...preview,dates,intradayMinutes:[5,15]}});
