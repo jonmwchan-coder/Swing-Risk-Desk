@@ -7,7 +7,7 @@ import {calculatePlanBasket,defaultPlanIdea,parsePlannedContract,MAX_PLAN_IDEAS,
 import {PLANNER_LOCAL_KEY,loadPlannerDrafts,savePlannerDrafts,clearPlannerDraftStorage} from './lib/planner-storage.mjs';
 import {DEFAULT_BUY_FEE_USD,DEFAULT_SELL_FEE_USD,estimateOrderFee,ratePerContract} from './lib/fees.mjs';
 import {buildSingleTradeHandoff,singleTradeExportFilename,TRADE_HANDOFF_SCHEMA} from './lib/trade-export.mjs';
-import {emptyPreview,normalizePreview,projectOptionReturns,buildOCCSymbol,MAX_PREVIEW_DATES,MAX_PREVIEW_TARGETS,easternCloseMs,sessionCloseLabel,intradayTiming,intradayMinutes,parseIntradayMinutes,parseExpiryDayTimes,expiryDayTimeSelection,scenarioProjectionGroups,sortScenarioRows} from './lib/option-preview.mjs';
+import {emptyPreview,normalizePreview,projectOptionReturns,buildOCCSymbol,MAX_PREVIEW_DATES,MAX_PREVIEW_TARGETS,easternCloseMs,sessionCloseLabel,intradayTiming,intradayMinutes,parseIntradayMinutes,parseExpiryDayTimes,expiryDayTimeSelection,scenarioProjectionGroups,sortScenarioRows,availablePreviewDate,previewDateIssue} from './lib/option-preview.mjs';
 import {nextSession} from './lib/calendar.mjs';
 import {captureDraftAnalysis,positionAnalysisEvents,currentAnalysisBasis,workingAnalysisPreview,appendAnalysisRevision,modelPositionAnalysis} from './lib/position-analysis.mjs';
 import {draftContract,draftContractKey,normalizeTicker,sortPlanIdeas,PLAN_SORT_MODES} from './lib/planner-contract.mjs';
@@ -1058,9 +1058,8 @@ function renderOptionPreview(){
  const p=ensurePreview(idea),parsed=draftContract(idea)||{},symbol=buildOCCSymbol(parsed),quoteRefreshBusy=pendingDraftQuotes.has(idea);
  const timing=intradayTiming(parsed,new Date(),state.customClosed||[]);
  const {visible:shownExitDates,excluded:unavailableExitDates}=visibleTickerDates(idea);
- const lastExitDate=shownExitDates.at(-1)?.date||today();
- const nextExitDate=nextSession(lastExitDate,state.customClosed||[]);
- const canAddExitDate=p.dates.length<MAX_PREVIEW_DATES && (!parseDay(parsed.expiry)||nextExitDate<=parsed.expiry);
+ const addExitDate=availablePreviewDate(p.dates,parsed.expiry,new Date(),state.customClosed||[]);
+ const canAddExitDate=Boolean(addExitDate.date);
  const quote=p.quoteAt?`As of ${esc(p.quoteAt.replace('T',' ').slice(0,19))} UTC`:'Not yet refreshed';
  const marketNumber=(n,unit,places=2)=>{const v=Number(n);return String(n??'').trim()!==''&&Number.isFinite(v)&&v>0?`${unit} ${v.toFixed(places)}`:'----';};
  const ivUnavailable=quoteConnectionState==='connected'&&!(Number(p.ivPct)>0);
@@ -1088,9 +1087,10 @@ function renderOptionPreview(){
   ${tickerLinkInfo(idea)}
   <div class="preview-grid-head"><strong><span class="preview-step-number">02</span> Underlying price targets (USD)</strong><button type="button" class="btn btn-outline preview-add-btn" data-action="preview-add-target" ${p.targets.length>=MAX_PREVIEW_TARGETS?'disabled':''}>+ TP</button></div>
   <div class="preview-targets">${p.targets.map(t=>`<label class="preview-target-row" data-target-id="${esc(t.id)}"><strong>${esc(t.name)}</strong><input type="number" name="target-price" inputmode="decimal" min="0.01" step="0.01" value="${esc(t.price)}" placeholder="Underlying USD price">${!['stop','tp1','tp2'].includes(t.id)?`<button type="button" class="preview-remove-mini" data-action="preview-remove-target" data-target-id="${esc(t.id)}" aria-label="Remove ${esc(t.name)}">×</button>`:''}</label>`).join('')}</div>
-  ${timing?intradayControlsMarkup(p,timing,'intraday-minutes'):`  <div class="preview-grid-head"><strong><span class="preview-step-number">03</span> Exit dates · session close</strong><button type="button" class="btn btn-outline preview-add-btn" data-action="preview-add-date" ${!canAddExitDate?'disabled':''}>+ Date</button></div>
-  <p class="help-line">Choose dates for daily estimates. Expiration-day times are in a separate expandable section below, available even if you do not select the expiry date here.</p>
-  <div class="preview-dates">${shownExitDates.map(({date,index},i)=>`<label class="preview-date-row"><span>${date===parsed.expiry?'Expiration (separate)':i===0?'Next session':i===1?'Second session':`Date ${i+1}`}</span><input type="date" name="exit-date" data-date-index="${index}" value="${esc(date)}" min="${esc(today())}" max="${esc(parsed.expiry||'2100-01-01')}">${p.dates.length>1?`<button type="button" class="preview-remove-mini" data-action="preview-remove-date" data-date-index="${index}" aria-label="Remove exit date">×</button>`:''}</label>`).join('')}</div>
+  ${timing?intradayControlsMarkup(p,timing,'intraday-minutes'):`  <div class="preview-grid-head"><strong><span class="preview-step-number">03</span> Exit dates · session close</strong><button type="button" class="btn btn-outline preview-add-btn" data-action="preview-add-date" title="${esc(addExitDate.reason||'Add '+fmtDate(addExitDate.date,true))}" ${!canAddExitDate?'disabled':''}>+ Date</button></div>
+  <p class="help-line">Choose dates for daily estimates. + Date adds the earliest unused trading session, including today before close. Expiration-day times are in a separate expandable section below.</p>
+  ${!canAddExitDate?`<p class="help-line">${esc(addExitDate.reason)}</p>`:''}
+  <div class="preview-dates">${shownExitDates.map(({date,index},i)=>`<label class="preview-date-row"><span>${date===parsed.expiry?'Expiration (separate)':date===today()?'Today':`Date ${i+1}`}</span><input type="date" name="exit-date" data-date-index="${index}" value="${esc(date)}" min="${esc(today())}" max="${esc(parsed.expiry||'2100-01-01')}">${p.dates.length>1?`<button type="button" class="preview-remove-mini" data-action="preview-remove-date" data-date-index="${index}" aria-label="Remove exit date">×</button>`:''}</label>`).join('')}</div>
   ${unavailableExitDates.length?`<p class="preview-expiry-note" role="note">${unavailableExitDates.length} ticker-plan exit date${unavailableExitDates.length===1?'':'s'} after ${esc(fmtDate(parsed.expiry,true))} excluded for this contract. The dates remain saved for longer-expiring ${esc(normalizeTicker(idea.ticker))} options.</p>`:''}`}
   <div class="preview-output-title"><span class="preview-step-number">04</span><div><strong>Scenario return matrix</strong><small>Price × ${timing?'time':'date / time'} · net projected percentage after fees</small></div><span class="preview-output-tag">MODEL, NOT FORECAST</span></div>
   <div id="optionPreviewResults" aria-live="polite"></div>
@@ -1444,7 +1444,8 @@ function renderPositionAnalysis(){
  const quoteLabel=editable?(v.quoteAt?'Reference quote '+analysisTime(v.quoteAt):v.quoteSource||'No current quote'):(v.quoteAt?'Captured quote timestamp '+analysisTime(v.quoteAt):v.quoteSource||'No quote timestamp saved');
  const marketFields=[['spot','Underlying price (USD)','0.01'],['ivPct','Option IV (%)','0.01'],['bid','Option bid (USD/share)','0'],['ask','Option ask (USD/share)','0']];
  const textPlan=[p.underlyingInvalidation?'Recorded invalidation: '+p.underlyingInvalidation:'',p.targetLevels?'Recorded target notes: '+p.targetLevels:''].filter(Boolean);
- const canAddDate=editable&&dates.length<MAX_PREVIEW_DATES&&parseDay(contract?.expiry);
+ const addDate=editable?availablePreviewDate(dates,contract?.expiry,selection.asOf,selection.closed||[]):{date:null,reason:''};
+ const canAddDate=Boolean(editable&&addDate.date);
  const draftNote=event?.kind==='entry'&&event.draft?`<details class="preview-data-help"><summary>Original sizing assumptions</summary><p>${esc(event.draft.name||'Saved sizing idea')} · planned qty ${esc(event.draft.qty??'—')} · quoted/planned premium ${esc(event.draft.price??'—')} USD/share · estimated buy fees ${esc(event.draft.fee??'—')} USD · estimated loss ${esc(event.draft.plannedLossPct??'—')}% · stress ${esc(event.draft.stress??'—')}%</p><p>${esc(event.draft.quoteMessage||'')}</p></details>`:'';
  root.innerHTML=header+`
   <div class="preview-quote-card"><div class="preview-workspace-step"><span>01</span><strong>Market reference</strong><small>${esc(quoteLabel)}</small></div>
@@ -1454,9 +1455,10 @@ function renderPositionAnalysis(){
   ${textPlan.length&&editable?`<p class="help-line">${textPlan.map(esc).join('<br>')}</p>`:''}
   <div class="preview-grid-head"><strong><span class="preview-step-number">02</span> Underlying price targets (USD)</strong>${editable?`<button type="button" class="btn btn-outline preview-add-btn" data-pa-action="add-target" ${targets.length>=MAX_PREVIEW_TARGETS?'disabled':''}>+ TP</button>`:''}</div>
   <div class="preview-targets">${targets.map((t,i)=>`<label class="preview-target-row"><strong>${esc(t.name)}</strong><input type="number" name="pa-target" data-index="${i}" min="0.01" step=".01" value="${esc(t.price)}" placeholder="Underlying USD price" ${disable}>${editable&&!['stop','tp1','tp2'].includes(t.id)?`<button type="button" class="preview-remove-mini" data-pa-action="remove-target" data-index="${i}" aria-label="Remove ${esc(t.name)}">×</button>`:''}</label>`).join('')}</div>
-  ${timing?intradayControlsMarkup(v,timing,'pa-intraday-minutes',editable):`  <div class="preview-grid-head"><strong><span class="preview-step-number">03</span> Exit dates · session close</strong>${editable?`<div class="position-analysis-date-actions"><button type="button" class="btn btn-outline preview-add-btn" data-pa-action="reset-dates">Next sessions</button><button type="button" class="btn btn-outline preview-add-btn" data-pa-action="add-date" ${canAddDate?'':'disabled'}>+ Date</button></div>`:''}</div>
-  <p class="help-line">Expiration-day times are in a separate expandable section below. Selecting the expiry date is optional. Saved dates and targets remain unchanged.</p>
-  <div class="preview-dates">${dates.map((date,i)=>`<label class="preview-date-row"><span>${date===contract.expiry?'Expiration (separate)':'Date '+(i+1)}${editable&&easternCloseMs(date)<Date.now()?' · past':''}</span><input type="date" name="pa-date" data-index="${i}" value="${esc(date)}" max="${esc(contract?.expiry||'2100-01-01')}" ${disable}>${editable&&dates.length>1?`<button type="button" class="preview-remove-mini" data-pa-action="remove-date" data-index="${i}">×</button>`:''}</label>`).join('')}</div>`}
+  ${timing?intradayControlsMarkup(v,timing,'pa-intraday-minutes',editable):`  <div class="preview-grid-head"><strong><span class="preview-step-number">03</span> Exit dates · session close</strong>${editable?`<div class="position-analysis-date-actions"><button type="button" class="btn btn-outline preview-add-btn" data-pa-action="reset-dates">Next sessions</button><button type="button" class="btn btn-outline preview-add-btn" data-pa-action="add-date" title="${esc(addDate.reason||'Add '+fmtDate(addDate.date,true))}" ${canAddDate?'':'disabled'}>+ Date</button></div>`:''}</div>
+  <p class="help-line">Expiration-day times are in a separate expandable section below. + Date adds the earliest unused trading session, including today before close.</p>
+  ${editable&&!canAddDate?`<p class="help-line">${esc(addDate.reason)}</p>`:''}
+  <div class="preview-dates">${dates.map((date,i)=>`<label class="preview-date-row"><span>${date===contract.expiry?'Expiration (separate)':'Date '+(i+1)}${editable&&easternCloseMs(date)<Date.now()?' · past':''}</span><input type="date" name="pa-date" data-index="${i}" value="${esc(date)}" ${editable?`min="${esc(today())}"`:''} max="${esc(contract?.expiry||'2100-01-01')}" ${disable}>${editable&&dates.length>1?`<button type="button" class="preview-remove-mini" data-pa-action="remove-date" data-index="${i}">×</button>`:''}</label>`).join('')}</div>`}
   <div class="preview-output-title"><span class="preview-step-number">04</span><div><strong>Scenario return matrix</strong><small>Price × ${timing?'time':'date / time'} · net projected percentage after fees</small></div><span class="preview-output-tag">MODEL, NOT FORECAST</span></div>
   <div id="positionAnalysisResults" aria-live="polite"></div>
   <p class="preview-caution">Same European-style model as Quick Size Check; fixed assumed IV, rates and dividends. Quotes are indicative, not guaranteed fills. The current view never treats old entry premium as today's market value.</p>
@@ -1512,10 +1514,7 @@ function positionAnalysisInput(e){
   const status=$('positionAnalysisBody').querySelector('[data-pa-status]');if(status)status.textContent=session.status;
   const refresh=$('positionAnalysisBody').querySelector('[data-pa-action="refresh"]');if(refresh){refresh.disabled=false;refresh.textContent='Refresh quote';}
  }else if(name==='pa-target'&&v.targets[index])v.targets[index].price=e.target.value;
- else if(name==='pa-date'&&v.dates[index]){
-  if(!parseDay(e.target.value)||e.target.value>positionAnalysisContext(session)?.x.position.expiry||v.dates.some((d,i)=>i!==index&&d===e.target.value))return;
-  v.dates[index]=e.target.value;
- }else return;
+ else return;
  markPositionAnalysisDirty(session);updatePositionAnalysisResults();
 }
 function positionAnalysisAction(action,element){
@@ -1530,9 +1529,9 @@ function positionAnalysisAction(action,element){
  else if(action==='reset-dates'){
   const dates=emptyPreview(today(),state.customClosed||[]).dates.filter(d=>d<=p.expiry);v.dates=dates.length?dates:[p.expiry];
  }else if(action==='add-date'&&v.dates.length<MAX_PREVIEW_DATES){
-  const start=[today(),...v.dates.filter(parseDay)].sort().at(-1),date=nextSession(start,state.customClosed||[]);
-  if(date>p.expiry)return showToast('No additional session before expiry. Edit or reset the saved dates.');
-  if(!v.dates.includes(date))v.dates.push(date);
+  const next=availablePreviewDate(v.dates,p.expiry,new Date(),state.customClosed||[]);
+  if(!next.date)return showToast(next.reason);
+  v.dates.push(next.date);v.dates.sort();
  }else if(action==='remove-date'&&v.dates.length>1&&v.dates[index])v.dates.splice(index,1);
  else if(action==='save'){
   const live=findPosition(session.positionId),event=appendAnalysisRevision(live,v,ctx.basis,uid());
@@ -1555,7 +1554,15 @@ function initPositionAnalysis(){
   }else if(e.target.name==='pa-intraday-minutes'&&session.mode==='current'){
    const minutes=parseIntradayMinutes(e.target.value);if(!minutes){e.target.value=intradayMinutes(session.working.intradayMinutes).join(', ');showToast('Enter 1–6 distinct whole-minute intervals, from 1 to 1440.');return;}
    session.working.intradayMinutes=minutes;e.target.value=minutes.join(', ');markPositionAnalysisDirty(session);updatePositionAnalysisResults();
-  }else if(e.target.name==='pa-date')renderPositionAnalysis();
+  }else if(e.target.name==='pa-date'&&session.mode==='current'){
+   const ctx=positionAnalysisContext(session),v=session.working,index=Number(e.target.dataset.index);
+   if(!ctx?.live||!v.dates[index])return;
+   const value=e.target.value;
+   if(value===v.dates[index])return;
+   const issue=previewDateIssue(value,ctx.x.position.expiry,new Date(),state.customClosed||[])||(v.dates.some((d,i)=>i!==index&&d===value)?'That exit date is already selected.':'');
+   if(issue){e.target.value=v.dates[index];showToast(issue);return;}
+   v.dates[index]=value;v.dates.sort();markPositionAnalysisDirty(session);renderPositionAnalysis();
+  }
  });
  dialog.addEventListener('click',e=>{
   const el=e.target.closest('[data-pa-action]');if(!el)return;
@@ -1842,7 +1849,7 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'close-option-preview':selectedPreviewId=null;chainFetchToken++;renderPlanner(analytics());break;
  case 'preview-add-target':{const idea=currentPreviewIdea();if(!idea)break;const p=ensurePreview(idea);if(p.targets.length>=MAX_PREVIEW_TARGETS)break;const n=p.targets.filter(t=>t.name.startsWith('TP')).length+1;p.targets.push({id:uid(),name:`TP${n}`,price:''});publishTickerLevels(idea);persistPlannerDrafts();renderOptionPreview();break;}
  case 'preview-remove-target':{const idea=currentPreviewIdea(),p=ensurePreview(idea);if(!p)break;p.targets=p.targets.filter(t=>t.id!==el.dataset.targetId);publishTickerLevels(idea);persistPlannerDrafts();renderOptionPreview();break;}
- case 'preview-add-date':{const idea=currentPreviewIdea(),p=ensurePreview(idea);if(!p||p.dates.length>=MAX_PREVIEW_DATES)break;const shown=visibleTickerDates(idea).visible;let d=nextSession(shown.at(-1)?.date||today(),state.customClosed||[]);if(parseDay(idea.expiry)&&d>idea.expiry){showToast('This exit date would be after the selected option expires.');break;}if(p.dates.includes(d)){showToast('This exit date is already in the shared ticker plan.');break;}p.dates.push(d);p.dates.sort();publishTickerLevels(idea);persistPlannerDrafts();renderOptionPreview();break;}
+ case 'preview-add-date':{const idea=currentPreviewIdea(),p=ensurePreview(idea);if(!p)break;const next=availablePreviewDate(p.dates,idea.expiry,new Date(),state.customClosed||[]);if(!next.date){showToast(next.reason);break;}p.dates.push(next.date);p.dates.sort();publishTickerLevels(idea);persistPlannerDrafts();renderOptionPreview();break;}
  case 'preview-remove-date':{const idea=currentPreviewIdea(),p=ensurePreview(idea);if(!p||p.dates.length<=1)break;p.dates.splice(Number(el.dataset.dateIndex),1);publishTickerLevels(idea);persistPlannerDrafts();renderOptionPreview();break;}
  case 'toggle-ticker-link':{
   const idea=currentPreviewIdea(),p=ensurePreview(idea);if(!p)break;
@@ -1887,7 +1894,14 @@ if(typeof globalThis.addEventListener==='function')globalThis.addEventListener('
  if(activeTab==='dashboard')renderPlanner(analytics());
 });
 $('optionPreview').addEventListener('change',e=>{
- if(!['intraday-minutes','expiry-day-times'].includes(e.target.name))return;const idea=currentPreviewIdea(),p=ensurePreview(idea);if(!p)return;
+ if(!['intraday-minutes','expiry-day-times','exit-date'].includes(e.target.name))return;const idea=currentPreviewIdea(),p=ensurePreview(idea);if(!p)return;
+ if(e.target.name==='exit-date'){
+  const index=Number(e.target.dataset.dateIndex),value=e.target.value;
+  if(!Number.isInteger(index)||index<0||index>=p.dates.length||value===p.dates[index])return;
+  const issue=previewDateIssue(value,idea.expiry,new Date(),state.customClosed||[])||(p.dates.some((d,i)=>i!==index&&d===value)?'That exit date is already in this ticker plan.':'');
+  if(issue){e.target.value=p.dates[index];showToast(issue);return;}
+  p.dates[index]=value;p.dates.sort();publishTickerLevels(idea);persistPlannerDrafts();renderOptionPreview();return;
+ }
  if(e.target.name==='expiry-day-times'){
   const contract=draftContract(idea);if(contract&&applyExpiryDayTimesInput(e.target,p,contract)){persistPlannerDrafts();updateOptionPreviewResults();}return;
  }
@@ -1909,12 +1923,6 @@ $('optionPreview').addEventListener('input',e=>{
   }
  }else if(name==='target-price'){
   const t=p.targets.find(t=>t.id===e.target.closest('[data-target-id]')?.dataset.targetId);if(!t)return;t.price=e.target.value;publishTickerLevels(idea);
- }else if(name==='exit-date'){
-  const index=Number(e.target.dataset.dateIndex);if(!Number.isInteger(index)||index<0||index>=p.dates.length)return;
-  if(!parseDay(e.target.value))return;
-  if(parseDay(idea.expiry)&&e.target.value>idea.expiry){e.target.value=p.dates[index];showToast('Exit date cannot be after this option expires.');return;}
-  if(p.dates.some((d,i)=>i!==index&&d===e.target.value)){e.target.value=p.dates[index];showToast('That exit date is already in this ticker plan.');return;}
-  p.dates[index]=e.target.value;publishTickerLevels(idea);
  }else return;
  persistPlannerDrafts();updateOptionPreviewResults();
 });
