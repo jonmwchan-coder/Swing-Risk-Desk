@@ -27,8 +27,8 @@ async function getUnderlyingSpot(ticker,headers){
  try{
   const snapshot=await readJson('https://data.alpaca.markets/v2/stocks/'+encodeURIComponent(ticker)+'/snapshot?feed=iex',headers,2800);
   const last=Number(snapshot?.latestTrade?.p),bid=Number(snapshot?.latestQuote?.bp),ask=Number(snapshot?.latestQuote?.ap);
-  if(Number.isFinite(last)&&last>0)return last;
-  if(Number.isFinite(bid)&&bid>0&&Number.isFinite(ask)&&ask>=bid)return (bid+ask)/2;
+  if(Number.isFinite(last)&&last>0)return {price:last,at:snapshot.latestTrade?.t||null,source:'IEX last trade'};
+  if(Number.isFinite(bid)&&bid>0&&Number.isFinite(ask)&&ask>=bid)return {price:(bid+ask)/2,at:snapshot.latestQuote?.t||null,source:'IEX quote midpoint'};
  }catch{} // A missing equity snapshot must not prevent option-chain browsing.
  return null;
 }
@@ -183,7 +183,7 @@ export default async function handler(req,res){
  if(!contracts.length)return res.status(200).json({status:'empty',ticker,expiry,centerStrike:strikeText?requestedStrike:null,scope,rows:[],
    message:'No active standard 100-share options found for this expiry in Alpaca.'});
  const availableStrikes=[...new Set(contracts.map(c=>c.strike))].sort((a,b)=>a-b);
- const spot=!strikeText&&scope!=='all'?await getUnderlyingSpot(ticker,headers):null;
+ const underlying=await getUnderlyingSpot(ticker,headers),spot=underlying?.price??null;
  const centerStrike=strikeText?requestedStrike:spot||availableStrikes[Math.floor((availableStrikes.length-1)/2)];
  const centerSource=strikeText?'chosen strike':spot?'latest IEX underlying price':'median listed strike (underlying quote unavailable)';
  const strikes=scope==='all'?availableStrikes:aroundStrike(availableStrikes,centerStrike);
@@ -199,7 +199,7 @@ export default async function handler(req,res){
    delta:quote?.delta??null,quoteAt:quote?.quoteAt??null};
  }
  return res.status(200).json({
-  status:'ok',ticker,expiry,centerStrike,centerSource,scope,checkedAt:new Date().toISOString(),
+  status:'ok',ticker,expiry,centerStrike,centerSource,scope,underlyingSpotUsd:spot,underlyingAt:underlying?.at??null,underlyingSource:underlying?.source??null,checkedAt:new Date().toISOString(),
   rows:heatLevels([...byStrike.values()]),strikeCount:contracts.length,totalStrikeCount:new Set(contracts.map(c=>c.strike)).size,
   displayedStrikeCount:strikes.length,highlightScope:'Displayed strikes only',
   oiDates:[...new Set(selected.map(x=>x.oiDate).filter(Boolean))].sort(),
