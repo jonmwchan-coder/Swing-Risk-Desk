@@ -105,7 +105,7 @@
     <section id="view-positions" class="view" hidden>
       <div class="section-head"><div><div class="overline">EVERY CONTRACT COUNTS</div><h2>Positions & partial exits</h2></div><button class="btn btn-primary" type="button" data-action="add-position">+ Add position</button></div>
       <div class="positions-budget-summary" id="positionsBudget" aria-live="polite"></div>
-      <div class="filter-bar"><button type="button" class="filter active" data-filter="open">Open <span id="openCount"></span></button><button type="button" class="filter" data-filter="all">All</button><button type="button" class="filter" data-filter="closed">Closed</button></div>
+      <div class="filter-bar position-filter-bar"><div class="position-filter-buttons"><button type="button" class="filter active" data-filter="open">Open <span id="openCount"></span></button><button type="button" class="filter" data-filter="all">All</button><button type="button" class="filter" data-filter="closed">Closed</button></div><div class="position-sort-control"><label for="positionSortSelect">Sort</label><select id="positionSortSelect" aria-label="Sort positions" title="Recent: latest entry or exit. Entry: first buy. Close: final exit for fully closed positions."><option value="recent" selected>Most recent</option><option value="realized-desc">Realized P/L · highest first</option><option value="realized-asc">Realized P/L · lowest first</option><option value="entry-desc">Entry date · newest first</option><option value="entry-asc">Entry date · oldest first</option><option value="close-desc">Close date · newest first</option><option value="close-asc">Close date · oldest first</option></select></div></div>
       <div id="positionsFull" class="position-stack"></div>
     </section>
 
@@ -176,7 +176,7 @@
       <div class="bottom-danger"><button type="button" class="text-link text-delete" data-action="reset-data">Reset all locally saved data</button><small>Does not change anything in Google Sheets or IBKR.</small></div>
     </section>
   </main>
-  <footer><span>SWING RISK DESK / v3.28 sorted TP rows</span><span>Process over P&amp;L. USD/CAD display at portfolio FX; risk accounting in CAD.</span></footer>
+  <footer><span>SWING RISK DESK / v3.29 position sorting</span><span>Process over P&amp;L. USD/CAD display at portfolio FX; risk accounting in CAD.</span></footer>
 </div>
 <dialog id="editorDialog" class="editor-dialog"><div class="dialog-content"><div class="dialog-header"><div><div class="overline" id="dialogEyebrow">POSITION</div><h2 id="dialogTitle">New position</h2></div><button type="button" class="icon-button" data-action="close-dialog" aria-label="Close dialog">&#10005;</button></div><div id="dialogBody"></div></div></dialog>
 <dialog id="positionAnalysisDialog" class="editor-dialog position-analysis-dialog" aria-labelledby="positionAnalysisTitle"><div class="dialog-content"><div class="dialog-header"><div><div class="overline">POSITION SCENARIO STUDIO</div><h2 id="positionAnalysisTitle">Analyze %</h2></div><button type="button" class="icon-button" data-pa-action="close" aria-label="Close position analysis">&#10005;</button></div><div id="positionAnalysisBody" class="position-analysis-body"></div></div></dialog>
