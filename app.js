@@ -13,7 +13,7 @@ import {captureDraftAnalysis,positionAnalysisEvents,currentAnalysisBasis,working
 import {draftContract,draftContractKey,normalizeTicker,sortPlanIdeas,PLAN_SORT_MODES} from './lib/planner-contract.mjs';
 import {expirationLookupKey,normalizeListedDates,expirationListingStatus,nearestListedExpirations,regularExpirationKind} from './lib/expiry-listings.mjs';
 import {renderChainPanel} from './lib/chain-view.mjs';
-import {copyPlannerIdea,isEmptyPlannerPlaceholder,isUneditedTickerScenario,tickerScenarioKey,hydrateTickerScenario,broadcastTickerScenario,visibleTickerDates,parkPlannerIdea,restorePlannerIdea,deleteSavedPlannerIdea} from './lib/planner-workflows.mjs';
+import {copyPlannerIdea,isEmptyPlannerPlaceholder,isUneditedTickerScenario,tickerScenarioKey,hydrateTickerScenario,broadcastTickerScenario,visibleTickerDates,parkPlannerIdea,restorePlannerIdea,deleteSavedPlannerIdea,applyDraftMarketQuote,markDraftQuoteFailed} from './lib/planner-workflows.mjs';
 
 const STORAGE_KEY='swing-risk-desk:data:v1';
 const $=id=>document.getElementById(id);
@@ -73,10 +73,10 @@ let chainFetchToken=0;
 const chainCache=new Map();
 let expandedPlanId=null;
 const tickerInputOrigins=new Map(); // Only reset underlying levels after a ticker/type change is finalized.
-let quoteRefreshBusy=false;
+const pendingDraftQuotes=new WeakMap();
 let quoteRefreshMessage='';
 let quoteConnectionState='unknown'; // Never imply unconfigured or failed data are live quotes.
-let quoteRefreshToken=0;
+
 const PLAN_SORT_KEY='swing-risk-desk:idea-sort:v1';
 let planSortMode=(()=>{try{const v=localStorage.getItem(PLAN_SORT_KEY);return PLAN_SORT_MODES.includes(v)?v:'created';}catch{return 'created';}})();
 const restoredPlanner=loadPlannerDrafts(globalThis.localStorage,globalThis.sessionStorage);
@@ -119,10 +119,11 @@ function applyPlannerMove(result){
  plannerSavedStatus();return true;
 }
 function saveIdeaForLater(id,closeRecordDialog=false){
- const a=account(),result=parkPlannerIdea(plannerDrafts,plannerSavedIdeas,a.id,id);
+ const a=account(),original=(plannerDrafts[a.id]||[]).find(x=>x.id===id),result=parkPlannerIdea(plannerDrafts,plannerSavedIdeas,a.id,id);
  if(!applyPlannerMove(result))return;
+ cancelDraftQuote(original);
  tickerInputOrigins.delete(id);manualExpiryIds.delete(id);
- if(selectedPreviewId===id){selectedPreviewId=null;quoteRefreshToken++;chainFetchToken++;quoteRefreshBusy=false;quoteRefreshMessage='';}
+ if(selectedPreviewId===id){selectedPreviewId=null;chainFetchToken++;quoteRefreshMessage='';}
  if(expandedPlanId===id)expandedPlanId=null;
  if(closeRecordDialog)$('editorDialog').close();
  renderPlanner(analytics());showToast('Idea saved for later. Active sizing risk recalculated.');
@@ -142,7 +143,7 @@ function restoreSavedIdea(id,accountId){
  if(account().id!==accountId)return showToast('Portfolio changed. Reopen Saved ideas.');
  const result=restorePlannerIdea(plannerDrafts,plannerSavedIdeas,accountId,id);
  if(!applyPlannerMove(result))return;
- $('editorDialog').close();expandedPlanId=id;selectedPreviewId=null;quoteRefreshToken++;chainFetchToken++;quoteRefreshBusy=false;
+ $('editorDialog').close();expandedPlanId=id;selectedPreviewId=null;chainFetchToken++;
  renderPlanner(analytics());
  const idea=plannerIdeas().find(x=>x.id===id);
  if(idea){
@@ -163,7 +164,7 @@ function removeSavedIdea(id,accountId){
 function dropPlannerIdea(draftId,renderAfter=true){
  const ideas=plannerIdeas();const index=ideas.findIndex(x=>x.id===draftId);
  if(index<0)return;
- ideas.splice(index,1);
+ cancelDraftQuote(ideas[index]);ideas.splice(index,1);
  tickerInputOrigins.delete(draftId);
  if(selectedPreviewId===draftId)selectedPreviewId=null;
   if(expandedPlanId===draftId)expandedPlanId=null;
@@ -537,9 +538,28 @@ function updateListingCard(idea){
 function updateListingCardsForKey(key){
  for(const idea of plannerIdeas())if(scopedExpirationKey(idea)===key)updateListingCard(idea);
 }
+function canRefreshDraftQuote(idea){
+ if(!buildOCCSymbol(draftContract(idea))||idea.expiry<today())return false;
+ const timing=intradayTiming(idea,new Date(),state.customClosed||[]);
+ return !timing||timing.session&&!timing.expired;
+}
+function cancelDraftQuote(idea){
+ if(!idea)return;
+ const pending=pendingDraftQuotes.get(idea);
+ if(pending){pendingDraftQuotes.delete(idea);pending.controller.abort();}
+}
+function draftQuoteButton(idea){
+ const busy=pendingDraftQuotes.has(idea);
+ return `<button type="button" class="fee-reset-mini draft-premium-refresh" data-action="refresh-draft-premium" data-plan-id="${esc(idea.id)}" title="Refresh this exact option quote and use its midpoint as the planned buy premium. No expiration lookup." ${!canRefreshDraftQuote(idea)||busy?'disabled':''}>${busy?'Refreshing…':'↻ Refresh premium'}</button>`;
+}
+function updateDraftQuoteButton(card,idea){
+ const button=card?.querySelector('[data-action="refresh-draft-premium"]');
+ if(button){const busy=pendingDraftQuotes.has(idea);button.disabled=busy||!canRefreshDraftQuote(idea);button.textContent=busy?'Refreshing…':'↻ Refresh premium';}
+}
 function showInlineQuoteLoading(idea){
  const card=[...document.querySelectorAll('[data-draft-id]')].find(x=>x.dataset.draftId===idea?.id);
  if(!card)return;
+ updateDraftQuoteButton(card,idea);
  const quote=card.querySelector('[data-idea-quote]');
  if(quote&&idea.quoteStatus==='loading'){
   quote.dataset.tone='loading';
@@ -654,12 +674,13 @@ function renderPlanner(m){
 
   const moneyOrDash=v=>String(v??'').trim()&&Number.isFinite(Number(v))&&Number(v)>0?usd(Number(v))+' ('+cad(Number(v)*m.account.fx)+')':'—';
   const mid=moneyOrDash(idea.marketMid),p=idea.preview||{};
-  const quote=idea.quoteStatus==='loading'?'Fetching quote…':idea.priceManual?`Manual premium${mid!=='—'?' · Mid '+mid:''}`:idea.quoteStatus==='indicative'?`Indicative mid ${mid}`:idea.quoteStatus==='unavailable'?'Quote unavailable':idea.quoteStatus==='saved'?'Saved indicative quote · refresh':'Quote not loaded';
-  const quoteTone=idea.quoteStatus==='unavailable'?'warning':idea.priceManual?'manual':idea.quoteStatus==='indicative'?'indicative':idea.quoteStatus==='saved'?'warning':'empty';
+  const busy=pendingDraftQuotes.has(idea);
+  const quote=busy?'Fetching quote…':idea.quoteStatus==='unavailable'?'Quote unavailable · verify planned premium':idea.priceManual?`Manual premium${mid!=='—'?' · Mid '+mid:''}`:idea.quoteStatus==='indicative'?`Indicative mid ${mid}`:idea.quoteStatus==='saved'||idea.quoteStatus==='loading'?'Saved indicative quote · refresh':'Quote not loaded';
+  const quoteTone=busy?'loading':idea.quoteStatus==='unavailable'?'warning':idea.priceManual?'manual':idea.quoteStatus==='indicative'?'indicative':idea.quoteStatus==='saved'||idea.quoteStatus==='loading'?'warning':'empty';
   return `<article class="draft-idea ${active?'is-active':''} ${editing?'is-expanded':'is-collapsed'} ${overCap?'is-over-idea-cap':''}" data-draft-id="${esc(idea.id)}">
     <div class="draft-head"><div class="draft-identity"><strong class="draft-ticker" data-idea-ticker>${esc(symbol)}</strong><span class="draft-idea-name" data-idea-name>${esc(name)}</span><span class="draft-contract-hero" data-idea-contract aria-label="Selected expiration and strike">${compactContractMarkup(idea)}</span><span data-listing-badge class="draft-listing-indicator">${listingBadge(idea)}</span></div>
       <div class="draft-actions"><button type="button" class="draft-edit-btn" data-action="toggle-plan-details" data-plan-id="${esc(idea.id)}" aria-expanded="${editing}">${editing?'Done':'Edit'}</button><button type="button" class="draft-preview-btn" data-action="analyze-idea" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id&&optionPanelMode==='analyze'}">${selectedPreviewId===idea.id&&optionPanelMode==='analyze'?'Hide %':'Analyze %'}</button><button type="button" class="draft-chain-btn" data-action="view-option-chain" data-plan-id="${esc(idea.id)}" aria-pressed="${selectedPreviewId===idea.id&&optionPanelMode==='chain'}" title="Compare call and put volume, open interest and indicative quotes for this expiration">${selectedPreviewId===idea.id&&optionPanelMode==='chain'?'Hide chain':'View chain'}</button><button type="button" class="draft-edit-btn" data-action="copy-planner-idea" data-plan-id="${esc(idea.id)}" title="Copy only this idea to another portfolio" ${state.accounts.length<2||isEmptyPlannerPlaceholder(idea)?'disabled':''}>Copy to portfolio…</button><button type="button" class="draft-edit-btn draft-park-btn" data-action="park-plan-idea" data-plan-id="${esc(idea.id)}" title="Save the idea and all its targets for later" ${isEmptyPlannerPlaceholder(idea)?'disabled':''}>Save for later</button><button type="button" class="draft-record" data-action="plan-to-position" data-plan-id="${esc(idea.id)}" ${riskRow?.valid&&riskRow.qty>0&&draftContract(idea)?'':'disabled'}>${riskRow?.existingQty?'Record add':'Record'}</button><button type="button" class="draft-remove" data-action="remove-plan-idea" data-plan-id="${esc(idea.id)}" aria-label="Remove ${esc(symbol)} ${esc(name)}">×</button></div></div>
-    <div class="draft-compact-line"><span class="draft-mini-field"><strong data-idea-held></strong> Add <strong data-idea-qty>${esc(idea.qty||'—')}</strong></span><span class="draft-mini-field">Premium <strong data-idea-premium>${Number(idea.price)>0&&Number.isFinite(Number(idea.price))?usdWithCad(Number(idea.price),m.account.fx):"—"}</strong><small>/share</small></span><span class="draft-mini-field" data-idea-loss></span><span class="draft-mini-quote" data-tone="${quoteTone}" data-idea-quote>${idea.quoteStatus==='loading'?'<span class="mini-spin" aria-hidden="true"></span> ':''}${esc(quote)}</span></div>
+    <div class="draft-compact-line"><span class="draft-mini-field"><strong data-idea-held></strong> Add <strong data-idea-qty>${esc(idea.qty||'—')}</strong></span><span class="draft-mini-field">Premium <strong data-idea-premium>${Number(idea.price)>0&&Number.isFinite(Number(idea.price))?usdWithCad(Number(idea.price),m.account.fx):"—"}</strong><small>/share</small> ${draftQuoteButton(idea)}</span><span class="draft-mini-field" data-idea-loss></span><span class="draft-mini-quote" data-tone="${quoteTone}" data-idea-quote>${busy?'<span class="mini-spin" aria-hidden="true"></span> ':''}${esc(quote)}</span></div>
     <div class="draft-cap-alert" data-cap-warning="${esc(idea.id)}" role="status" ${overCap?'':'hidden'}>${overCap?`<strong>ABOVE FIXED IDEA CAP · +${cad(capOverCad)}</strong><span>Combined position uses ${cad(riskRow.totalReserveCad)} vs your ${cad(fixedIdeaCap)} guide. Rolling pool is separate.</span><button type="button" data-action="focus-cap-policy" title="Review your fixed versus flexible risk allocation">Review policy</button>`:''}</div>
     ${editing?`<div class="draft-editor"><div class="draft-editor-heading"><strong>Contract setup</strong><span>Independent contract and assumptions per idea</span></div>
       <label class="draft-name-field"><span>IDEA NAME</span><input type="text" name="name" maxlength="80" value="${esc(idea.name||'')}" placeholder="Breakout continuation"></label>
@@ -684,6 +705,7 @@ function updatePlannerMetrics(m){
    const held=card?.querySelector('[data-idea-held]'),record=card?.querySelector('[data-action="plan-to-position"]'),stressInput=card?.querySelector('[name="stress"]'),lossInput=card?.querySelector('[name="plannedLossPct"]'),copyBtn=card?.querySelector('[data-action="copy-planner-idea"]');
    if(copyBtn)copyBtn.disabled=state.accounts.length<2||isEmptyPlannerPlaceholder(idea);
    const parkBtn=card?.querySelector('[data-action="park-plan-idea"]');if(parkBtn)parkBtn.disabled=isEmptyPlannerPlaceholder(idea);
+   updateDraftQuoteButton(card,idea);
    if(lossInput)lossInput.placeholder=r.positionId&&r.plannedLossPct!=null?String(r.plannedLossPct):'Not set';
    const lossLabel=card?.querySelector('[data-idea-loss]');if(lossLabel){lossLabel.hidden=!r.valid||r.plannedLossPct==null;lossLabel.innerHTML=r.valid&&r.plannedLossPct!=null?`Planned loss ${r.plannedLossPct}% · ${usdWithCad(r.plannedLossUsd,m.account.fx)}`:'';}
    if(held)held.textContent=r.existingQty?`${r.existingQty} held${r.valid?` / ${r.existingQty+r.qty} planned ·`:' ·'}`:'';
@@ -846,6 +868,7 @@ function pickChainContract(el){
   selectedPreviewId=null;optionPanelMode='analyze';expandedPlanId=idea.id;
   renderPlanner(analytics());return;
  }
+ cancelDraftQuote(idea);
  if(side!==idea.optionType){
   const p=ensurePreview(idea),fresh=emptyPreview(today(),state.customClosed||[]);
   p.targets=fresh.targets;p.dates=fresh.dates;p.tickerLinked=true;
@@ -988,7 +1011,7 @@ function renderOptionPreview(){
  const idea=currentPreviewIdea();if(!idea){el.hidden=true;el.innerHTML='';return;}
  if(optionPanelMode==='chain'){renderChainPreview(idea);return;}
  el.hidden=false;
- const p=ensurePreview(idea),parsed=draftContract(idea)||{},symbol=buildOCCSymbol(parsed);
+ const p=ensurePreview(idea),parsed=draftContract(idea)||{},symbol=buildOCCSymbol(parsed),quoteRefreshBusy=pendingDraftQuotes.has(idea);
  const timing=intradayTiming(parsed,new Date(),state.customClosed||[]);
  const {visible:shownExitDates,excluded:unavailableExitDates}=visibleTickerDates(idea);
  const lastExitDate=shownExitDates.at(-1)?.date||today();
@@ -1013,7 +1036,7 @@ function renderOptionPreview(){
   <div class="preview-quote-card">
    <div class="preview-workspace-step"><span>01</span><strong>Market reference</strong><small>Indicative snapshot or your manual inputs</small></div>
    <div class="preview-market-grid"><div data-market-key="spot"><span>Underlying (USD)</span><strong>${marketNumber(p.spot,'USD')}</strong></div><div data-market-key="ivPct"><span>Option IV</span><strong>${String(p.ivPct??'').trim()&&Number(p.ivPct)>0?`${Number(p.ivPct).toFixed(1)}%`:'----'}</strong><small class="preview-iv-source">${p.ivManual?'Broker-entered IV':'Alpaca IV when available'}</small></div><div data-market-key="bid"><span>Indicative bid (USD/share)</span><strong>${marketNumber(p.bid,'USD')}</strong></div><div data-market-key="ask"><span>Indicative ask (USD/share)</span><strong>${marketNumber(p.ask,'USD')}</strong></div></div>
-   <div class="preview-quote-row"><button type="button" data-action="refresh-option-quote" ${!symbol||quoteRefreshBusy?'disabled':''} class="btn btn-outline preview-refresh">${quoteRefreshBusy?'<span class="mini-spin" aria-hidden="true"></span> ':''}${quoteRefreshBusy?'Fetching quote…':'Refresh quote'}</button><div class="preview-quote-label"><span data-preview-quote-source>${esc(p.quoteSource||'Quote not connected')}</span> · <span data-preview-quote-at>${quote}</span>${quoteRefreshBusy?' · Looking up this exact contract…':''}${quoteRefreshMessage?`<div class="preview-warning" role="status">${esc(quoteRefreshMessage)}</div>`:''}</div></div>
+   <div class="preview-quote-row"><button type="button" data-action="refresh-option-quote" ${!canRefreshDraftQuote(idea)||quoteRefreshBusy?'disabled':''} class="btn btn-outline preview-refresh">${quoteRefreshBusy?'<span class="mini-spin" aria-hidden="true"></span> ':''}${quoteRefreshBusy?'Fetching quote…':'Refresh quote'}</button><div class="preview-quote-label"><span data-preview-quote-source>${esc(p.quoteSource||'Quote not connected')}</span> · <span data-preview-quote-at>${quote}</span>${quoteRefreshBusy?' · Looking up this exact contract…':''}${quoteRefreshMessage?`<div class="preview-warning" role="status">${esc(quoteRefreshMessage)}</div>`:''}</div></div>
    ${connectionHelp}
    ${ivHelp}
    <details class="preview-manual"><summary>Optional: enter quote values manually if the free feed is unavailable</summary><div class="preview-inputs"><label><span>Underlying price (USD)</span><input type="number" name="spot" inputmode="decimal" min="0.01" step="any" value="${esc(p.spot)}" placeholder="e.g. 16.50"></label><label><span>Option IV (%)</span><input type="number" name="ivPct" inputmode="decimal" min="0.01" max="1000" step="any" value="${esc(p.ivPct)}" placeholder="e.g. 65.0"></label><label><span>Option bid (USD/share)</span><input type="number" name="bid" inputmode="decimal" min="0" step="any" value="${esc(p.bid)}" placeholder="Optional"></label><label><span>Option ask (USD/share)</span><input type="number" name="ask" inputmode="decimal" min="0" step="any" value="${esc(p.ask)}" placeholder="Optional"></label></div></details>
@@ -1043,67 +1066,67 @@ function updateOptionPreviewResults(){
   <small class="preview-footnote">Valuation anchored to ${esc(result.anchorLabel)} at current spot; that anchor mismatch is reduced toward expiration. Percent = net modeled USD P/L ÷ actual proposed USD purchase cost (quantity × buy premium × 100 + buy fees). Estimated sell fees are deducted. ${result.spread>0?`Assumes half the current indicative ${usd(result.spread)} bid/ask spread is lost on exit.`:'No spread discount: enter a bid and ask to model half-spread exit slippage.'} These are scenario estimates, not statistical expectancy or guaranteed proceeds.</small>`;
 }
 // One-time quote on contract selection for any draft, without opening the analysis panel.
-async function refreshDraftPremium(idea){
- const key=draftContractKey(idea),symbol=buildOCCSymbol(draftContract(idea)),id=idea?.id;
- if(!key||!symbol)return;
+// Both quote buttons use one per-idea request. Direct refresh never calls the
+// expiration or contract-listing endpoint; initial selection may verify the contract.
+async function refreshDraftPremium(idea,{useMidpoint=false,verifyContract=true}={}){
+ if(!canRefreshDraftQuote(idea))return;
+ const accountId=account().id,key=draftContractKey(idea),symbol=buildOCCSymbol(draftContract(idea));
+ if(!(plannerDrafts[accountId]||[]).includes(idea))return;
+ const isSelected=()=>account().id===accountId&&selectedPreviewId===idea.id&&optionPanelMode==='analyze';
+ const prior=pendingDraftQuotes.get(idea);
+ if(prior?.key===key){
+  if(isSelected()){quoteConnectionState='loading';quoteRefreshMessage='';renderOptionPreview();}
+  return;
+ }
+ cancelDraftQuote(idea);
+ const controller=new AbortController(),request={controller,key};
+ pendingDraftQuotes.set(idea,request);
+ const initialPrice=idea.price,initialManual=idea.priceManual;
+ const current=()=>pendingDraftQuotes.get(idea)===request&&(plannerDrafts[accountId]||[]).includes(idea)&&draftContractKey(idea)===key;
+ let verified=false;
  idea.quoteStatus='loading';idea.quoteMessage='Fetching exact option quote…';showInlineQuoteLoading(idea);
+ if(isSelected()){quoteConnectionState='loading';quoteRefreshMessage='';renderOptionPreview();}
+ const timeout=setTimeout(()=>controller.abort(),24000);
  try{
-  const verify=await fetch(`/api/option-contract?symbol=${encodeURIComponent(symbol)}`,{cache:'no-store'}).then(async r=>({status:r.status,ok:r.ok,data:await r.json().catch(()=>({}))})).catch(()=>({status:502,ok:false,data:{}}));
-  if(verify.status===404||verify.status===422)throw Error(verify.data.error||'Contract unavailable in Alpaca listing.');
-  const response=await fetch(`/api/option-quote?symbol=${encodeURIComponent(symbol)}`,{cache:'no-store'});
+  if(verifyContract){
+   const check=await fetch(`/api/option-contract?symbol=${encodeURIComponent(symbol)}`,{cache:'no-store',signal:controller.signal}).then(async response=>({ok:response.ok,status:response.status,data:await response.json().catch(()=>({}))})).catch(()=>({ok:false,status:502,data:{}}));
+   if(!current())return;
+   if(check.status===404||check.status===422)throw Error(check.data.error||'Selected contract is not active in Alpaca.');
+   verified=check.ok;
+  }
+  const response=await fetch(`/api/option-quote?symbol=${encodeURIComponent(symbol)}`,{cache:'no-store',signal:controller.signal});
   const data=await response.json().catch(()=>({}));
-  if(!response.ok)throw Error(data.error||'Indicative quote unavailable.');
-  const draft=plannerIdeas().find(i=>i.id===id);
-  if(!draft||draft!==idea||draftContractKey(draft)!==key)return;
-  const bid=Number(data.optionBidUsd),ask=Number(data.optionAskUsd);
-  if(data.optionBidUsd===null||data.optionAskUsd===null||!(bid>0&&ask>=bid))throw Error('No valid bid/ask for selected contract.');
-  draft.marketMid=String(Math.round((bid+ask)*5000)/10000);
-   const preview=ensurePreview(draft);preview.spot=data.spotUsd??'';if(!preview.ivManual||!(Number(preview.ivPct)>0))preview.ivPct=data.ivPct??'';preview.bid=data.optionBidUsd??'';preview.ask=data.optionAskUsd??'';preview.quoteAt=data.quoteAt||'';preview.quoteSource=data.provider||'Alpaca indicative';
-  draft.contractSymbol=symbol;draft.quoteStatus='indicative';
-  draft.quoteMessage=`Indicative bid ${bid.toFixed(2)} / ask ${ask.toFixed(2)} · midpoint ${Number(draft.marketMid).toFixed(2)} · ${data.quoteAt||'time unavailable'} UTC · ${verify.ok?'verified contract':'unverified listing'} · non-OPRA`;
-  if(!draft.priceManual)draft.price=draft.marketMid;
-  persistPlannerDrafts();renderPlanner(analytics());
+  if(!current())return;
+  if(!response.ok){
+   if(isSelected())quoteConnectionState=data.code==='NOT_CONFIGURED'?'not-configured':'failed';
+   throw Error(data.error||'Indicative quote unavailable');
+  }
+  ensurePreview(idea);
+  const result=applyDraftMarketQuote(idea,data,symbol,{useMidpoint,initialPrice,initialManual,verified});
+  if(isSelected()){
+   quoteConnectionState='connected';
+   quoteRefreshMessage=result.missingIv?'No usable IV returned. Enter your broker IV to run the simulation.':result.missingSpot?'Underlying price unavailable; enter manually.':idea.quoteMessage;
+  }
+  persistPlannerDrafts();
  }catch(err){
-  const draft=plannerIdeas().find(i=>i.id===id);
-  if(!draft||draft!==idea||draftContractKey(draft)!==key)return;
-  draft.quoteStatus='unavailable';draft.quoteMessage=String(err.message||'Quote unavailable').slice(0,200);
-  persistPlannerDrafts();renderPlanner(analytics());
+  if(!current())return;
+  markDraftQuoteFailed(idea,controller.signal.aborted?'Request timed out':err);
+  if(isSelected()){if(quoteConnectionState!=='not-configured')quoteConnectionState='failed';quoteRefreshMessage=idea.quoteMessage;}
+  persistPlannerDrafts();
+  if(useMidpoint&&account().id===accountId)showToast('Quote refresh failed. Existing planned premium unchanged.');
+ }finally{
+  clearTimeout(timeout);
+  if(pendingDraftQuotes.get(idea)===request){
+   pendingDraftQuotes.delete(idea);
+   if((plannerDrafts[accountId]||[]).includes(idea)&&account().id===accountId)renderPlanner(analytics());
+  }
  }
 }
 async function refreshOptionQuote(){
- const idea=currentPreviewIdea(),symbol=buildOCCSymbol(draftContract(idea)),contractKey=draftContractKey(idea);
- if(!idea||!symbol){quoteRefreshMessage='Enter a valid ticker, expiration, strike and call/put.';renderOptionPreview();return;}
- const token=++quoteRefreshToken;quoteRefreshBusy=true;quoteRefreshMessage='';quoteConnectionState='loading';idea.quoteStatus='loading';showInlineQuoteLoading(idea);void ensureListedExpirations(idea);renderOptionPreview();
- try{
-  let verification='Contract listing unverified';
-  const check=await fetch(`/api/option-contract?symbol=${encodeURIComponent(symbol)}`,{cache:'no-store'}).then(async response=>({ok:response.ok,status:response.status,data:await response.json().catch(()=>({}))})).catch(()=>({ok:false,status:502,data:{code:'VALIDATION_UNAVAILABLE'}}));
-  if(token!==quoteRefreshToken||currentPreviewIdea()?.id!==idea.id||draftContractKey(idea)!==contractKey)return;
-  if(check.status===404||check.status===422)throw Error(check.data.error||'Selected contract is not active in Alpaca.');
-  if(check.ok)verification='Contract verified active by Alpaca';
-  const response=await fetch(`/api/option-quote?symbol=${encodeURIComponent(symbol)}`,{cache:'no-store'});
-  const data=await response.json().catch(()=>({}));
-  if(!response.ok){quoteConnectionState=data.code==='NOT_CONFIGURED'?'not-configured':'failed';throw Error(data.error||'Indicative quote unavailable');}
-  if(token!==quoteRefreshToken||currentPreviewIdea()?.id!==idea.id||draftContractKey(idea)!==contractKey)return;
-  const p=ensurePreview(idea),set=(k,v)=>{if(v!==null&&v!==undefined&&Number.isFinite(Number(v)))p[k]=String(v);};
-  const manualIv=p.ivManual&&Number(p.ivPct)>0?p.ivPct:null;
-  p.spot='';p.ivPct='';p.bid='';p.ask='';
-  set('spot',data.spotUsd);if(manualIv!==null)p.ivPct=manualIv;else set('ivPct',data.ivPct);set('bid',data.optionBidUsd);set('ask',data.optionAskUsd);
-  p.quoteAt=data.quoteAt||'';p.quoteSource=data.provider||'Alpaca indicative';
-  const bid=Number(data.optionBidUsd),ask=Number(data.optionAskUsd);
-  const valid=data.optionBidUsd!==null&&data.optionAskUsd!==null&&Number.isFinite(bid)&&Number.isFinite(ask)&&bid>0&&ask>0&&ask>=bid;
-  idea.contractSymbol=symbol;idea.marketMid=valid?String(Math.round((bid+ask)*5000)/10000):'';
-  idea.quoteStatus=valid?'indicative':'unavailable';
-  idea.quoteMessage=valid?`Indicative bid ${bid.toFixed(2)} / ask ${ask.toFixed(2)} · midpoint ${Number(idea.marketMid).toFixed(2)} · ${p.quoteAt||'timestamp unavailable'} UTC · non-OPRA / non-executable · ${verification}`:'No valid indicative bid/ask. Enter a manual premium.';
-  if(valid&&!idea.priceManual)idea.price=idea.marketMid;
-  quoteConnectionState='connected';
-  quoteRefreshMessage=data.missingIv&&!(Number(p.ivPct)>0)?'Alpaca returned no usable implied volatility. Enter your broker IV to run the simulation.':data.spotUsd===null?'Underlying price unavailable; enter manually.':idea.quoteMessage;
-  persistPlannerDrafts();
- }catch(err){
-  if(token===quoteRefreshToken&&currentPreviewIdea()?.id===idea?.id&&draftContractKey(idea)===contractKey){
-   idea.quoteStatus='unavailable';idea.quoteMessage=String(err.message||'Refresh failed').slice(0,200);
-   quoteRefreshMessage=idea.quoteMessage;persistPlannerDrafts();
-  }
- }finally{if(token===quoteRefreshToken){quoteRefreshBusy=false;renderPlanner(analytics());}}
+ const idea=currentPreviewIdea();
+ if(!idea||!canRefreshDraftQuote(idea)){quoteRefreshMessage='Choose a valid, unexpired option contract.';renderOptionPreview();return;}
+ // Retain a manually chosen premium when refreshing analysis assumptions.
+ return refreshDraftPremium(idea,{verifyContract:false});
 }
 
 function switchTab(tab){if(!['dashboard','positions','history','settings'].includes(tab))return;activeTab=tab;render();}
@@ -1721,7 +1744,7 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'close-dialog':$('editorDialog').close();break;
  case 'today':asOfOverride=null;render();break;
  case 'plan-to-position':beginPlannedPosition(el.dataset.planId);break;
- case 'add-plan-idea':{const ideas=plannerIdeas();if(ideas.length>=MAX_PLAN_IDEAS){showToast(`Maximum ${MAX_PLAN_IDEAS} draft ideas.`);break;}const idea=defaultPlanIdea(uid(),account().stressPct,false);ideas.push(idea);expandedPlanId=idea.id;selectedPreviewId=null;quoteRefreshToken++;persistPlannerDrafts();renderPlanner(analytics());[...document.querySelectorAll('.draft-idea')].find(x=>x.dataset.draftId===idea.id)?.querySelector('[name="ticker"]')?.focus();break;}
+ case 'add-plan-idea':{const ideas=plannerIdeas();if(ideas.length>=MAX_PLAN_IDEAS){showToast(`Maximum ${MAX_PLAN_IDEAS} draft ideas.`);break;}const idea=defaultPlanIdea(uid(),account().stressPct,false);ideas.push(idea);expandedPlanId=idea.id;selectedPreviewId=null;persistPlannerDrafts();renderPlanner(analytics());[...document.querySelectorAll('.draft-idea')].find(x=>x.dataset.draftId===idea.id)?.querySelector('[name="ticker"]')?.focus();break;}
  case 'remove-plan-idea':dropPlannerIdea(el.dataset.planId);break;
  case 'open-saved-ideas':openSavedIdeas();break;
  case 'park-plan-idea':saveIdeaForLater(el.dataset.planId);break;
@@ -1732,23 +1755,23 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  case 'open-cap-settings':{switchTab('settings');$('settingsForm')?.elements?.namedItem?.('ideaCapCad')?.focus?.();break;}
  case 'jump-to-cap-idea':{
   expandedPlanId=el.dataset.planId;
-  if(selectedPreviewId&&selectedPreviewId!==expandedPlanId){selectedPreviewId=null;quoteRefreshToken++;}
+  if(selectedPreviewId&&selectedPreviewId!==expandedPlanId){selectedPreviewId=null;}
   renderPlanner(analytics());
   [...document.querySelectorAll('.draft-idea')].find(x=>x.dataset.draftId===expandedPlanId)?.scrollIntoView?.({block:'center',behavior:'smooth'});
   break;
  }
  case 'copy-planner-idea':copySinglePlannerIdea(el.dataset.planId);break;
-  case 'toggle-plan-details':{expandedPlanId=expandedPlanId===el.dataset.planId?null:el.dataset.planId;if(expandedPlanId&&selectedPreviewId&&expandedPlanId!==selectedPreviewId){selectedPreviewId=null;quoteRefreshToken++;}renderPlanner(analytics());if(expandedPlanId){const idea=plannerIdeas().find(i=>i.id===expandedPlanId);if(idea)queueListedExpirations(idea,true);}break;}
+  case 'toggle-plan-details':{expandedPlanId=expandedPlanId===el.dataset.planId?null:el.dataset.planId;if(expandedPlanId&&selectedPreviewId&&expandedPlanId!==selectedPreviewId){selectedPreviewId=null;}renderPlanner(analytics());if(expandedPlanId){const idea=plannerIdeas().find(i=>i.id===expandedPlanId);if(idea)queueListedExpirations(idea,true);}break;}
   case 'collapse-plan-ideas':expandedPlanId=null;renderPlanner(analytics());break;
  case 'refresh-listed-expirations':{const idea=plannerIdeas().find(x=>x.id===el.dataset.planId);el.blur();if(idea)void ensureListedExpirations(idea,true);break;}
  case 'enter-manual-expiry':{manualExpiryIds.add(el.dataset.planId);el.blur();const idea=plannerIdeas().find(x=>x.id===el.dataset.planId);if(idea){updateListingCard(idea);const card=[...document.querySelectorAll('[data-draft-id]')].find(x=>x.dataset.draftId===el.dataset.planId);card?.querySelector('input[type="date"][name="expiry"]')?.focus();}break;}
  case 'use-listed-expirations':{manualExpiryIds.delete(el.dataset.planId);el.blur();const idea=plannerIdeas().find(x=>x.id===el.dataset.planId);if(idea){updateListingCard(idea);const card=[...document.querySelectorAll('[data-draft-id]')].find(x=>x.dataset.draftId===el.dataset.planId);card?.querySelector('[name="listedExpiry"]')?.focus();}break;}
- case 'clear-plan-ideas':{if(!confirm('Clear all ACTIVE Quick Size Check ideas for this portfolio? Saved-for-later ideas and recorded positions will not be affected.'))break;expandedPlanId=null;selectedPreviewId=null;quoteRefreshToken++;plannerDrafts[account().id]=(plannerSavedIdeas[account().id]||[]).length?[]:[defaultPlanIdea(uid(),account().stressPct,false)];persistPlannerDrafts();renderPlanner(analytics());showToast('Active ideas cleared. Saved ideas are unchanged.');break;}
- case 'analyze-idea':{const opening=selectedPreviewId!==el.dataset.planId||optionPanelMode!=='analyze';optionPanelMode='analyze';chainFetchToken++;selectedPreviewId=opening?el.dataset.planId:null;if(opening)adoptTickerLevels(currentPreviewIdea());expandedPlanId=null;quoteRefreshToken++;quoteRefreshMessage='';quoteConnectionState='unknown';renderPlanner(analytics());if(opening)$('optionPreview')?.scrollIntoView({block:'start',behavior:'smooth'});if(opening){void ensureAtmRange(currentPreviewIdea());void refreshOptionQuote();}break;}
+ case 'clear-plan-ideas':{if(!confirm('Clear all ACTIVE Quick Size Check ideas for this portfolio? Saved-for-later ideas and recorded positions will not be affected.'))break;expandedPlanId=null;selectedPreviewId=null;plannerDrafts[account().id]=(plannerSavedIdeas[account().id]||[]).length?[]:[defaultPlanIdea(uid(),account().stressPct,false)];persistPlannerDrafts();renderPlanner(analytics());showToast('Active ideas cleared. Saved ideas are unchanged.');break;}
+ case 'analyze-idea':{const opening=selectedPreviewId!==el.dataset.planId||optionPanelMode!=='analyze';optionPanelMode='analyze';chainFetchToken++;selectedPreviewId=opening?el.dataset.planId:null;if(opening)adoptTickerLevels(currentPreviewIdea());expandedPlanId=null;quoteRefreshMessage='';quoteConnectionState='unknown';renderPlanner(analytics());if(opening)$('optionPreview')?.scrollIntoView({block:'start',behavior:'smooth'});if(opening){void ensureAtmRange(currentPreviewIdea());void refreshOptionQuote();}break;}
  case 'view-option-chain':{
   const opening=selectedPreviewId!==el.dataset.planId||optionPanelMode!=='chain';
   selectedPreviewId=opening?el.dataset.planId:null;
-  optionPanelMode='chain';if(opening)optionChainRange='nearby';expandedPlanId=null;quoteRefreshToken++;
+  optionPanelMode='chain';if(opening)optionChainRange='nearby';expandedPlanId=null;
   const idea=currentPreviewIdea();if(idea)chainSide=idea.optionType==='Call'?'Call':'Put';
   renderPlanner(analytics());
   if(opening){$('optionPreview')?.scrollIntoView({block:'start',behavior:'smooth'});void ensureAtmRange(idea);void refreshOptionChain();}
@@ -1766,7 +1789,7 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
  }
  case 'chain-show-side':chainSide=el.dataset.side==='Call'?'Call':'Put';renderChainPreview();break;
  case 'pick-chain-contract':pickChainContract(el);break;
- case 'close-option-preview':selectedPreviewId=null;chainFetchToken++;quoteRefreshToken++;renderPlanner(analytics());break;
+ case 'close-option-preview':selectedPreviewId=null;chainFetchToken++;renderPlanner(analytics());break;
  case 'preview-add-target':{const idea=currentPreviewIdea();if(!idea)break;const p=ensurePreview(idea);if(p.targets.length>=MAX_PREVIEW_TARGETS)break;const n=p.targets.filter(t=>t.name.startsWith('TP')).length+1;p.targets.push({id:uid(),name:`TP${n}`,price:''});publishTickerLevels(idea);persistPlannerDrafts();renderOptionPreview();break;}
  case 'preview-remove-target':{const idea=currentPreviewIdea(),p=ensurePreview(idea);if(!p)break;p.targets=p.targets.filter(t=>t.id!==el.dataset.targetId);publishTickerLevels(idea);persistPlannerDrafts();renderOptionPreview();break;}
  case 'preview-add-date':{const idea=currentPreviewIdea(),p=ensurePreview(idea);if(!p||p.dates.length>=MAX_PREVIEW_DATES)break;const shown=visibleTickerDates(idea).visible;let d=nextSession(shown.at(-1)?.date||today(),state.customClosed||[]);if(parseDay(idea.expiry)&&d>idea.expiry){showToast('This exit date would be after the selected option expires.');break;}if(p.dates.includes(d)){showToast('This exit date is already in the shared ticker plan.');break;}p.dates.push(d);p.dates.sort();publishTickerLevels(idea);persistPlannerDrafts();renderOptionPreview();break;}
@@ -1779,6 +1802,7 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
   persistPlannerDrafts();renderOptionPreview();break;
  }
  case 'refresh-option-quote':void refreshOptionQuote();break;
+ case 'refresh-draft-premium':{const idea=plannerIdeas().find(x=>x.id===el.dataset.planId);if(idea&&canRefreshDraftQuote(idea))void refreshDraftPremium(idea,{useMidpoint:true,verifyContract:false});break;}
  case 'enter-manual-iv':{const panel=$('optionPreview');const details=panel?.querySelector('.preview-manual');if(details)details.open=true;panel?.querySelector('input[name="ivPct"]')?.focus();break;}
  case 'reset-draft-fee':{const idea=plannerIdeas().find(x=>x.id===el.dataset.planId);if(idea){idea.feeManual=false;idea.fee=estimateOrderFee(account(),'BUY',idea.qty).toFixed(2);persistPlannerDrafts();renderPlanner(analytics());}break;}
  case 'export-trade':exportTrade(id);break;
@@ -1802,7 +1826,7 @@ function runAction(action,el){try{const id=el.dataset.id;switch(action){
 document.addEventListener('click',e=>{const tab=e.target.closest('[data-tab]');if(tab){switchTab(tab.dataset.tab);return;}const filter=e.target.closest('[data-filter]');if(filter){positionFilter=filter.dataset.filter;renderPositions(analytics());return;}const action=e.target.closest('[data-action]');if(action){runAction(action.dataset.action,action);}});
 $('editorDialog').addEventListener('click',e=>{if(e.target===$('editorDialog'))$('editorDialog').close();});
 initPositionAnalysis();
-$('accountSelect').addEventListener('change',e=>{activeAccountId=e.target.value;selectedPreviewId=null;expandedPlanId=null;quoteRefreshToken++;quoteRefreshBusy=false;tickerInputOrigins.clear();rememberAccount();render();});
+$('accountSelect').addEventListener('change',e=>{activeAccountId=e.target.value;selectedPreviewId=null;expandedPlanId=null;tickerInputOrigins.clear();rememberAccount();render();});
 $('asOfDate').addEventListener('change',e=>{const d=e.target.value;if(parseDay(d)){asOfOverride=d;render();}else showToast('Enter a valid date.');});
 // Browser tabs share the latest sizing ideas. A change in another tab is not a trade.
 if(typeof globalThis.addEventListener==='function')globalThis.addEventListener('storage',event=>{
@@ -1853,7 +1877,7 @@ $('quickPlanner').addEventListener('input',e=>{
  if(['ticker','optionType'].includes(name))manualExpiryIds.delete(idea.id);
  const changed=['ticker','expiry','strike','optionType'].includes(name)&&before!==draftContractKey(idea);
  if(changed){
-  quoteRefreshToken++;quoteRefreshBusy=false;
+  cancelDraftQuote(idea);
   const p=ensurePreview(idea);p.spot='';p.ivPct='';p.ivManual=false;p.bid='';p.ask='';p.quoteAt='';p.quoteSource='New contract requires new quote';
   idea.marketMid='';idea.contractSymbol='';idea.quoteStatus='';idea.quoteMessage='Contract changed — Analyze % to refresh quote.';
   if(!idea.priceManual){idea.price='';const price=el.querySelector('[name="price"]');if(price)price.value='';}
