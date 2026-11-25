@@ -864,9 +864,9 @@ function expectedRangeDisplay(idea){
  const d=entry.data,r=d.range;
  return {
   label:'ATM 1σ underlying: '+money(r.lower)+'–'+money(r.upper)+' (±'+money(r.move)+', '+r.movePct.toFixed(1)+'%)',
-  title:'Estimated underlying-price range through 4 PM ET expiration using '+money(d.spotUsd)+
+  title:'Estimated underlying-price range through '+(r.cutoffLabel||'4 PM ET')+' model cutoff using '+money(d.spotUsd)+
    ' IEX spot and '+d.atmIvPct.toFixed(1)+'% IV at nearest standard ATM strike '+money(d.atmStrike)+
-   ' ('+d.ivMethod+'). '+r.days.toFixed(1)+' calendar days remaining. '+
+   ' ('+d.ivMethod+'). '+(r.days<1?Math.round(r.days*1440)+' minutes':r.days.toFixed(1)+' calendar days')+' remaining. '+
    'Indicative data, not executable, a price target, a guaranteed probability or an option-premium range.',
   state:'ok'
  };
