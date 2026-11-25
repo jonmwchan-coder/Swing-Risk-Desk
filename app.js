@@ -13,7 +13,7 @@ import {captureDraftAnalysis,positionAnalysisEvents,currentAnalysisBasis,working
 import {draftContract,draftContractKey,normalizeTicker,sortPlanIdeas,PLAN_SORT_MODES} from './lib/planner-contract.mjs';
 import {expirationLookupKey,normalizeListedDates,expirationListingStatus,nearestListedExpirations,regularExpirationKind} from './lib/expiry-listings.mjs';
 import {renderChainPanel} from './lib/chain-view.mjs';
-import {copyPlannerIdea,isEmptyPlannerPlaceholder,isUneditedTickerScenario,tickerScenarioKey,hydrateTickerScenario,broadcastTickerScenario,visibleTickerDates,parkPlannerIdea,restorePlannerIdea,deleteSavedPlannerIdea,applyDraftMarketQuote,markDraftQuoteFailed} from './lib/planner-workflows.mjs';
+import {copyPlannerIdea,isEmptyPlannerPlaceholder,isUneditedTickerScenario,tickerScenarioKey,hydrateTickerScenario,broadcastTickerScenario,visibleTickerDates,parkPlannerIdea,restorePlannerIdea,deleteSavedPlannerIdea,applyDraftMarketQuote,markDraftQuoteFailed,seedDraftFromChainQuote} from './lib/planner-workflows.mjs';
 
 const STORAGE_KEY='swing-risk-desk:data:v1';
 const $=id=>document.getElementById(id);
@@ -541,23 +541,30 @@ function updateListingCard(idea){
 function updateListingCardsForKey(key){
  for(const idea of plannerIdeas())if(scopedExpirationKey(idea)===key)updateListingCard(idea);
 }
-function canRefreshDraftQuote(idea){
- if(!buildOCCSymbol(draftContract(idea))||idea.expiry<today())return false;
+function draftQuoteUnavailableReason(idea){
+ if(!buildOCCSymbol(draftContract(idea)))return 'Select a valid ticker, expiration and strike first.';
+ if(idea.expiry<today())return 'This contract has expired.';
  const timing=intradayTiming(idea,new Date(),state.customClosed||[]);
- return !timing||timing.session&&!timing.expired;
+ return timing&&(!timing.session||timing.expired)?'Same-day model session is closed.':'';
 }
+function canRefreshDraftQuote(idea){return !draftQuoteUnavailableReason(idea);}
 function cancelDraftQuote(idea){
  if(!idea)return;
  const pending=pendingDraftQuotes.get(idea);
  if(pending){pendingDraftQuotes.delete(idea);pending.controller.abort();}
 }
-function draftQuoteButton(idea){
- const busy=pendingDraftQuotes.has(idea);
- return `<button type="button" class="fee-reset-mini draft-premium-refresh" data-action="refresh-draft-premium" data-plan-id="${esc(idea.id)}" title="Refresh this exact option quote and use its midpoint as the planned buy premium. No expiration lookup." ${!canRefreshDraftQuote(idea)||busy?'disabled':''}>${busy?'Refreshing…':'↻ Refresh premium'}</button>`;
+function draftQuoteButton(idea,placement='compact'){
+ const busy=pendingDraftQuotes.has(idea),reason=draftQuoteUnavailableReason(idea);
+ return `<button type="button" class="fee-reset-mini draft-premium-refresh draft-premium-refresh-${placement}" data-action="refresh-draft-premium" data-plan-id="${esc(idea.id)}" title="${esc(reason||'Refresh exact option quote and use its midpoint as planned premium. No expiration lookup.')}" aria-label="Refresh buy premium" ${reason||busy?'disabled':''}>${busy?'Refreshing…':'↻ Refresh premium'}</button>`;
 }
 function updateDraftQuoteButton(card,idea){
- const button=card?.querySelector('[data-action="refresh-draft-premium"]');
- if(button){const busy=pendingDraftQuotes.has(idea);button.disabled=busy||!canRefreshDraftQuote(idea);button.textContent=busy?'Refreshing…':'↻ Refresh premium';}
+ const busy=pendingDraftQuotes.has(idea),reason=draftQuoteUnavailableReason(idea);
+ for(const button of card?.querySelectorAll('[data-action="refresh-draft-premium"]')||[]){
+  button.disabled=busy||Boolean(reason);button.textContent=busy?'Refreshing…':'↻ Refresh premium';
+  button.title=reason||'Refresh exact option quote and use its midpoint as planned premium. No expiration lookup.';
+ }
+ const hint=card?.querySelector('[data-premium-refresh-hint]');
+ if(hint){hint.textContent=reason||(!Number(idea.price)?'No premium yet. Refresh or enter your IBKR premium.':'');hint.hidden=!hint.textContent;}
 }
 function showInlineQuoteLoading(idea){
  const card=[...document.querySelectorAll('[data-draft-id]')].find(x=>x.dataset.draftId===idea?.id);
@@ -689,7 +696,7 @@ function renderPlanner(m){
       <label class="draft-name-field"><span>IDEA NAME</span><input type="text" name="name" maxlength="80" value="${esc(idea.name||'')}" placeholder="Breakout continuation"></label>
       <div class="draft-contract-fields"><label><span>TICKER</span><input type="text" name="ticker" maxlength="12" value="${esc(idea.ticker||'')}" placeholder="IREN" autocomplete="off" spellcheck="false"></label><label><span>TYPE</span><select name="optionType"><option value="Call" ${idea.optionType!=='Put'?'selected':''}>Call</option><option value="Put" ${idea.optionType==='Put'?'selected':''}>Put</option></select></label>${expirationField(idea)}<label><span>STRIKE (USD)</span><input type="number" name="strike" min="0.001" step="0.001" value="${esc(idea.strike||'')}" placeholder="Choose in chain"></label></div>
       <div class="draft-editor-heading draft-editor-pricing"><strong>Entry &amp; risk</strong><span>Typing premium = manual override</span></div>
-      <div class="draft-fields"><label><span>ADDITIONAL QTY</span><input type="number" inputmode="numeric" name="qty" min="0" step="1" value="${esc(idea.qty)}" aria-label="Idea ${index+1} contract quantity"></label><label><span>BUY PREMIUM (USD/SHARE)</span><input type="number" inputmode="decimal" name="price" min="0.01" step="0.0001" value="${esc(idea.price)}" aria-label="Idea ${index+1} price per share in USD"></label><label><span>BUY FEES (USD) <button class="fee-reset-mini" type="button" data-action="reset-draft-fee" data-plan-id="${esc(idea.id)}">Auto</button></span><input type="number" inputmode="decimal" name="fee" min="0" step="0.01" value="${esc(idea.fee)}" aria-label="Idea ${index+1} total entry commissions in USD"></label><label><span>EST. LOSS %</span><input type="number" inputmode="decimal" name="plannedLossPct" min="0" max="100" step=".1" value="${esc(idea.plannedLossPct??'')}" placeholder="${riskRow?.positionId&&riskRow.plannedLossPct!=null?esc(riskRow.plannedLossPct):'Not set'}" aria-label="Idea ${index+1} estimated loss at invalidation percent"></label><label><span>STRESS RISK %</span><input type="number" inputmode="numeric" name="stress" min="0" max="100" step="1" value="${esc(riskRow?.positionId?riskRow.stress??idea.stress:idea.stress)}" ${riskRow?.positionId?'disabled title="Uses existing position stress; edit the position plan to change it"':''} aria-label="Idea ${index+1} stress risk percent"></label></div></div>`:''}
+      <div class="draft-fields"><label><span>ADDITIONAL QTY</span><input type="number" inputmode="numeric" name="qty" min="0" step="1" value="${esc(idea.qty)}" aria-label="Idea ${index+1} contract quantity"></label><div class="draft-premium-field"><label><span>BUY PREMIUM (USD/SHARE)</span><input type="number" inputmode="decimal" name="price" min="0.01" step="0.0001" value="${esc(idea.price)}" aria-label="Idea ${index+1} price per share in USD"></label><div class="draft-premium-field-actions">${draftQuoteButton(idea,'editor')}<small data-premium-refresh-hint hidden></small></div></div><label><span>BUY FEES (USD) <button class="fee-reset-mini" type="button" data-action="reset-draft-fee" data-plan-id="${esc(idea.id)}">Auto</button></span><input type="number" inputmode="decimal" name="fee" min="0" step="0.01" value="${esc(idea.fee)}" aria-label="Idea ${index+1} total entry commissions in USD"></label><label><span>EST. LOSS %</span><input type="number" inputmode="decimal" name="plannedLossPct" min="0" max="100" step=".1" value="${esc(idea.plannedLossPct??'')}" placeholder="${riskRow?.positionId&&riskRow.plannedLossPct!=null?esc(riskRow.plannedLossPct):'Not set'}" aria-label="Idea ${index+1} estimated loss at invalidation percent"></label><label><span>STRESS RISK %</span><input type="number" inputmode="numeric" name="stress" min="0" max="100" step="1" value="${esc(riskRow?.positionId?riskRow.stress??idea.stress:idea.stress)}" ${riskRow?.positionId?'disabled title="Uses existing position stress; edit the position plan to change it"':''} aria-label="Idea ${index+1} stress risk percent"></label></div></div>`:''}
     <div class="draft-metrics" data-plan-status="${esc(idea.id)}"></div>
     <details class="draft-quote-detail"><summary>Quote details</summary><div class="draft-quote-body"><div><span>Source</span><strong>${esc(p.quoteSource||'Not requested')}</strong></div><div><span>Bid / ask</span><strong>${esc(moneyOrDash(p.bid))} / ${esc(moneyOrDash(p.ask))}</strong></div><div><span>Midpoint</span><strong>${esc(mid)}</strong></div><div><span>Quote time (UTC)</span><strong>${esc(p.quoteAt||'Not available')}</strong></div><p>${esc(idea.quoteMessage||'Select a contract to request a quote.')}</p><small>Indicative Alpaca Basic, not executable OPRA quotes. Verify your broker quote.</small></div></details>
    </article>`;
@@ -868,8 +875,12 @@ function pickChainContract(el){
  const changed=Number(idea.strike)!==strike||idea.optionType!==side;
  const typeChanged=idea.optionType!==side;
  if(!changed){
+  const needsQuote=!Number(idea.price)||idea.quoteStatus==='unavailable';
+  if(needsQuote){ensurePreview(idea);if(seedDraftFromChainQuote(idea,entry.data,row,side,buildOCCSymbol(draftContract(idea))))persistPlannerDrafts();}
   selectedPreviewId=null;optionPanelMode='analyze';expandedPlanId=idea.id;
-  renderPlanner(analytics());return;
+  renderPlanner(analytics());
+  if(needsQuote&&canRefreshDraftQuote(idea))void refreshDraftPremium(idea,{verifyContract:false});
+  return;
  }
  cancelDraftQuote(idea);
  if(side!==idea.optionType){
@@ -886,12 +897,13 @@ function pickChainContract(el){
  // Never carry a stale manually entered premium across a strike/side change.
  idea.price='';idea.priceManual=false;
  adoptTickerLevels(idea);
+ seedDraftFromChainQuote(idea,entry.data,row,side,buildOCCSymbol(draftContract(idea)));
  persistPlannerDrafts();
  chainFetchToken++;
  selectedPreviewId=null;optionPanelMode='analyze';expandedPlanId=idea.id;
  renderPlanner(analytics());
  if(typeChanged)queueListedExpirations(idea,true);
- if(draftContract(idea))void refreshDraftPremium(idea);
+ if(draftContract(idea))void refreshDraftPremium(idea,{verifyContract:false});
 }
 
 // Use the same projection controls and output headings for draft and position Analyze %.
@@ -1150,9 +1162,10 @@ async function refreshDraftPremium(idea,{useMidpoint=false,verifyContract=true}=
   const result=applyDraftMarketQuote(idea,data,symbol,{useMidpoint,initialPrice,initialManual,verified});
   if(isSelected()){
    quoteConnectionState='connected';
-   quoteRefreshMessage=result.missingIv?'No usable IV returned. Enter your broker IV to run the simulation.':result.missingSpot?'Underlying price unavailable; enter manually.':idea.quoteMessage;
+   quoteRefreshMessage=!result.valid?idea.quoteMessage:result.missingIv?'No usable IV returned. Enter your broker IV to run the simulation.':result.missingSpot?'Underlying price unavailable; enter manually.':idea.quoteMessage;
   }
   persistPlannerDrafts();
+  if(useMidpoint&&!result.valid&&account().id===accountId)showToast('No valid bid/ask midpoint. Enter your broker premium or retry.');
  }catch(err){
   if(!current())return;
   markDraftQuoteFailed(idea,controller.signal.aborted?'Request timed out':err);
