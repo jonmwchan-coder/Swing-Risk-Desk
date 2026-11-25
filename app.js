@@ -1097,10 +1097,10 @@ function renderOptionPreview(){
 }
 function updateOptionPreviewResults(){
  const container=$('optionPreviewResults'),idea=currentPreviewIdea();if(!container||!idea)return;
+ rememberExpirySection(container);
  const {result,contract}=previewViewModel(idea);
  if(!result.valid){container.innerHTML=`<div class="preview-prompt">${esc(result.reason)}</div>`;return;}
  if(!result.dateHeaders.length){container.innerHTML='<div class="preview-prompt">No exit dates occur on or before this contract expiration. Adjust the shared plan, or use an independent plan for this option.</div>';return;}
- rememberExpirySection(container);
  const sections=scenarioSectionsMarkup(result,contract,{key:JSON.stringify(['draft',account().id,idea.id,contract.expiry]),name:'expiry-day-times'});
  container.innerHTML=`${intradayResultNotice(result)}<div class="preview-result-summary">${scenarioThetaMarkup(result)}<div><span>Entry cost incl. fees</span><strong>${usd(result.baseCostUsd)}</strong></div><div><span>IV assumed at every ${result.intraday||result.hasExpiryDayTimes?'time':'date'}</span><strong>${result.ivPct.toFixed(1)}%</strong></div></div>
   <div class="preview-matrix-legend"><span class="preview-legend-gain">Positive modeled net return</span><span class="preview-legend-loss">Negative modeled net return</span></div>
@@ -1463,9 +1463,9 @@ function renderPositionAnalysis(){
 function updatePositionAnalysisResults(){
  const session=positionAnalysisSession,container=$('positionAnalysisResults');if(!session||!container)return;
  const ctx=positionAnalysisContext(session),selection=ctx&&positionAnalysisSelection(session,ctx);if(!selection)return;
+ rememberExpirySection(container);
  const result=modelPositionAnalysis(selection);
  if(!result.valid){container.innerHTML=`<div class="preview-prompt">${esc(result.reason)}</div>`;return;}
- rememberExpirySection(container);
  const sections=scenarioSectionsMarkup(result,selection.contract,{key:JSON.stringify(['position',session.accountId,session.positionId,session.mode,selection.contract.expiry]),name:'pa-expiry-day-times',editable:selection.editable});
  container.innerHTML=`${intradayResultNotice(result)}<div class="preview-result-summary">${scenarioThetaMarkup(result,true)}<div><span>Actual analyzed acquisition cost</span><strong>${usd(result.baseCostUsd)}</strong></div><div><span>IV assumed at every ${result.intraday||result.hasExpiryDayTimes?'time':'date'}</span><strong>${result.ivPct.toFixed(1)}%</strong></div></div>${sections}<small class="preview-footnote">Valuation anchored to ${esc(result.anchorLabel)}. Return = modeled net USD P/L divided by this view's actual acquisition cost, including buy fees. Estimated sell fees and half the indicative spread (when available) are deducted. ${result.intraday?'Times after the model cutoff are unavailable.':'Past/after-expiry dates are unavailable; use Next sessions in the current view.'}</small>`;
 }
@@ -1559,7 +1559,7 @@ function initPositionAnalysis(){
   if(el.dataset.paAction==='close'){dialog.close();return;}
   try{positionAnalysisAction(el.dataset.paAction,el);}catch(err){showToast(err.message);const status=root.querySelector('[data-pa-status]');if(status)status.textContent=err.message;}
  });
- dialog.addEventListener('close',()=>{const session=positionAnalysisSession;positionAnalysisSession=null;session?.controller?.abort();root.innerHTML='';});
+ dialog.addEventListener('close',()=>{rememberExpirySection(root);const session=positionAnalysisSession;positionAnalysisSession=null;session?.controller?.abort();root.innerHTML='';});
 }
 
 function openPositionDetail(id){positionFilter='all';activeTab='positions';render();const item=$('positionsFull').querySelectorAll('[data-position]');for(const el of item)if(el.dataset.position===id){const details=el.querySelector('details');if(details)details.open=true;el.scrollIntoView({block:'center',behavior:'smooth'});break;}}
